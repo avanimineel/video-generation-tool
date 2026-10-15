@@ -1,0 +1,4 @@
+# Portable H.264 encoder; installed locally in backend/vendor_runtime on this Mac.
+imageio-ffmpeg==0.6.0
+
+onnxruntime>=1.18,<2

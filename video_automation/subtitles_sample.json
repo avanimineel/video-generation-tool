@@ -1,0 +1,62 @@
+[
+  {
+    "start_time": 0.0,
+    "end_time": 0.95,
+    "text": "STOP EATING THIS",
+    "highlight_words": ["STOP", "THIS"]
+  },
+  {
+    "start_time": 0.95,
+    "end_time": 2.10,
+    "text": "IMMEDIATELY RIGHT NOW",
+    "highlight_words": ["IMMEDIATELY"]
+  },
+  {
+    "start_time": 2.10,
+    "end_time": 3.45,
+    "text": "HOSPITALS REPORTED A SPIKE",
+    "highlight_words": ["HOSPITALS", "SPIKE"]
+  },
+  {
+    "start_time": 3.45,
+    "end_time": 4.80,
+    "text": "IN ACUTE INFECTIONS",
+    "highlight_words": ["INFECTIONS"]
+  },
+  {
+    "start_time": 4.80,
+    "end_time": 6.50,
+    "text": "FOOD SAFETY OFFICERS",
+    "highlight_words": ["SAFETY", "OFFICERS"]
+  },
+  {
+    "start_time": 6.50,
+    "end_time": 8.20,
+    "text": "FOUND CHEMICAL DYES",
+    "highlight_words": ["CHEMICAL", "DYES"]
+  },
+  {
+    "start_time": 8.20,
+    "end_time": 9.90,
+    "text": "ACROSS POPULAR BRANDS",
+    "highlight_words": ["POPULAR"]
+  },
+  {
+    "start_time": 9.90,
+    "end_time": 11.50,
+    "text": "POLICE ARRESTED THREE DEALERS",
+    "highlight_words": ["ARRESTED", "THREE"]
+  },
+  {
+    "start_time": 11.50,
+    "end_time": 13.20,
+    "text": "BEFORE YOU BUY AGAIN",
+    "highlight_words": ["BEFORE"]
+  },
+  {
+    "start_time": 13.20,
+    "end_time": 15.00,
+    "text": "CHECK THIS VERIFICATION LIST",
+    "highlight_words": ["VERIFICATION", "LIST"]
+  }
+]

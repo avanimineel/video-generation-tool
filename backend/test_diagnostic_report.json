@@ -1,0 +1,82 @@
+[
+  {
+    "test": "Test 1: Pexels image search",
+    "query": "doctor hospital",
+    "provider": "pexels",
+    "media_type": "image",
+    "http_status": 401,
+    "result_count": 0,
+    "example_result": null,
+    "local_file_path": null,
+    "file_size_bytes": 0,
+    "diagnostic": {
+      "provider": "pexels",
+      "media_type": "image",
+      "query": "doctor hospital",
+      "status": "missing_key",
+      "http_code": 401,
+      "error": "PEXELS_API_KEY is not configured in backend/.env",
+      "count": 0
+    }
+  },
+  {
+    "test": "Test 2: Pexels video search",
+    "query": "hospital corridor",
+    "provider": "pexels",
+    "media_type": "video",
+    "http_status": 401,
+    "result_count": 0,
+    "example_result": null,
+    "local_file_path": null,
+    "file_size_bytes": 0,
+    "diagnostic": {
+      "provider": "pexels",
+      "media_type": "video",
+      "query": "hospital corridor",
+      "status": "missing_key",
+      "http_code": 401,
+      "error": "PEXELS_API_KEY is not configured in backend/.env",
+      "count": 0
+    }
+  },
+  {
+    "test": "Test 3: Pixabay image search",
+    "query": "breast cancer awareness",
+    "provider": "pixabay",
+    "media_type": "image",
+    "http_status": 401,
+    "result_count": 0,
+    "example_result": null,
+    "local_file_path": null,
+    "file_size_bytes": 0,
+    "diagnostic": {
+      "provider": "pixabay",
+      "media_type": "image",
+      "query": "breast cancer awareness",
+      "status": "missing_key",
+      "http_code": 401,
+      "error": "PIXABAY_API_KEY is not configured in backend/.env",
+      "count": 0
+    }
+  },
+  {
+    "test": "Test 4: Pixabay video search",
+    "query": "hospital patient",
+    "provider": "pixabay",
+    "media_type": "video",
+    "http_status": 401,
+    "result_count": 0,
+    "example_result": null,
+    "local_file_path": null,
+    "file_size_bytes": 0,
+    "diagnostic": {
+      "provider": "pixabay",
+      "media_type": "video",
+      "query": "hospital patient",
+      "status": "missing_key",
+      "http_code": 401,
+      "error": "PIXABAY_API_KEY is not configured in backend/.env",
+      "count": 0
+    }
+  }
+]

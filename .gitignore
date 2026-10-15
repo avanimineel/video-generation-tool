@@ -1,0 +1,38 @@
+# Media and large files
+*.mp4
+*.wav
+*.mov
+*.m4v
+*.avi
+*.mkv
+*.db
+*.sqlite3
+
+# Projects folder
+backend/projects/
+
+# Dependencies & build
+node_modules/
+dist/
+__pycache__/
+*.pyc
+# Environment & Secrets
+.env
+.env.*
+*.env
+.env.local
+
+# Backups
+backend_backup_checkpoint/
+frontend_src_backup_checkpoint/
+checkpoint_pre_burnin_repair/
+
+
+backend/vendor_runtime/
+
+# Local person-segmentation model weights
+backend/models/*.onnx
+backend/models/*.download
+
+# Private provider credentials; never commit or bundle.
+backend/.private/

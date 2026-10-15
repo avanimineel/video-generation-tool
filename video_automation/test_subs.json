@@ -1,0 +1,26 @@
+[
+  {
+    "start_time": 0.2,
+    "end_time": 1.4,
+    "text": "STOP EATING THIS",
+    "highlight_words": ["STOP", "THIS"]
+  },
+  {
+    "start_time": 1.5,
+    "end_time": 2.8,
+    "text": "IMMEDIATELY RIGHT NOW",
+    "highlight_words": ["IMMEDIATELY"]
+  },
+  {
+    "start_time": 2.9,
+    "end_time": 4.2,
+    "text": "POLICE SEIZED SAMPLES",
+    "highlight_words": ["POLICE", "SAMPLES"]
+  },
+  {
+    "start_time": 4.3,
+    "end_time": 5.8,
+    "text": "COMMENT TEST FOR REPORT",
+    "highlight_words": ["TEST", "REPORT"]
+  }
+]

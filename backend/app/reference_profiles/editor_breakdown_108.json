@@ -1,0 +1,139 @@
+{
+  "id": "editor_breakdown_108_v1",
+  "provenance": "User-provided written breakdown of a manually edited reel. No finished video inspected. Times are reference observations, NOT source-audio cue measurements.",
+  "source_sha256": "53ca5d2e3ec3254dc133785ca7d0f8f08074cc27b943e7418071f6bed0241f37",
+  "rules": [
+    "Dynamic means progression of relevant imagery, typography and explanatory scenes, not recurring camera zooms or filling every second.",
+    "Build an editorial arc: identity archive, condition anatomy, symptoms, treatment process, outcome qualification, treatment options, advocacy, supplied branding. Adapt this arc to the actual story; do not force every module into every video.",
+    "Evaluate every concrete visual opportunity, but group related steps into one readable accumulating list or process scene. A diagram can evolve for eight seconds without replacing it with unrelated stock.",
+    "Use authentic named-person photographs/posters for biography. Generic patients cannot depict that person. Missing verified assets remain explicit gaps.",
+    "Preserve deliberate static A-roll for explanation, qualifications, uncertainty and emotional delivery. Never insert automatic source-camera reframes as filler.",
+    "Motion must serve the asset: reveal a diagram connection, accumulate a list, transition between related archive images. Half-screen imagery remains still; no entrance animation, pan or zoom.",
+    "Ordinary subtitles remain static, three words per box per the user preference. Reference karaoke is not permission to change subtitles. Titles remain verbatim complete spoken phrases with noun-level audio anchors.",
+    "Reference medical wording and illustrative graphics are not evidence. Verify terminology, identity, licensing and disease-specific applicability; preserve remission-versus-cure qualifications.",
+    "Do not copy reference timecodes to raw footage. Resolve each scene to actual source speech and mark uncertain alignment. Unsupported diagram or collage renderers must be reported as gaps, never replaced silently with generic footage.",
+    "SFX follows a specific transition or animation; highlight sound only accompanies a real highlight. No sound on every graphic."
+  ],
+  "scenes": [
+    {
+      "reference_seconds": [
+        1,
+        5
+      ],
+      "treatment": "identity_archive",
+      "description": "The World Unseen poster, then actual Lisa Ray glamour portrait; short sequence establishes identity.",
+      "requirement": "Verified poster and identified licensed portrait",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        4,
+        7
+      ],
+      "treatment": "exact_title",
+      "description": "Spoken prognosis qualifier and series title, selective typography; preserve might.",
+      "requirement": "Complete exact audio-verified wording",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        8,
+        11
+      ],
+      "treatment": "identity_archive",
+      "description": "Actual Lisa Ray portrait then post-treatment photos; distinguish time periods.",
+      "requirement": "Verified identity and treatment context; no generic patient",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        12,
+        19
+      ],
+      "treatment": "anatomy_sequence",
+      "description": "Plasma cells and antibodies, then spine to marrow to cellular close-up.",
+      "requirement": "Disease-correct illustration with labelled relationships",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        19,
+        28
+      ],
+      "treatment": "presenter",
+      "description": "Static speaker explains mutation; intentional explanation space.",
+      "requirement": "No camera filler",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        29,
+        31
+      ],
+      "treatment": "accumulating_checklist",
+      "description": "Symptoms heading, fatigue then low red blood cell count; retain earlier item.",
+      "requirement": "Exact spoken symptom terms and separate word anchors",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        33,
+        35
+      ],
+      "treatment": "illustration",
+      "description": "Chemotherapy infusion in clinical chair.",
+      "requirement": "Visually verified infusion footage",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        36,
+        44
+      ],
+      "treatment": "process_diagram",
+      "description": "One connected transplant scene: collection, storage, intensive chemotherapy, reinfusion.",
+      "requirement": "Medically verified workflow; reveal arrows with spoken steps",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        null,
+        null
+      ],
+      "treatment": "definition_and_qualification",
+      "description": "Remission emphasis and definition, then return to speaker for not an absolute cure.",
+      "requirement": "Exact source wording; no unrelated inflammatory-hand graphic",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        66,
+        75
+      ],
+      "treatment": "treatment_sequence",
+      "description": "Medication mechanism, transplant diagram reprise, immunotherapy, CAR T-cell workflow.",
+      "requirement": "Distinct correct mechanisms; CAR T collection/engineering/expansion/reinfusion",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        76,
+        83
+      ],
+      "treatment": "advocacy_collage",
+      "description": "Actual Lisa Ray portrait then four-panel advocacy/archive grid.",
+      "requirement": "Verified attributed posts/interviews/photos",
+      "status": "requires_source_alignment_and_asset_review"
+    },
+    {
+      "reference_seconds": [
+        83,
+        93
+      ],
+      "treatment": "closing",
+      "description": "Speaker takeaway, exact closing title, supplied doctor portrait and handle outro.",
+      "requirement": "Approved portrait, handle and CTA; no invented credentials",
+      "status": "requires_source_alignment_and_asset_review"
+    }
+  ]
+}

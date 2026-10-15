@@ -1,0 +1,42 @@
+[
+  {
+    "start_time": 0.0,
+    "end_time": 2.2,
+    "asset_filename": "news_headline_clipping.jpg",
+    "visual_type": "article_headline",
+    "description": "The New Indian Express newspaper clipping with animated yellow highlight",
+    "motion_style": "slow_zoom_in"
+  },
+  {
+    "start_time": 2.2,
+    "end_time": 5.0,
+    "asset_filename": "hospital_icu_ward.mp4",
+    "visual_type": "broll_video",
+    "description": "B-roll of hospital emergency corridor establishing context",
+    "motion_style": "cut"
+  },
+  {
+    "start_time": 5.0,
+    "end_time": 8.4,
+    "asset_filename": "food_inspection_lab.mp4",
+    "visual_type": "broll_video",
+    "description": "Lab testing food adulteration chemicals under microscope",
+    "motion_style": "cut"
+  },
+  {
+    "start_time": 8.4,
+    "end_time": 11.8,
+    "asset_filename": "police_investigation_briefing.mp4",
+    "visual_type": "broll_video",
+    "description": "Police department press briefing and evidence filing",
+    "motion_style": "cut"
+  },
+  {
+    "start_time": 11.8,
+    "end_time": 15.0,
+    "asset_filename": "qr_code_phone_scan.jpg",
+    "visual_type": "demonstration",
+    "description": "Close-up of smartphone scanning QR code on packaging",
+    "motion_style": "slow_zoom_in"
+  }
+]

@@ -1,0 +1,149 @@
+{
+  "id": "medical_finished_reel_113_v1",
+  "name": "Medical documentary reel \u2014 113 reference",
+  "method": "Local frame inspection at four-second intervals, plus selected one-second detail samples. Intervals below are approximate observations, not a frame-accurate edit decision list. Audio/music/SFX were not assessed.",
+  "sources": {
+    "before": {
+      "filename": "sub.mov",
+      "sha256": "3cedd15039bffa3a05cf4fa7092f19870a8c59046e573d042ea67fc5d720c539",
+      "duration_seconds": 121.32
+    },
+    "after": {
+      "filename": "113.mov",
+      "sha256": "e334346ce97cb492be99c7bf8c7095bfe66d0ef5584a30c81125962b503e48c2",
+      "duration_seconds": 122.83
+    }
+  },
+  "alignment": "Do not transfer after timecodes directly to another source. Opening imagery differs; durations differ by 1.51 seconds. Ground each treatment in the new transcript.",
+  "examples": [
+    {
+      "seconds": [
+        0,
+        9
+      ],
+      "role": "identity",
+      "observed": "Named-person images above presenter; opening text gives the name visual priority. Different images replace one another while presenter remains visible.",
+      "requirement": "Correct identified person and contextual source, never a generic stock person."
+    },
+    {
+      "seconds": [
+        12,
+        15
+      ],
+      "role": "illustration",
+      "observed": "Full-screen contextual imagery of medicine-related subject matter with small subtitles.",
+      "requirement": "Concrete subject/action match; distinguish illustrative imagery from proof of the reported incident."
+    },
+    {
+      "seconds": [
+        16,
+        21
+      ],
+      "role": "evidence",
+      "observed": "Medical-themed canvas, Indian Express masthead, article headline/body and yellow highlighted passage. Card builds across sampled frames.",
+      "requirement": "Verified article source, faithful title and supported excerpt, highlight the relevant sentence; allow time to read."
+    },
+    {
+      "seconds": [
+        24,
+        36
+      ],
+      "role": "presenter",
+      "observed": "Extended presenter-led explanation with short green-background yellow subtitles.",
+      "requirement": "Retain presenter where explanation matters; no rigid requirement to interrupt every few seconds."
+    },
+    {
+      "seconds": [
+        39,
+        42
+      ],
+      "role": "demonstration",
+      "observed": "Full-screen pills then medicine vial imagery during molecule/dose/purity/potency discussion.",
+      "requirement": "Sequence complementary concrete views on spoken concepts, rather than repeat one generic hospital image."
+    },
+    {
+      "seconds": [
+        44,
+        46
+      ],
+      "role": "illustration",
+      "observed": "Medicine/handcuff imagery in upper panel, presenter below.",
+      "requirement": "Preserve presenter while illustrating the concept; generic stock is not evidence of a particular crime."
+    },
+    {
+      "seconds": [
+        53,
+        55
+      ],
+      "role": "emphasis",
+      "observed": "Closer presenter framing and larger yellow phrase precious treatment time, separate from normal subtitle styling.",
+      "requirement": "Short phrase with visual hierarchy and gentle push-in; avoid duplicating the same text as two captions."
+    },
+    {
+      "seconds": [
+        69,
+        73
+      ],
+      "role": "evidence",
+      "observed": "Second article on the same medical canvas, publisher masthead and yellow highlight.",
+      "requirement": "Reuse the visual design, but fetch the correct source for each distinct claim."
+    },
+    {
+      "seconds": [
+        80,
+        95
+      ],
+      "role": "illustration",
+      "observed": "Alternation among presenter, named-person imagery, topical full-screen footage and split-screen illustrations.",
+      "requirement": "Choose identity, context or illustration explicitly; match action and local context."
+    },
+    {
+      "seconds": [
+        100,
+        106
+      ],
+      "role": "checklist",
+      "observed": "Large numbered medicine-verification checklist builds over presenter: source, batch number, authenticity.",
+      "requirement": "Keep earlier steps visible while revealing the next step on speech; requires a true checklist renderer."
+    },
+    {
+      "seconds": [
+        108,
+        110
+      ],
+      "role": "demonstration",
+      "observed": "Full-screen phone/QR-code example during scanning instruction.",
+      "requirement": "Show the requested action and object together; do not substitute an unrelated phone portrait."
+    },
+    {
+      "seconds": [
+        112,
+        115
+      ],
+      "role": "cta",
+      "observed": "Large TEST keyword over presenter as a comment call to action.",
+      "requirement": "Use the actual spoken CTA keyword; never carry TEST into unrelated videos."
+    },
+    {
+      "seconds": [
+        121,
+        122.83
+      ],
+      "role": "outro",
+      "observed": "Portrait, medical background and social handle end card.",
+      "requirement": "Use the project owner\u2019s supplied portrait/handle/branding, not the reference identity by default."
+    }
+  ],
+  "rules": [
+    "Understand the audience question and narrative function before searching media. More asset count is not equivalent to a finished reel.",
+    "Plan mixed treatments across the whole reel: identity, context, evidence, demonstration, presenter, emphasis, checklist, CTA and outro as the dialogue warrants.",
+    "Keep ordinary captions readable and visually subordinate. Important-line typography is a separate layer, not a paragraph-sized subtitle.",
+    "Observe existing captions, split screens, article cards, emphasis text and branding; preserve useful existing edits and avoid covering or duplicating them.",
+    "Use split screen when audience should see speaker and illustration together; full-screen cutaways when detail needs the frame.",
+    "Duration follows speech and reading demand; no universal one-second ceiling. Do not insert arbitrary effects solely to meet a count.",
+    "Named identities and evidence require verified specific sources. Pexels/Pixabay are for illustration, not impersonating named people or proving news claims.",
+    "Article backgrounds can be thematic, but headlines, quotations, dates, logos and numbers must be sourced. Missing sources remain explicit requirements.",
+    "Checklist and outro are distinct treatments. If their renderer or required assets are missing, report the gap instead of silently substituting big text.",
+    "Subtle pan/zoom, transitions and emphasis must follow timeline time. Finish checks include readable subtitles, source attribution, face-safe placement and complete closing beat."
+  ]
+}

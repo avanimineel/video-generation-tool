@@ -1,0 +1,16 @@
+[
+  {
+    "start_time": 0.5,
+    "end_time": 2.8,
+    "asset_filename": "broll_1.mp4",
+    "visual_type": "broll_video",
+    "description": "Hospital hallway test clip"
+  },
+  {
+    "start_time": 3.0,
+    "end_time": 5.2,
+    "asset_filename": "broll_2.jpg",
+    "visual_type": "article_headline",
+    "description": "Evidence image test clip"
+  }
+]

@@ -1,0 +1,18 @@
+[Script Info]
+Title: Viral 9:16 Kinetic Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial Black,70,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,5,40,40,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.20,0:00:01.40,Default,,0,0,0,,{\c&H00FFFF&}STOP{\c&HFFFFFF&} {\c&HFFFFFF&}EATING {\c&H00FFFF&}THIS{\c&HFFFFFF&}
+Dialogue: 0,0:00:01.50,0:00:02.80,Default,,0,0,0,,{\c&H00FFFF&}IMMEDIATELY{\c&HFFFFFF&} {\c&HFFFFFF&}RIGHT {\c&HFFFFFF&}NOW
+Dialogue: 0,0:00:02.90,0:00:04.20,Default,,0,0,0,,{\c&H00FFFF&}POLICE{\c&HFFFFFF&} {\c&HFFFFFF&}SEIZED {\c&H00FFFF&}SAMPLES{\c&HFFFFFF&}
+Dialogue: 0,0:00:04.30,0:00:05.80,Default,,0,0,0,,{\c&HFFFFFF&}COMMENT {\c&H00FFFF&}TEST{\c&HFFFFFF&} {\c&HFFFFFF&}FOR {\c&H00FFFF&}REPORT{\c&HFFFFFF&}

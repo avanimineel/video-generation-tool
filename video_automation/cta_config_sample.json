@@ -1,0 +1,16 @@
+{
+  "cta_banner": {
+    "enabled": true,
+    "start_time": 11.5,
+    "end_time": 14.5,
+    "keyword": "TEST",
+    "headline": "COMMENT \"TEST\"",
+    "subtext": "TO RECEIVE THE OFFICIAL LAB REPORT"
+  },
+  "end_screen": {
+    "enabled": true,
+    "duration_seconds": 2.5,
+    "creator_handle": "@CREATORHANDLE",
+    "action_prompt": "LIKE • SHARE • FOLLOW FOR MORE"
+  }
+}
