@@ -6,6 +6,15 @@ from app.core.config import settings
 RATE=24000
 
 def cue_samples(kind):
+    # Designed sounds from the sound library when available; the simple synths below are the fallback.
+    from app.services import sound_library
+    designed = sound_library.load(kind, rate=RATE, mono=True) if sound_library.name_of(kind) else None
+    if designed is not None:
+        return designed * .32
+    return _builtin_samples(kind)
+
+
+def _builtin_samples(kind):
     if kind == 'highlight':
         length = .26
         t = np.arange(int(RATE * length)) / RATE

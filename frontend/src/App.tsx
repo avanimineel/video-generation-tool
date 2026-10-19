@@ -9,6 +9,8 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ProjectDrawer } from './components/projects/ProjectDrawer';
 import { VisualReasoningLogModal } from './components/modals/VisualReasoningLogModal';
 import { EditorialFeedbackModal } from './components/modals/EditorialFeedbackModal';
+import { BrandVideoModal } from './components/modals/BrandVideoModal';
+import { Studio } from './components/studio/Studio';
 import { api, DEFAULT_TEMPLATES, VisualReasoningItem } from './services/api';
 import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, MotionGraphicItem, FeedbackStats } from './types';
 
@@ -43,6 +45,8 @@ export const App: React.FC = () => {
   const [isProjectDrawerOpen, setIsProjectDrawerOpen] = useState<boolean>(false);
   const [saveError, setSaveError] = useState('');
   const [backendReady, setBackendReady] = useState(false);
+  const [isBrandVideoOpen, setIsBrandVideoOpen] = useState(false);
+  const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [saveRetry, setSaveRetry] = useState(0);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isRendering, setIsRendering] = useState<boolean>(false);
@@ -1047,6 +1051,8 @@ export const App: React.FC = () => {
         isRightSidebarCollapsed={isRightSidebarCollapsed}
         onToggleRightSidebar={() => setIsRightSidebarCollapsed((prev) => !prev)}
         onOpenFeedbackDashboard={() => setIsFeedbackModalOpen(true)}
+        onOpenBrandVideo={() => setIsBrandVideoOpen(true)}
+        onOpenStudio={() => setIsStudioOpen(true)}
         feedbackStats={feedbackStats}
       />
 
@@ -1340,6 +1346,9 @@ export const App: React.FC = () => {
         projectId={project.id}
         onOpenFeedbackDashboard={() => setIsFeedbackModalOpen(true)}
       />
+
+      {isBrandVideoOpen && <BrandVideoModal onClose={() => setIsBrandVideoOpen(false)} />}
+      {isStudioOpen && <Studio onClose={() => setIsStudioOpen(false)} />}
 
       {/* 8. Human-in-the-Loop AI Feedback & Training Data Modal */}
       <EditorialFeedbackModal

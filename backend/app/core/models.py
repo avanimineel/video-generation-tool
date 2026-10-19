@@ -92,6 +92,22 @@ class MotionGraphicItem(BaseModel):
     animation: Optional[str] = "none"  # "none", "slow_zoom_in", "slow_zoom_out", "pan_left", "pan_right"
     split_layout: Optional[str] = "none"  # "none", "split_50_50_vertical", "pip_top_right", "pip_bottom_right"
 
+# --- Audio beds (licensed music) ---
+
+class AudioTrackItem(BaseModel):
+    id: str
+    title: str
+    type: str = "music"  # "music" or "sfx"
+    url: str = ""
+    duration: float = 0.0
+    start: float = 0.0
+    volume: float = 0.35  # 0..1 of full scale, before ducking
+    duck_under_speech: bool = True
+    music_id: Optional[str] = None  # Openverse id; the file lives in the shared music cache.
+    license: Optional[str] = None
+    attribution: Optional[str] = None
+    credit_required: bool = False
+
 # --- Project Settings ---
 
 class ProjectSettings(BaseModel):
@@ -123,6 +139,7 @@ class ProjectState(BaseModel):
     graphics: List[MotionGraphicItem] = Field(default_factory=list)
     detected_language: str = "en"
     ai_ingestion: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    audio_tracks: List[AudioTrackItem] = Field(default_factory=list)
 
 # --- SQLModel Database Table for Fast Querying & Relinking ---
 

@@ -68,13 +68,15 @@ export function TimelineVideo({
   time,
   playing,
   style,
-  className
+  className,
+  rate = 1
 }: {
   src: string;
   time: number;
   playing: boolean;
   style?: React.CSSProperties;
   className?: string;
+  rate?: number;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const sync = () => {
@@ -82,9 +84,10 @@ export function TimelineVideo({
     if (!v || v.readyState < 1) return;
     const target = Number.isFinite(v.duration) && v.duration > 0 ? Math.max(0, time) % v.duration : Math.max(0, time);
     if (Math.abs(v.currentTime - target) > .2) v.currentTime = target;
+    if (v.playbackRate !== rate) v.playbackRate = rate;
     if (playing) void v.play().catch(() => {}); else v.pause();
   };
-  useEffect(sync, [src, time, playing]);
+  useEffect(sync, [src, time, playing, rate]);
   return (
     <video
       ref={ref}
@@ -209,32 +212,71 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         }
         if (graphic.template_id === 'authored_title') return null;
 
+        // Same camera maths as the export (burnin_renderer.camera_pose): scale, shift (fraction of frame), rotation.
+        const cameraPose = (animation: string, p: number, seconds: number): [number, number, number, number] => {
+          const e = p * p * (3 - 2 * p);
+          switch (animation) {
+            case "slow_zoom_in": return [1 + p * .15, 0, 0, 0];
+            case "slow_zoom_out": return [1.15 - p * .15, 0, 0, 0];
+            case "push_in": return [1 + .22 * (1 - Math.pow(1 - p, 3)), 0, 0, 0];
+            case "pan_left": return [1.1, (.5 - p) * .08, 0, 0];
+            case "pan_right": return [1.1, (p - .5) * .08, 0, 0];
+            case "tilt_up": return [1.1, 0, (.5 - p) * .08, 0];
+            case "tilt_down": return [1.1, 0, (p - .5) * .08, 0];
+            case "crane_up": return [1.08 + .06 * e, 0, (.5 - e) * .07, 0];
+            case "dutch": return [1.16, 0, 0, 2.5 + 2 * e];
+            case "handheld": return [1.06, (Math.sin(seconds * 2.1) + .6 * Math.sin(seconds * 5.3 + 1.3)) * .004,
+                                     (Math.sin(seconds * 1.7 + .4) + .5 * Math.sin(seconds * 4.7)) * .004, .25 * Math.sin(seconds * 1.3)];
+            default: return [1, 0, 0, 0];
+          }
+        };
         const getKenBurnsTransform = (g: MotionGraphicItem) => {
           if (g.template_id==="split_screen_vertical" || g.split_layout==="split_50_50_vertical") return "scale(1)";
-          if (!g.animation || g.animation === "none") return "scale(1.0)";
+          const animation = String(g.parameters?.animation || g.animation || "none");
+          if (animation === "none") return "scale(1.0)";
           const dur = Math.max(0.1, g.end - g.start);
           const progress = Math.max(0, Math.min(1, (currentTime - g.start) / dur));
-          switch (g.animation) {
-            case "slow_zoom_in":
-              return `scale(${1.0 + progress * 0.15})`;
-            case "slow_zoom_out":
-              return `scale(${1.15 - progress * 0.15})`;
-            case "pan_left":
-              return `scale(1.1) translateX(${(0.5 - progress) * 8}%)`;
-            case "pan_right":
-              return `scale(1.1) translateX(${(progress - 0.5) * 8}%)`;
-            default:
-              return "scale(1.0)";
+          const [scale, dx, dy, rotate] = cameraPose(animation, progress, currentTime - g.start);
+          // A positive shift moves the view right/down, so the picture moves the other way.
+          return `scale(${scale}) translate(${-dx * 100}%, ${-dy * 100}%) rotate(${rotate}deg)`;
+        };
+        // Speed treatment of a video cutaway (burnin_renderer.cutaway_time): source time and playback rate.
+        const cutawaySpeed = (g: MotionGraphicItem): [number, number] => {
+          const local = currentTime - g.start, dur = Math.max(.1, g.end - g.start);
+          switch (g.parameters?.speed) {
+            case "slow_motion": return [local * .5, .5];
+            case "speed_ramp": { const knee = dur * .4; return local < knee ? [local * 2, 2] : [knee * 2 + (local - knee) * .5, .5]; }
+            case "freeze_end": return local < dur * .66 ? [local, 1] : [dur * .66, 0];
+            default: return [local, 1];
           }
+        };
+        // Hand-over in and out of a cutaway (burnin_renderer.transition_mix).
+        const TRANSITIONS: Record<string, number> = { dissolve: .3, whip: .22, wipe: .3, flash: .25 };
+        const handOver = (g: MotionGraphicItem): { style: React.CSSProperties; flash: number } => {
+          const into = String(g.parameters?.transition_in || 'cut'), out = String(g.parameters?.transition_out || 'cut');
+          const local = currentTime - g.start, left = g.end - currentTime;
+          let kind = '', p = 1;
+          if (TRANSITIONS[into] && local < TRANSITIONS[into]) { kind = into; p = local / TRANSITIONS[into]; }
+          else if (TRANSITIONS[out] && left < TRANSITIONS[out]) { kind = out; p = left / TRANSITIONS[out]; }
+          const e = Math.max(0, Math.min(1, p * p * (3 - 2 * p)));
+          if (kind === 'dissolve') return { style: { opacity: e }, flash: 0 };
+          if (kind === 'wipe') return { style: { clipPath: `inset(0 ${(1 - e) * 100}% 0 0)` }, flash: 0 };
+          if (kind === 'whip') return { style: { transform: `translateX(${(1 - e) * 100}%)`, filter: `blur(${Math.sin(Math.PI * e) * 8}px)` }, flash: 0 };
+          if (kind === 'flash') return { style: {}, flash: .85 * (1 - e) };
+          return { style: {}, flash: 0 };
         };
 
         // 1. FULL SCREEN CUTAWAY INSERT (Screenshot 3 & Architecture Pillar 3)
         if (graphic.placement_mode === "insert") {
+          const hand = handOver(graphic);
+          const [cutawayTime, cutawayRate] = cutawaySpeed(graphic);
           return (
             <div
               key={graphic.id}
-              className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between bg-black overflow-hidden animate-in fade-in duration-200 select-none"
+              style={hand.style}
+              className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between bg-black overflow-hidden select-none"
             >
+              {hand.flash > 0 && <div className="absolute inset-0 z-30 bg-white" style={{ opacity: hand.flash }} />}
               {/* Media Content (Video or Animated Photo) */}
               <div className="absolute inset-0 overflow-hidden flex items-center justify-center">
                 {graphic.media_url ? (() => {
@@ -256,8 +298,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                     >
                       <TimelineVideo 
                         src={localMediaUrl(graphic.media_url)} 
-                        time={currentTime - graphic.start} 
-                        playing={isPlaying}
+                        time={cutawayTime} 
+                        playing={isPlaying && cutawayRate > 0}
+                        rate={cutawayRate || 1}
                         style={{ 
                           objectPosition: objPos,
                           transform: kbTransform || undefined,

@@ -1075,6 +1075,8 @@ def execute_plan(state,rows,run_dir):
     from app.services.title_styles import arrange_title,choose_title_style
     titles=[g for g in graphics if g.template_id in ('kinetic_typography', 'mixed_typography_title')]
     for g in titles:arrange_title(g,choose_title_style(g),state.captions)
+    from app.services.cutaway_motion import choose_motion
+    choose_motion(graphics)
     from app.services.subject_layers import prepare_subject_layers,place_titles_face_safe
     place_titles_face_safe(state,titles)
     prepare_subject_layers(state,graphics)

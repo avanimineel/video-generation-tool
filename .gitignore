@@ -36,3 +36,13 @@ backend/models/*.download
 
 # Private provider credentials; never commit or bundle.
 backend/.private/
+
+# Generated brand films (site assets belong to their owners)
+backend/brand_videos/
+backend/studio_films/
+
+# Downloaded licensed music (licences kept beside each file)
+backend/music_cache/
+
+# Sound effects rendered from code (Earshot recipes)
+backend/sound_cache/

@@ -81,7 +81,7 @@ export interface MotionGraphicItem {
   source_url?: string;
   author?: string;
   license?: string;
-  animation?: 'none' | 'slow_zoom_in' | 'slow_zoom_out' | 'pan_left' | 'pan_right';
+  animation?: 'none' | 'slow_zoom_in' | 'slow_zoom_out' | 'push_in' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'crane_up' | 'dutch' | 'handheld';
   split_layout?: 'none' | 'split_50_50_vertical' | 'pip_top_right' | 'pip_bottom_right';
 }
 
@@ -107,6 +107,10 @@ export interface AudioTrackItem {
   start: number;
   volume: number; // 0..1
   duck_under_speech?: boolean;
+  music_id?: string;
+  license?: string;
+  attribution?: string;
+  credit_required?: boolean;
 }
 
 export interface ProjectState {

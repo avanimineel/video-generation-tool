@@ -261,31 +261,113 @@ def apply_source_reframe(image, graphics, t):
     return image.crop((left,top,left+cw,top+ch)).resize((w,h),Image.Resampling.LANCZOS)
 
 
-def apply_ken_burns(img: Image.Image, animation: str, progress: float, target_w: int, target_h: int, focus_x: float = 0.5, focus_y: float = 0.5) -> Image.Image:
+def camera_pose(animation: str, progress: float, seconds: float = 0.0):
+    """(scale, shift_x, shift_y, rotate_degrees) of the virtual camera on a cutaway. Shifts are fractions of
+    the frame; a positive shift moves the view right or down. Shared by export and preview so they match."""
+    eased = progress * progress * (3 - 2 * progress)
+    if animation == "slow_zoom_in": return 1.0 + progress * 0.15, 0.0, 0.0, 0.0
+    if animation == "slow_zoom_out": return 1.15 - progress * 0.15, 0.0, 0.0, 0.0
+    if animation == "push_in": return 1.0 + 0.22 * (1 - (1 - progress) ** 3), 0.0, 0.0, 0.0  # Dolly in, decelerating.
+    if animation == "pan_left": return 1.10, (0.5 - progress) * 0.08, 0.0, 0.0  # Camera turns left: the view travels left.
+    if animation == "pan_right": return 1.10, (progress - 0.5) * 0.08, 0.0, 0.0
+    if animation == "tilt_up": return 1.10, 0.0, (0.5 - progress) * 0.08, 0.0
+    if animation == "tilt_down": return 1.10, 0.0, (progress - 0.5) * 0.08, 0.0
+    if animation == "crane_up": return 1.08 + 0.06 * eased, 0.0, (0.5 - eased) * 0.07, 0.0  # Rises while easing in.
+    if animation == "dutch": return 1.16, 0.0, 0.0, 2.5 + 2.0 * eased  # Tilted frame, slowly leaning further.
+    if animation == "handheld":
+        # A slight, deliberate shake: layered slow sines, not random jitter, so frames are reproducible.
+        dx = (math.sin(seconds * 2.1) + 0.6 * math.sin(seconds * 5.3 + 1.3)) * 0.004
+        dy = (math.sin(seconds * 1.7 + .4) + 0.5 * math.sin(seconds * 4.7)) * 0.004
+        return 1.06, dx, dy, 0.25 * math.sin(seconds * 1.3)
+    return 1.0, 0.0, 0.0, 0.0
+
+
+def apply_ken_burns(img: Image.Image, animation: str, progress: float, target_w: int, target_h: int, focus_x: float = 0.5, focus_y: float = 0.5, seconds: float = 0.0) -> Image.Image:
     base = crop_to_aspect(img, target_w, target_h, focus_x=focus_x, focus_y=focus_y)
     if not animation or animation == "none":
         return base
-    scale = 1.0
-    shift_x = 0.0
-    if animation == "slow_zoom_in":
-        scale = 1.0 + progress * 0.15
-    elif animation == "slow_zoom_out":
-        scale = 1.15 - progress * 0.15
-    elif animation == "pan_left":
-        scale = 1.10
-        shift_x = (0.5 - progress) * 0.08
-    elif animation == "pan_right":
-        scale = 1.10
-        shift_x = (progress - 0.5) * 0.08
+    scale, shift_x, shift_y, rotate = camera_pose(animation, max(0.0, min(1.0, progress)), seconds)
+    if rotate:
+        base = base.rotate(rotate, resample=Image.Resampling.BICUBIC, expand=False)
 
     new_w = max(target_w, int(target_w * scale))
     new_h = max(target_h, int(target_h * scale))
     scaled = base.resize((new_w, new_h), Image.Resampling.BILINEAR)
     cx = new_w // 2 + int(shift_x * target_w)
-    cy = new_h // 2
+    cy = new_h // 2 + int(shift_y * target_h)
     x0 = max(0, min(new_w - target_w, cx - target_w // 2))
     y0 = max(0, min(new_h - target_h, cy - target_h // 2))
     return scaled.crop((x0, y0, x0 + target_w, y0 + target_h))
+
+TRANSITION_SECONDS = {'dissolve': .3, 'whip': .22, 'wipe': .3, 'flash': .25}
+
+
+def cutaway_time(speed: str, local: float, duration: float) -> float:
+    """Source time inside a video cutaway for its speed treatment. Shared with the preview."""
+    if speed == 'slow_motion': return local * 0.5
+    if speed == 'speed_ramp':  # Fast, then suddenly slow.
+        knee = duration * 0.4
+        return local * 2.0 if local < knee else knee * 2.0 + (local - knee) * 0.5
+    if speed == 'freeze_end':  # Motion stops for the last third.
+        return min(local, duration * 0.66)
+    return local
+
+
+def transition_mix(speaker: Image.Image, cutaway: Image.Image, kind: str, p: float, entering: bool) -> Image.Image:
+    """Blend speaker and cutaway during a hand-over. p runs 0..1 from speaker to cutaway when entering,
+    and from cutaway to speaker when leaving."""
+    p = max(0.0, min(1.0, p)); eased = p * p * (3 - 2 * p)
+    a, b = (speaker, cutaway) if entering else (cutaway, speaker)
+    w, h = a.size
+    if kind == 'dissolve':
+        return Image.blend(a.convert('RGB'), b.convert('RGB'), eased)
+    if kind == 'wipe':
+        out = a.convert('RGB').copy(); edge = int(w * eased)
+        if edge > 0: out.paste(b.convert('RGB').crop((0, 0, edge, h)), (0, 0))
+        return out
+    if kind == 'whip':
+        # Fast swing: both shots travel sideways with motion blur, the new one arriving from the right.
+        shift = int(w * eased)
+        out = Image.new('RGB', (w, h))
+        out.paste(a.convert('RGB'), (-shift, 0)); out.paste(b.convert('RGB'), (w - shift, 0))
+        blur = max(0.0, 1 - abs(eased - .5) * 2) * w * .012
+        return out.filter(ImageFilter.BoxBlur(blur)) if blur > .5 else out
+    if kind == 'flash':
+        # Smash cut with a white flash that decays on the new shot.
+        flash = Image.new('RGB', (w, h), 'white')
+        return Image.blend(b.convert('RGB'), flash, max(0.0, .85 * (1 - eased)))
+    return b if p >= .5 else a
+
+
+def compose_cutaway(insert, speaker: Image.Image, t: float, canvas_w: int, canvas_h: int, fonts, cached_images, video_players) -> Image.Image:
+    """A full-screen cutaway at time t: its camera move, its speed treatment, and its hand-over in and out."""
+    params = insert.parameters
+    raw_url = params.get('media_url') or insert.media_url
+    duration = max(0.1, insert.end - insert.start); local = t - insert.start
+    progress = max(0.0, min(1.0, local / duration))
+    anim = params.get('animation') or insert.animation or "none"
+    focal_x = float(params.get('media_pos_x', insert.pos_x if insert.pos_x is not None else 0.5))
+    focal_y = float(params.get('media_pos_y', insert.pos_y if insert.pos_y is not None else 0.5))
+    frame = None
+    if raw_url and raw_url in video_players:
+        frame = video_players[raw_url].get_frame(cutaway_time(params.get('speed', 'normal'), local, duration))
+    elif raw_url and raw_url in cached_images:
+        frame = cached_images[raw_url]
+    if not frame:
+        return speaker
+    cut = apply_ken_burns(frame, anim, progress, canvas_w, canvas_h, focus_x=focal_x, focus_y=focal_y, seconds=local)
+    if params.get('scanlines') is not False:
+        cut = apply_scanlines(cut, opacity=0.35)
+    render_cutaway_badges(cut, insert, canvas_w, canvas_h, fonts)
+    speaker_frame = crop_to_aspect(speaker, canvas_w, canvas_h) if speaker.size != (canvas_w, canvas_h) else speaker
+    into, out_of = params.get('transition_in', 'cut'), params.get('transition_out', 'cut')
+    if into in TRANSITION_SECONDS and local < TRANSITION_SECONDS[into]:
+        return transition_mix(speaker_frame, cut, into, local / TRANSITION_SECONDS[into], True)
+    left = insert.end - t
+    if out_of in TRANSITION_SECONDS and left < TRANSITION_SECONDS[out_of]:
+        return transition_mix(speaker_frame, cut, out_of, 1 - left / TRANSITION_SECONDS[out_of], False)
+    return cut
+
 
 def apply_scanlines(img: Image.Image, opacity: float = 0.35) -> Image.Image:
     overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
@@ -1554,22 +1636,41 @@ class BurnInRenderer:
                 str(output_mp4)
             ]
 
+        # Audio: the speaker's voice, generated sound effects and a licensed music bed, mixed once.
+        # The bed fades in and out and is pushed down under speech (sidechain ducking).
+        extra_inputs, labels, filters = [], [], []
+        has_audio = False
+        if has_real_source:
+            with av.open(source_path) as source_container: has_audio = bool(source_container.streams.audio)
+        first_extra = 2 if has_real_source else 1
+        voice = '[1:a]' if has_audio else None
         if not subtitles_only and any(g.parameters.get('sfx_track_url') and not g.parameters.get('sfx_muted') for g in project.graphics):
             from app.services.automatic_sfx import prepare_sfx
-            sfx_path=prepare_sfx(project.id,project.graphics,project.duration_seconds)
+            sfx_path = prepare_sfx(project.id, project.graphics, project.duration_seconds)
             if sfx_path:
-                has_audio=False
-                if has_real_source:
-                    with av.open(source_path) as source_container:has_audio=bool(source_container.streams.audio)
-                position=input_args.index('-map') if '-map' in input_args else input_args.index('-c:v')
-                input_args[position:position]=['-i',str(sfx_path)]
-                sound_index=2 if has_real_source else 1
-                if has_audio:
-                    audio_index=input_args.index('1:a?');input_args[audio_index]='[mixed]'
-                    input_args[-1:-1]=['-filter_complex',f'[1:a][{sound_index}:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=0[mixed]']
-                else:
-                    if '1:a?' in input_args:input_args[input_args.index('1:a?')]=f'{sound_index}:a'
-                    else:input_args[-1:-1]=['-map','0:v','-map',f'{sound_index}:a','-c:a','aac']
+                labels.append(f'[{first_extra + len(extra_inputs)}:a]'); extra_inputs.append(str(sfx_path))
+        if not subtitles_only:
+            from app.services.music_service import local_file, bed_filter
+            for track in (t for t in getattr(project, 'audio_tracks', []) if t.type == 'music' and t.music_id):
+                path = local_file(track.music_id)
+                if not path: continue
+                index = first_extra + len(extra_inputs); extra_inputs.append(str(path))
+                length = max(.5, min(track.duration or project.duration_seconds, (project.duration_seconds or track.duration) - track.start))
+                text, bed, voice_out = bed_filter(index, track.start, length, track.volume, voice[1:-1] if (voice and track.duck_under_speech) else None)
+                filters.append(text); labels.append(bed)
+                if voice_out: voice = voice_out
+        if extra_inputs:
+            position = input_args.index('-map') if '-map' in input_args else input_args.index('-c:v')
+            for path in reversed(extra_inputs): input_args[position:position] = ['-i', path]
+            parts = ([voice] if voice else []) + labels
+            if len(parts) == 1 and not filters:
+                mix_label = parts[0].strip('[]')
+            else:
+                filters.append(f"{''.join(parts)}amix=inputs={len(parts)}:duration=longest:normalize=0,alimiter=limit=0.95:level=0[mixed]")
+                mix_label = '[mixed]'
+                input_args[-1:-1] = ['-filter_complex', ';'.join(filters), '-shortest']
+            if '1:a?' in input_args: input_args[input_args.index('1:a?')] = mix_label
+            else: input_args[-1:-1] = ['-map', '0:v', '-map', mix_label, '-c:a', 'aac']
 
         # VideoToolbox can be installed yet unavailable (busy/headless session).
         probe=subprocess.run([self.ffmpeg_bin,'-hide_banner','-loglevel','error','-f','lavfi','-i',f'color=black:s={canvas_w}x{canvas_h}:r=30','-frames:v','1','-c:v','h264_videotoolbox','-f','null','-'],capture_output=True,timeout=15)
@@ -1626,27 +1727,7 @@ class BurnInRenderer:
                     elif active_split:
                         canvas = render_split_50_50(base_speaker_frame, active_split, canvas_w, canvas_h, fonts, cached_images, video_players, t)
                     elif active_insert:
-                        raw_url = active_insert.parameters.get('media_url') or active_insert.media_url
-                        dur = max(0.1, active_insert.end - active_insert.start)
-                        prog = max(0.0, min(1.0, (t - active_insert.start) / dur))
-                        anim = active_insert.parameters.get('animation') or active_insert.animation or "none"
-                        cut_frame = None
-                        focal_x = float(active_insert.parameters.get('media_pos_x', active_insert.pos_x if active_insert.pos_x is not None else 0.5))
-                        focal_y = float(active_insert.parameters.get('media_pos_y', active_insert.pos_y if active_insert.pos_y is not None else 0.5))
-                        if raw_url and raw_url in video_players:
-                            vf = video_players[raw_url].get_frame(t - active_insert.start)
-                            if vf:
-                                cut_frame = apply_ken_burns(vf, anim, prog, canvas_w, canvas_h, focus_x=focal_x, focus_y=focal_y)
-                        elif raw_url and raw_url in cached_images and cached_images[raw_url]:
-                            cut_frame = apply_ken_burns(cached_images[raw_url], anim, prog, canvas_w, canvas_h, focus_x=focal_x, focus_y=focal_y)
-
-                        if cut_frame:
-                            if active_insert.parameters.get('scanlines') is not False:
-                                cut_frame = apply_scanlines(cut_frame, opacity=0.35)
-                            canvas = cut_frame
-                            render_cutaway_badges(canvas, active_insert, canvas_w, canvas_h, fonts)
-                        else:
-                            canvas = crop_to_aspect(base_speaker_frame, canvas_w, canvas_h)
+                        canvas = compose_cutaway(active_insert, base_speaker_frame, t, canvas_w, canvas_h, fonts, cached_images, video_players)
                     else:
                         canvas = crop_to_aspect(base_speaker_frame, canvas_w, canvas_h)
 
@@ -1722,27 +1803,7 @@ class BurnInRenderer:
                     elif active_split:
                         canvas = render_split_50_50(base_speaker_frame, active_split, canvas_w, canvas_h, fonts, cached_images, video_players, t)
                     elif active_insert:
-                        raw_url = active_insert.parameters.get('media_url') or active_insert.media_url
-                        dur = max(0.1, active_insert.end - active_insert.start)
-                        prog = max(0.0, min(1.0, (t - active_insert.start) / dur))
-                        anim = active_insert.parameters.get('animation') or active_insert.animation or "none"
-                        cut_frame = None
-                        focal_x = float(active_insert.parameters.get('media_pos_x', active_insert.pos_x if active_insert.pos_x is not None else 0.5))
-                        focal_y = float(active_insert.parameters.get('media_pos_y', active_insert.pos_y if active_insert.pos_y is not None else 0.5))
-                        if raw_url and raw_url in video_players:
-                            vf = video_players[raw_url].get_frame(t - active_insert.start)
-                            if vf:
-                                cut_frame = apply_ken_burns(vf, anim, prog, canvas_w, canvas_h, focus_x=focal_x, focus_y=focal_y)
-                        elif raw_url and raw_url in cached_images and cached_images[raw_url]:
-                            cut_frame = apply_ken_burns(cached_images[raw_url], anim, prog, canvas_w, canvas_h, focus_x=focal_x, focus_y=focal_y)
-
-                        if cut_frame:
-                            if active_insert.parameters.get('scanlines') is not False:
-                                cut_frame = apply_scanlines(cut_frame, opacity=0.35)
-                            canvas = cut_frame
-                            render_cutaway_badges(canvas, active_insert, canvas_w, canvas_h, fonts)
-                        else:
-                            canvas = base_speaker_frame
+                        canvas = compose_cutaway(active_insert, base_speaker_frame, t, canvas_w, canvas_h, fonts, cached_images, video_players)
                     else:
                         canvas = base_speaker_frame
 

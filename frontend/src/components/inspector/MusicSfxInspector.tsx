@@ -1,9 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Music, Volume2, VolumeX, Play, Pause, Plus, Trash2, 
   Sparkles, Sliders, Check, Disc, Zap, Radio
 } from 'lucide-react';
 import { ProjectState, AudioTrackItem } from '../../types';
+import { BACKEND_ORIGIN } from '../../services/api';
 
 interface MusicSfxInspectorProps {
   project: ProjectState;
@@ -11,14 +12,20 @@ interface MusicSfxInspectorProps {
   currentTime: number;
 }
 
-interface StockMusic {
+// Licensed tracks found on Openverse through the backend (CC0, CC BY or CC BY-SA, commercial use allowed).
+interface LicensedTrack {
   id: string;
   title: string;
-  genre: string;
+  creator: string;
+  license: string;
+  attribution: string;
+  credit_required: boolean;
   duration: number;
-  bpm: number;
-  freq: number;
+  preview_url: string;
 }
+
+const MUSIC_API = `${BACKEND_ORIGIN}/api/music`;
+const MOODS = ['cinematic', 'inspiring', 'corporate', 'electronic', 'upbeat', 'lofi', 'calm'];
 
 interface StockSfx {
   id: string;
@@ -28,13 +35,6 @@ interface StockSfx {
   type: 'click' | 'whoosh' | 'chime' | 'bass' | 'typewriter';
 }
 
-const STOCK_MUSIC: StockMusic[] = [
-  { id: 'mus_ambient_1', title: 'Documentary Ambient', genre: 'Minimal Synth', duration: 120, bpm: 85, freq: 220 },
-  { id: 'mus_lofi_1', title: 'Deep Thought Lo-Fi', genre: 'Lo-Fi Chill', duration: 110, bpm: 78, freq: 260 },
-  { id: 'mus_tech_1', title: 'Data Pulse', genre: 'Tech Electronic', duration: 95, bpm: 110, freq: 330 },
-  { id: 'mus_cinema_1', title: 'Clinical Precision', genre: 'Modern Cinematic', duration: 140, bpm: 90, freq: 196 },
-  { id: 'mus_clean_1', title: 'Neutral Acoustic Flow', genre: 'Corporate Clean', duration: 105, bpm: 100, freq: 293 }
-];
 
 const STOCK_SFX: StockSfx[] = [
   { id: 'sfx_click', title: 'Tactile UI Click', category: 'Interface', duration: 0.15, type: 'click' },
@@ -53,6 +53,27 @@ export const MusicSfxInspector: React.FC<MusicSfxInspectorProps> = ({
   const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null);
   const [musicVolume, setMusicVolume] = useState<number>(0.35);
   const [autoDucking, setAutoDucking] = useState<boolean>(true);
+  const [mood, setMood] = useState<string>('cinematic');
+  const [query, setQuery] = useState<string>('');
+  const [tracks, setTracks] = useState<LicensedTrack[]>([]);
+  const [searching, setSearching] = useState<boolean>(false);
+  const [musicError, setMusicError] = useState<string>('');
+  const [addingId, setAddingId] = useState<string | null>(null);
+  const previewRef = useRef<HTMLAudioElement | null>(null);
+
+  const searchMusic = async (nextMood = mood, text = query) => {
+    setSearching(true); setMusicError('');
+    try {
+      const params = new URLSearchParams({ min_seconds: String(Math.min(60, Math.ceil(project.duration_seconds || 30))) });
+      if (text.trim()) params.set('q', text.trim()); else params.set('mood', nextMood);
+      const res = await fetch(`${MUSIC_API}/search?${params}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Search failed (${res.status})`);
+      setTracks(data.tracks || []);
+    } catch (e: any) { setMusicError(e.message || 'Music search failed'); setTracks([]); }
+    finally { setSearching(false); }
+  };
+  useEffect(() => { searchMusic(); return () => { previewRef.current?.pause(); }; }, []);
 
   // Web Audio Preview Synthesizer (Instant 0-latency sound generation without broken external CDNs)
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -120,55 +141,26 @@ export const MusicSfxInspector: React.FC<MusicSfxInspectorProps> = ({
     }
   };
 
-  const toggleMusicPreview = (track: StockMusic) => {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-    if (ctx.state === 'suspended') ctx.resume();
-
-    if (playingPreviewId === track.id) {
-      if (oscRef.current) {
-        try { oscRef.current.stop(); } catch (e) {}
-        oscRef.current = null;
-      }
-      setPlayingPreviewId(null);
-      return;
-    }
-
-    if (oscRef.current) {
-      try { oscRef.current.stop(); } catch (e) {}
-      oscRef.current = null;
-    }
-
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(track.freq, now);
-    gain.gain.setValueAtTime(0.15, now);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    oscRef.current = osc;
-    setPlayingPreviewId(track.id);
+  const toggleMusicPreview = (track: LicensedTrack) => {
+    if (playingPreviewId === track.id) { previewRef.current?.pause(); setPlayingPreviewId(null); return; }
+    previewRef.current?.pause();
+    const audio = new Audio(track.preview_url);
+    audio.volume = 0.8; audio.onended = () => setPlayingPreviewId(null);
+    audio.play().catch(() => setMusicError('This preview could not be played.'));
+    previewRef.current = audio; setPlayingPreviewId(track.id);
   };
 
-  const handleAddMusicToProject = (track: StockMusic) => {
-    const newTrack: AudioTrackItem = {
-      id: `music_${track.id}_${Date.now()}`,
-      title: track.title,
-      type: 'music',
-      url: `/audio/${track.id}.mp3`,
-      duration: Math.min(project.duration_seconds || 60, track.duration),
-      start: 0,
-      volume: musicVolume,
-      duck_under_speech: autoDucking
-    };
-
-    const updated = {
-      ...project,
-      audio_tracks: [...(project.audio_tracks || []), newTrack]
-    };
-    onUpdateProject(updated);
+  // The backend downloads the track, keeps its licence and credit, and saves it as the project's music bed.
+  const handleAddMusicToProject = async (track: LicensedTrack) => {
+    setAddingId(track.id); setMusicError('');
+    try {
+      const res = await fetch(`${MUSIC_API}/${project.id}/add`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ music_id: track.id, volume: musicVolume, duck_under_speech: autoDucking }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Could not add (${res.status})`);
+      onUpdateProject(data);
+    } catch (e: any) { setMusicError(e.message || 'Could not add the track'); }
+    finally { setAddingId(null); }
   };
 
   const handleAddSfxToPlayhead = (sfx: StockSfx) => {
@@ -269,50 +261,54 @@ export const MusicSfxInspector: React.FC<MusicSfxInspectorProps> = ({
         {activeCategory === 'music' ? (
           <div className="space-y-2">
             <div className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
-              Background Music Library
+              Licensed Music (Openverse)
             </div>
+            <div className="flex flex-wrap gap-1">
+              {MOODS.map(m => (
+                <button key={m} type="button" onClick={() => { setMood(m); setQuery(''); searchMusic(m, ''); }}
+                  className={`px-2 py-1 rounded-md border text-[11px] capitalize ${mood === m && !query ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}>{m}</button>
+              ))}
+            </div>
+            <form onSubmit={e => { e.preventDefault(); searchMusic(mood, query); }} className="flex gap-1.5">
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search, e.g. warm piano"
+                className="flex-1 min-w-0 rounded-md border border-neutral-200 px-2 py-1.5 text-xs outline-none focus:border-neutral-400" />
+              <button type="submit" className="px-2.5 rounded-md border border-neutral-300 text-xs font-semibold hover:bg-neutral-50">Search</button>
+            </form>
+            {searching && <div className="text-xs text-neutral-500">Searching licensed music…</div>}
+            {musicError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5">{musicError}</div>}
+            {!searching && !musicError && tracks.length === 0 && <div className="text-xs text-neutral-500">No long instrumental tracks found. Try another mood.</div>}
 
-            {STOCK_MUSIC.map((track) => {
+            {tracks.map((track) => {
               const isPlaying = playingPreviewId === track.id;
-              const isAdded = activeAudioTracks.some((t) => t.title === track.title);
-
+              const isAdded = activeAudioTracks.some((t: AudioTrackItem) => t.music_id === track.id);
               return (
-                <div
-                  key={track.id}
-                  className="p-3 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 transition flex items-center justify-between"
-                >
+                <div key={track.id} className="p-3 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 transition flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => toggleMusicPreview(track)}
-                      className={`p-2 rounded-lg border transition cursor-pointer ${
-                        isPlaying
-                          ? 'bg-neutral-900 text-white border-neutral-900'
-                          : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border-neutral-200'
-                      }`}
-                      title={isPlaying ? 'Stop preview' : 'Play preview'}
-                    >
+                    <button type="button" onClick={() => toggleMusicPreview(track)}
+                      className={`p-2 rounded-lg border transition cursor-pointer ${isPlaying ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border-neutral-200'}`}
+                      title={isPlaying ? 'Stop preview' : 'Play preview'}>
                       {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
                     </button>
                     <div className="min-w-0">
                       <div className="font-semibold text-xs text-neutral-900 truncate">{track.title}</div>
-                      <div className="text-[10px] text-neutral-500 font-mono mt-0.5">
-                        {track.genre} • {track.bpm} BPM
+                      <div className="text-[10px] text-neutral-500 font-mono mt-0.5 truncate">
+                        {track.creator} • {Math.round(track.duration)}s • {track.license.toUpperCase()}{track.credit_required ? ' • credit needed' : ''}
                       </div>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAddMusicToProject(track)}
-                    className="px-2.5 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 text-neutral-800 text-xs font-semibold transition cursor-pointer flex items-center gap-1 shrink-0 ml-2"
-                  >
-                    <Plus className="h-3 w-3" />
-                    <span>{isAdded ? 'Add More' : 'Add'}</span>
+                  <button type="button" onClick={() => handleAddMusicToProject(track)} disabled={addingId === track.id}
+                    className="px-2.5 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 text-neutral-800 text-xs font-semibold transition cursor-pointer flex items-center gap-1 disabled:opacity-50">
+                    {isAdded ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                    <span>{addingId === track.id ? 'Adding…' : isAdded ? 'Added' : 'Use'}</span>
                   </button>
                 </div>
               );
             })}
+            {activeAudioTracks.filter((t: AudioTrackItem) => t.type === 'music' && t.attribution).map((t: AudioTrackItem) => (
+              <div key={t.id} className="text-[10px] text-neutral-600 bg-neutral-50 border border-neutral-200 rounded-md px-2 py-1.5">
+                {t.credit_required ? 'Credit to include in your post: ' : 'In use (CC0, no credit needed): '}{t.attribution}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="space-y-2">

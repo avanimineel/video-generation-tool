@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import { Play, Pause, RotateCcw, Volume2, Maximize2 } from "lucide-react";
 import { CanvasOverlay, TimelineVideo } from "./CanvasOverlay";
-import { ProjectState, ProjectSettings, MotionGraphicItem } from "../../types";
+import { ProjectState, ProjectSettings, MotionGraphicItem, AudioTrackItem } from "../../types";
 import { api, BACKEND_ORIGIN } from "../../services/api";
 
 interface VideoViewerProps {
@@ -16,6 +16,23 @@ interface VideoViewerProps {
   activeLanguageView?: 'english' | 'hindi';
   onUpdateSettings?: (settings: ProjectSettings) => void;
   onUpdateGraphic?: (graphic: MotionGraphicItem) => void;
+}
+
+// The project's licensed music bed, kept in step with the playhead. While a caption is on screen the
+// bed is lowered, a preview of the export's ducking under speech.
+function MusicBed({ track, time, playing, speaking }: { track: AudioTrackItem; time: number; playing: boolean; speaking: boolean }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  const local = time - (track.start || 0);
+  const inside = local >= 0 && local < (track.duration || 0);
+  useEffect(() => {
+    const audio = ref.current; if (!audio) return;
+    const fadeIn = Math.min(1, local / 0.6), fadeOut = Math.min(1, ((track.duration || 0) - local) / 1.5);
+    audio.volume = Math.max(0, Math.min(1, (track.volume ?? 0.35) * (speaking && track.duck_under_speech !== false ? 0.3 : 1) * Math.max(0, Math.min(fadeIn, fadeOut))));
+    if (!inside) { audio.pause(); return; }
+    if (Math.abs(audio.currentTime - local) > 0.25) audio.currentTime = local;
+    if (playing) void audio.play().catch(() => {}); else audio.pause();
+  }, [local, playing, speaking, inside, track]);
+  return <audio ref={ref} src={`${BACKEND_ORIGIN}${track.url}`} preload="auto" />;
 }
 
 export const VideoViewer: React.FC<VideoViewerProps> = ({
@@ -121,6 +138,9 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
 
   return (
     <div className="flex-1 bg-neutral-100 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
+      {(project?.audio_tracks || []).filter(t => t.type === "music" && t.music_id).map(t => (
+        <MusicBed key={t.id} track={t} time={currentTime} playing={isPlaying} speaking={captions.some(c => currentTime >= c.start && currentTime < c.end)} />
+      ))}
       {playbackError&&<p role="alert" className="absolute top-2 z-50 bg-red-50 text-red-800 p-3 rounded text-sm">{playbackError}</p>}
       {/* Aspect Ratio Video Container */}
       <div

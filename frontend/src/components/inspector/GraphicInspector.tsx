@@ -472,24 +472,54 @@ export const GraphicInspector: React.FC<GraphicInspectorProps> = ({
         <div className="grid grid-cols-3 gap-1">
           {[
             { id: 'none', label: 'Static' },
+            { id: 'push_in', label: 'Dolly In' },
             { id: 'slow_zoom_in', label: 'Zoom In' },
             { id: 'slow_zoom_out', label: 'Zoom Out' },
             { id: 'pan_left', label: 'Pan Left' },
-            { id: 'pan_right', label: 'Pan Right' }
-          ].map((anim) => (
-            <button
-              key={anim.id}
-              onClick={() => onUpdateGraphic({ ...graphic, animation: anim.id as any })}
-              className={`py-1 text-[10px] font-mono font-bold rounded transition ${
-                (graphic.animation || 'none') === anim.id
-                  ? 'bg-lime text-black shadow'
-                  : 'bg-neutral-800 text-neutral-400 hover:text-white'
-              }`}
-            >
-              {anim.label}
-            </button>
-          ))}
+            { id: 'pan_right', label: 'Pan Right' },
+            { id: 'tilt_up', label: 'Tilt Up' },
+            { id: 'tilt_down', label: 'Tilt Down' },
+            { id: 'crane_up', label: 'Crane Up' },
+            { id: 'dutch', label: 'Dutch Angle' },
+            { id: 'handheld', label: 'Handheld' }
+          ].map((anim) => {
+            const current = String(graphic.parameters?.animation || graphic.animation || 'none');
+            return (
+              <button
+                key={anim.id}
+                // The export reads parameters.animation first, so both are set; a manual choice is kept on re-plans.
+                onClick={() => onUpdateGraphic({ ...graphic, animation: anim.id as any, parameters: { ...graphic.parameters, animation: anim.id, motion_chosen: true } })}
+                className={`py-1 text-[10px] font-mono font-bold rounded transition ${
+                  current === anim.id ? 'bg-lime text-black shadow' : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                }`}
+              >
+                {anim.label}
+              </button>
+            );
+          })}
         </div>
+        {graphic.placement_mode === 'insert' && (
+          <div className="space-y-1.5 pt-1">
+            {([
+              ['speed', 'Speed', [['normal', 'Normal'], ['slow_motion', 'Slow Mo'], ['speed_ramp', 'Speed Ramp'], ['freeze_end', 'Freeze End']]],
+              ['transition_in', 'In', [['cut', 'Cut'], ['dissolve', 'Dissolve'], ['whip', 'Whip'], ['wipe', 'Wipe'], ['flash', 'Flash']]],
+              ['transition_out', 'Out', [['cut', 'Cut'], ['dissolve', 'Dissolve'], ['whip', 'Whip'], ['wipe', 'Wipe'], ['flash', 'Flash']]]
+            ] as [string, string, [string, string][]][]).map(([key, label, choices]) => (
+              <div key={key} className="flex items-center gap-1">
+                <span className="w-10 text-[9px] font-mono uppercase text-neutral-400">{label}</span>
+                <div className="flex flex-wrap gap-1">
+                  {choices.map(([value, name]) => (
+                    <button key={value}
+                      onClick={() => onUpdateGraphic({ ...graphic, parameters: { ...graphic.parameters, [key]: value, motion_chosen: true } })}
+                      className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded ${String(graphic.parameters?.[key] || (key === 'speed' ? 'normal' : 'cut')) === value ? 'bg-lime text-black' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* TV / CRT Scanlines Effect (Screenshot 3 & 4) */}

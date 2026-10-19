@@ -81,3 +81,37 @@ def test_title_pops_and_punch_in_whooshes_stay_sparse():
     def punch(start):return MotionGraphicItem(id=f'p{start}',start=start,end=start+2,template_id='source_reframe',title='Punch-in',parameters={'motion_curve':'hold','retention_camera':True})
     cues=sound_cues([title(1),title(1.6),punch(3),title(8)],20)
     assert [(c['start'],c['kind']) for c in cues]==[(1,'pop'),(3,'whoosh'),(8,'pop')]
+
+
+def test_cutaways_get_moves_and_hand_overs_that_fit():
+    from app.core.models import MotionGraphicItem
+    from app.services.cutaway_motion import choose_motion
+    def cut(id_, start, end, kind='image', **p):
+        return MotionGraphicItem(id=id_, start=start, end=end, template_id='youtube_insert', title=id_, placement_mode='insert', media_type=kind,
+                                 parameters={'editorial_generated': True, **p})
+    a = cut('a', 4, 6.5, media_pos_x=.8); b = cut('b', 6.8, 8.0); c = cut('c', 14, 16, 'video', cue_kind='action'); d = cut('d', 20, 21, 'video')
+    choose_motion([d, c, b, a])
+    assert (a.parameters['animation'], a.parameters['transition_in'], a.parameters['transition_out']) == ('push_in', 'dissolve', 'whip')
+    assert (b.parameters['animation'], b.parameters['transition_in']) == ('pan_left', 'whip') or b.parameters['animation'] in ('pan_left', 'pan_right', 'tilt_up')
+    assert b.parameters['transition_in'] == 'whip' # Back-to-back cutaways whip.
+    assert (c.parameters['speed'], c.parameters['animation'], c.parameters['transition_in']) == ('speed_ramp', 'slow_zoom_in', 'dissolve')
+    assert (d.parameters['speed'], d.parameters['transition_in']) == ('normal', 'cut') # Short cutaways cut.
+    manual = cut('m', 30, 33, animation='pan_right', motion_chosen=True); choose_motion([manual])
+    assert manual.parameters['animation'] == 'pan_right' and 'transition_in' not in manual.parameters # Editor choices are kept.
+
+
+def test_camera_moves_speed_and_transitions_render():
+    from PIL import Image, ImageDraw
+    from app.services.burnin_renderer import apply_ken_burns, camera_pose, cutaway_time, transition_mix
+    still = Image.new('RGB', (400, 300), 'gray'); ImageDraw.Draw(still).rectangle((180, 120, 220, 180), fill='red')
+    frames = {m: apply_ken_burns(still, m, .5, 180, 320, seconds=1.0) for m in ('push_in', 'pan_left', 'tilt_up', 'crane_up', 'dutch', 'handheld')}
+    assert all(f.size == (180, 320) for f in frames.values())
+    assert camera_pose('pan_left', 0)[1] > camera_pose('pan_left', 1)[1] and camera_pose('tilt_up', 0)[2] > camera_pose('tilt_up', 1)[2]
+    assert camera_pose('handheld', 0, 1.0) != camera_pose('handheld', 0, 1.3) and camera_pose('dutch', 1)[3] > camera_pose('dutch', 0)[3]
+    assert cutaway_time('slow_motion', 2, 4) == 1 and cutaway_time('freeze_end', 3.9, 4) == cutaway_time('freeze_end', 3.0, 4)
+    assert cutaway_time('speed_ramp', 1, 5) == 2 and cutaway_time('speed_ramp', 3, 5) < 5
+    a, b = Image.new('RGB', (100, 100), 'black'), Image.new('RGB', (100, 100), 'white')
+    assert transition_mix(a, b, 'dissolve', .5, True).getpixel((50, 50))[0] in range(110, 146)
+    wipe = transition_mix(a, b, 'wipe', .5, True)
+    assert wipe.getpixel((10, 50)) == (255, 255, 255) and wipe.getpixel((90, 50)) == (0, 0, 0)
+    assert transition_mix(a, b, 'flash', 0, True).getpixel((50, 50))[0] > 200 and transition_mix(a, b, 'cut', .2, True) is a

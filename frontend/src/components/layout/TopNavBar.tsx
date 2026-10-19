@@ -3,7 +3,7 @@ import {
   Film, FolderOpen, Plus, RefreshCw, Undo2, Redo2, 
   Tv, Sparkles, Send, CheckCircle2, Download, Upload,
   PanelRightClose, PanelRightOpen,
-  ChevronDown, Layers, FileVideo, Zap, Brain
+  ChevronDown, Layers, FileVideo, Zap, Brain, Clapperboard
 } from "lucide-react";
 import { ProjectState, DaVinciStatus, TwelveLabsCredits, FeedbackStats } from "../../types";
 
@@ -34,6 +34,8 @@ interface TopNavBarProps {
   isRightSidebarCollapsed?: boolean;
   onToggleRightSidebar?: () => void;
   onOpenFeedbackDashboard?: () => void;
+  onOpenBrandVideo?: () => void;
+  onOpenStudio?: () => void;
   feedbackStats?: FeedbackStats | null;
 }
 
@@ -60,6 +62,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   isRightSidebarCollapsed = false,
   onToggleRightSidebar,
   onOpenFeedbackDashboard,
+  onOpenBrandVideo,
+  onOpenStudio,
   feedbackStats
 }) => {
 
@@ -269,6 +273,30 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             {davinciStatus.is_connected ? "Resolve Live" : "Resolve Standalone"}
           </span>
         </div>
+
+        {/* Studio: films made in one go by AI, then fully editable */}
+        {onOpenStudio && (
+          <button
+            onClick={onOpenStudio}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-neutral-900 hover:bg-neutral-800 text-white border-neutral-900"
+            title="Studio: make an editable film from a website or an idea"
+          >
+            <Clapperboard className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Studio</span>
+          </button>
+        )}
+
+        {/* Brand film from a website */}
+        {onOpenBrandVideo && (
+          <button
+            onClick={onOpenBrandVideo}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-white hover:bg-neutral-50 text-neutral-900 border-neutral-200"
+            title="Make a brand film from a website"
+          >
+            <Clapperboard className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Brand film</span>
+          </button>
+        )}
 
         {/* AI Editorial Feedback & Training Button */}
         {onOpenFeedbackDashboard && (

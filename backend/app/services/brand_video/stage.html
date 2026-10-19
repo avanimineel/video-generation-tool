@@ -1,0 +1,319 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--FONTS-->
+<style>
+  /* Defaults only; the brand's own tokens are injected after this block and always win. */
+  :root { --bg: #0b0b0e; --text: #edeae2; --accent: #d4af37; --on-accent: #0b0b0e;
+          --heading: Georgia, serif; --body: 'Helvetica Neue', Arial, sans-serif; --unit: 1vmin; --weight: 400; }
+  :root { --muted: color-mix(in srgb, var(--text) 58%, transparent); --line: color-mix(in srgb, var(--text) 12%, transparent);
+          --panel: color-mix(in srgb, var(--text) 6%, var(--bg)); }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+  body { font-family: var(--body); -webkit-font-smoothing: antialiased; }
+  #backdrop, #stage { position: absolute; inset: 0; overflow: hidden; }
+  .scene { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; will-change: transform, opacity, filter, clip-path; }
+  .lines { text-align: center; font-family: var(--heading); font-weight: var(--weight); line-height: 1.06; padding: 0 6%; }
+  .line { font-size: calc(var(--unit) * 8.6); letter-spacing: -.015em; }
+  .word { display: inline-block; margin: 0 .12em; opacity: 0; }
+  .label { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; text-transform: uppercase; letter-spacing: .26em; font-size: calc(var(--unit) * 1.6); color: var(--muted); }
+
+  /* Directions: each brand gets one, from its own type, colours and field. */
+  .dir-editorial .word.accent { font-style: italic; color: var(--accent); }
+  .dir-clean { --weight: 600; }
+  .dir-clean .line { letter-spacing: -.03em; }
+  .dir-clean .word.accent { color: var(--accent); background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 92% / 100% .07em; }
+  .dir-tech { --weight: 600; }
+  .dir-tech .line { letter-spacing: -.035em; }
+  .dir-tech .word.accent { background: linear-gradient(100deg, var(--accent), var(--text)); -webkit-background-clip: text; color: transparent; }
+  .dir-bold { --weight: 800; }
+  .dir-bold .lines, .dir-bold .stack-item, .dir-bold .tile h3, .dir-bold .wordmark { text-transform: uppercase; }
+  .dir-bold .line { letter-spacing: -.02em; }
+  .dir-bold .word.accent { color: var(--accent); }
+  .dir-bold .scene.inverse { background: var(--accent); color: var(--on-accent); --muted: color-mix(in srgb, var(--on-accent) 65%, transparent); }
+  .dir-bold .scene.inverse .word.accent { color: var(--on-accent); text-decoration: underline; text-decoration-thickness: .06em; text-underline-offset: .12em; }
+
+  .backdrop-dots { position: absolute; inset: -5%; background-image: radial-gradient(var(--line) 1.2px, transparent 1.4px); background-size: calc(var(--unit) * 3.2) calc(var(--unit) * 3.2); }
+  .backdrop-blob { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; filter: blur(14vmin); opacity: .22; background: var(--accent); }
+  .backdrop-grid { position: absolute; inset: 0; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+                   background-size: calc(var(--unit) * 9) calc(var(--unit) * 9); opacity: .5; -webkit-mask-image: radial-gradient(ellipse at center, #000 20%, transparent 75%); }
+  .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(0,0,0,.45) 100%); }
+
+  .streak { position: absolute; left: -10%; width: 120%; height: calc(var(--unit) * .35); top: 50%;
+            background: linear-gradient(90deg, transparent, var(--accent) 35%, #fff 50%, var(--accent) 65%, transparent); filter: blur(1.5px); opacity: 0; }
+  .flare { position: absolute; top: 50%; width: calc(var(--unit) * 26); height: calc(var(--unit) * 26); margin: calc(var(--unit) * -13) 0 0 calc(var(--unit) * -13);
+           border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.95) 0%, var(--accent) 12%, transparent 62%); opacity: 0; mix-blend-mode: screen; }
+  .bar { position: absolute; left: 0; right: 0; margin: auto; height: calc(var(--unit) * .7); background: var(--accent); transform-origin: left; }
+
+  .grid { width: 84%; display: grid; grid-template-columns: repeat(2, 1fr); gap: calc(var(--unit) * 2.6); }
+  .grid-head { position: absolute; top: 9%; left: 0; right: 0; text-align: center; }
+  .tile { border: 1px solid var(--line); background: var(--panel); border-radius: calc(var(--unit) * 1.6); padding: calc(var(--unit) * 3); opacity: 0; }
+  .dir-clean .tile { background: #fff; box-shadow: 0 calc(var(--unit) * 1.5) calc(var(--unit) * 5) rgba(0,0,0,.08); }
+  .dir-bold .tile { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 0; }
+  .tile h3 { margin: calc(var(--unit) * 1) 0 calc(var(--unit) * 1.2); font-family: var(--heading); font-weight: var(--weight); font-size: calc(var(--unit) * 3.8); line-height: 1.1; }
+  .tile p { margin: 0; font-size: calc(var(--unit) * 2.1); line-height: 1.45; color: var(--muted); }
+  .dir-bold .tile p { color: color-mix(in srgb, var(--on-accent) 75%, transparent); }
+  .tile .num { color: var(--accent); }
+  .dir-bold .tile .num { color: var(--on-accent); }
+
+  .cards { width: 86%; display: flex; align-items: center; justify-content: space-between; gap: 5%; }
+  .portrait .cards, .portrait .grid { grid-template-columns: 1fr; }
+  .portrait .cards { flex-direction: column; justify-content: center; gap: calc(var(--unit) * 6); }
+  .lead { font-family: var(--heading); font-weight: var(--weight); font-size: calc(var(--unit) * 7); line-height: 1.06; max-width: 42%; }
+  .portrait .lead { max-width: 90%; text-align: center; }
+  .panel { position: relative; width: 48%; min-height: calc(var(--unit) * 34); border-radius: calc(var(--unit) * 2.2); background: var(--panel); border: 1px solid var(--line);
+           box-shadow: 0 calc(var(--unit) * 4) calc(var(--unit) * 10) rgba(0,0,0,.25); padding: calc(var(--unit) * 3.4); box-sizing: border-box; overflow: hidden; }
+  .dir-clean .panel { background: #fff; }
+  .portrait .panel { width: 88%; }
+  .step { position: absolute; inset: calc(var(--unit) * 3.4); }
+  .step h3 { margin: calc(var(--unit) * 2.4) 0 calc(var(--unit) * 1.6); font-family: var(--heading); font-weight: var(--weight); font-size: calc(var(--unit) * 5.2); }
+  .step p { margin: 0; font-size: calc(var(--unit) * 2.6); line-height: 1.45; color: var(--muted); }
+  .dots { position: absolute; right: calc(var(--unit) * 3.4); top: calc(var(--unit) * 3.4); display: flex; gap: calc(var(--unit) * .8); }
+  .dot { width: calc(var(--unit) * 1.1); height: calc(var(--unit) * 1.1); border-radius: 50%; background: var(--line); }
+  .dot.on { background: var(--accent); }
+  .key { position: absolute; width: calc(var(--unit) * 7); height: calc(var(--unit) * 7); border-radius: calc(var(--unit) * 1.4); background: var(--panel);
+         border: 1px solid var(--line); color: var(--text); display: flex; align-items: center; justify-content: center; font-size: calc(var(--unit) * 3);
+         box-shadow: 0 calc(var(--unit) * .9) 0 color-mix(in srgb, var(--text) 25%, var(--bg)), 0 calc(var(--unit) * 2) calc(var(--unit) * 4) rgba(0,0,0,.3); }
+
+  .counters { display: flex; gap: calc(var(--unit) * 9); align-items: flex-end; }
+  .portrait .counters { flex-direction: column; align-items: center; gap: calc(var(--unit) * 6); }
+  .counter { text-align: center; }
+  .counter .value { font-family: var(--heading); font-weight: var(--weight); font-size: calc(var(--unit) * 13); line-height: 1; }
+  .counter .what { margin-top: calc(var(--unit) * 1.4); color: var(--accent); font-size: calc(var(--unit) * 2.6); }
+  .dir-editorial .counter .what { font-family: var(--heading); font-style: italic; font-size: calc(var(--unit) * 3.4); }
+  .dir-bold .scene.inverse .counter .what { color: var(--on-accent); }
+
+  .quote-mark { font-family: Georgia, serif; font-size: calc(var(--unit) * 22); line-height: .5; color: var(--accent); text-align: center; height: calc(var(--unit) * 9); }
+  .quote .line { font-size: calc(var(--unit) * 5.6); }
+  .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .photo .scrim { position: absolute; inset: 0; background: linear-gradient(to top, color-mix(in srgb, var(--bg) 92%, transparent) 0%, color-mix(in srgb, var(--bg) 55%, transparent) 38%, transparent 70%); }
+  .photo .lines { position: absolute; left: 6%; right: 6%; bottom: 10%; text-align: left; padding: 0; }
+  .portrait .photo .lines { text-align: center; }
+  .photo .line { font-size: calc(var(--unit) * 7); }
+  .wall img { position: absolute; border-radius: calc(var(--unit) * .8); object-fit: cover; box-shadow: 0 calc(var(--unit) * 2) calc(var(--unit) * 5) rgba(0,0,0,.5); }
+  .wordmark { font-family: var(--heading); font-weight: var(--weight); font-size: calc(var(--unit) * 13); letter-spacing: -.02em; line-height: 1; }
+  .wordmark .dotmark { color: var(--accent); }
+  .logo { max-width: calc(var(--unit) * 42); max-height: calc(var(--unit) * 18); }
+  .cta { margin-top: calc(var(--unit) * 4); display: flex; align-items: center; justify-content: center; gap: calc(var(--unit) * 1.6); }
+  .cta .rule { width: calc(var(--unit) * 4); height: 1px; background: var(--accent); }
+  .cta .domain { color: var(--accent); }
+  .dir-clean .cta .pill, .dir-tech .cta .pill, .dir-bold .cta .pill { background: var(--accent); color: var(--on-accent); padding: calc(var(--unit) * 1.4) calc(var(--unit) * 2.8); border-radius: 999px; letter-spacing: .14em; }
+</style>
+<!--TOKENS-->
+</head>
+<body>
+<div id="backdrop"></div>
+<div id="stage"></div>
+<script>
+/* A seekable timeline: every frame is a pure function of time, so recording is deterministic.
+   window.seek(t) poses the whole stage at time t; nothing animates on its own. */
+const PLAN = /*PLAN*/null;
+const DIR = PLAN.direction || 'editorial';
+document.body.classList.add('dir-' + DIR);
+if (PLAN.aspect === '9:16') document.body.classList.add('portrait');
+const stage = document.getElementById('stage'), backdrop = document.getElementById('backdrop');
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const easeOut = x => 1 - Math.pow(1 - clamp(x), 3);
+const easeInOut = x => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const back = x => { x = clamp(x); const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const ramp = (t, start, length) => clamp((t - start) / length);
+const el = (tag, cls, html) => { const node = document.createElement(tag); if (cls) node.className = cls; if (html !== undefined) node.innerHTML = html; return node; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+// Backdrop texture per direction.
+if (DIR === 'editorial') backdrop.appendChild(el('div', 'vignette'));
+if (DIR === 'clean') backdrop.appendChild(el('div', 'backdrop-dots'));
+if (DIR === 'tech') { backdrop.appendChild(el('div', 'backdrop-grid')); ['-20vmax,-30vmax', '45vmax,25vmax'].forEach(p => { const b = el('div', 'backdrop-blob'); const [x, y] = p.split(','); b.style.left = x; b.style.top = y; backdrop.appendChild(b); }); }
+
+function wordsOf(line) {
+  const box = el('div', 'line');
+  line.text.split(/\s+/).forEach((w, i) => box.appendChild(el('span', 'word' + (i >= line.accent_from ? ' accent' : ''), esc(w))));
+  return box;
+}
+// Each direction reveals words its own way: soft blur rise, masked slide, tight focus, or a hard pop.
+function revealWords(root, u, start = .2, step = .11) {
+  root.querySelectorAll('.word').forEach((w, i) => {
+    const t = ramp(u, start + i * step, .5), p = easeOut(t);
+    w.style.opacity = DIR === 'bold' ? (t > 0 ? 1 : 0) : p;
+    if (DIR === 'clean') { w.style.transform = `translateY(${(1 - p) * .55}em)`; w.style.clipPath = `inset(0 0 ${(1 - p) * 100}% 0)`; }
+    else if (DIR === 'tech') { w.style.filter = `blur(${(1 - p) * 10}px)`; w.style.letterSpacing = `${(1 - p) * .2}em`; }
+    else if (DIR === 'bold') { const b = back(ramp(u, start + i * step, .32)); w.style.transform = `scale(${1.35 - .35 * b})`; }
+    else { w.style.transform = `translateY(${(1 - p) * .35}em)`; w.style.filter = `blur(${(1 - p) * 8}px)`; }
+  });
+}
+function countTo(value, p) {
+  const m = String(value).match(/^([^\d]*)(\d[\d,]*\.?\d*)(.*)$/);
+  if (!m) return value;
+  const digits = m[2].replace(/,/g, ''); const decimals = (digits.split('.')[1] || '').length;
+  const shown = (parseFloat(digits) * easeOut(p)).toFixed(decimals);
+  return m[1] + (m[2].includes(',') ? Number(shown).toLocaleString('en-US', {minimumFractionDigits: decimals}) : shown) + m[3];
+}
+const linesOf = list => { const root = el('div', 'lines'); list.forEach(l => root.appendChild(wordsOf(l))); return root; };
+
+const builders = {
+  statement: s => linesOf(s.lines),
+  sweep(s) {
+    const wrap = el('div'); wrap.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';
+    if (DIR === 'editorial') { wrap.appendChild(el('div', 'streak')); wrap.appendChild(el('div', 'flare')); }
+    const lines = linesOf(s.lines); wrap.appendChild(lines);
+    if (DIR !== 'editorial') { const bar = el('div', 'bar'); bar.style.width = '18%'; bar.style.top = '62%'; wrap.appendChild(bar); }
+    return wrap;
+  },
+  photo(s) {
+    const root = el('div', 'photo'); root.style.cssText = 'position:absolute;inset:0';
+    const img = el('img'); img.src = s.image; root.appendChild(img); root.appendChild(el('div', 'scrim')); root.appendChild(linesOf(s.lines)); return root;
+  },
+  grid(s) {
+    const root = el('div'); root.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';
+    root.appendChild(el('div', 'grid-head label', esc(s.title)));
+    const grid = el('div', 'grid');
+    s.items.forEach((item, i) => {
+      const tile = el('div', 'tile');
+      tile.appendChild(el('div', 'label', `<span class="num">0${i + 1}</span>${item.eyebrow ? ' · ' + esc(item.eyebrow) : ''}`));
+      tile.appendChild(el('h3', '', esc(item.title))); tile.appendChild(el('p', '', esc(item.body))); grid.appendChild(tile);
+    });
+    root.appendChild(grid); return root;
+  },
+  cards(s) {
+    const root = el('div', 'cards'); const lead = el('div', 'lead'); const l = wordsOf(s.lead); l.style.fontSize = 'inherit'; lead.appendChild(l);
+    const panel = el('div', 'panel'); const dots = el('div', 'dots');
+    s.items.forEach((item, i) => {
+      dots.appendChild(el('div', 'dot'));
+      const step = el('div', 'step'); step.appendChild(el('div', 'label', `Step 0${i + 1}`));
+      step.appendChild(el('h3', '', esc(item.title))); step.appendChild(el('p', '', esc(item.body))); panel.appendChild(step);
+    });
+    panel.appendChild(dots); root.appendChild(lead); root.appendChild(panel); root.appendChild(el('div', 'key', '1')); return root;
+  },
+  counters(s) {
+    const root = el('div', 'counters');
+    s.items.forEach(item => { const c = el('div', 'counter'); c.appendChild(el('div', 'value', esc(item.value))); c.appendChild(el('div', 'what', esc(item.label))); root.appendChild(c); });
+    return root;
+  },
+  quote(s) { const root = el('div', 'quote'); root.appendChild(el('div', 'quote-mark', '“')); root.appendChild(linesOf(s.lines)); root.appendChild(el('div', 'label', 'What clients say')); root.lastChild.style.textAlign = 'center'; root.lastChild.style.marginTop = 'calc(var(--unit) * 4)'; return root; },
+  wall(s) {
+    const root = el('div', 'wall'); root.style.cssText = 'position:absolute;inset:0';
+    s.images.forEach(src => { const img = el('img'); img.src = src; root.appendChild(img); });
+    const lines = linesOf([s.caption]); lines.style.cssText += ';position:absolute;inset:0;display:flex;align-items:center;justify-content:center'; root.appendChild(lines); return root;
+  },
+  end(s) {
+    const root = el('div'); root.style.textAlign = 'center';
+    if (s.logo) { const img = el('img', 'logo'); img.src = s.logo; root.appendChild(img); }
+    else root.appendChild(el('div', 'wordmark', esc(s.name) + (DIR === 'editorial' ? '<span class="dotmark">.</span>' : '')));
+    const cta = el('div', 'cta label');
+    if (DIR === 'editorial') { cta.appendChild(el('span', 'rule')); cta.appendChild(el('span', '', esc(s.cta))); cta.appendChild(el('span', '', '·')); }
+    else cta.appendChild(el('span', 'pill', esc(s.cta)));
+    cta.appendChild(el('span', 'domain', esc(s.domain))); root.appendChild(cta); return root;
+  }
+};
+
+const posers = {
+  statement(root, u) { revealWords(root, u); },
+  quote(root, u) { revealWords(root, u, .5, .07); root.firstChild.style.opacity = easeOut(ramp(u, .1, .5)); root.lastChild.style.opacity = easeOut(ramp(u, 1.2, .6)); },
+  sweep(root, u) {
+    revealWords(root, u, .55, .09);
+    const p = ramp(u, .15, 1.6);
+    if (DIR === 'editorial') {
+      root.querySelector('.streak').style.opacity = Math.sin(Math.PI * clamp(p * 1.2)) * .9;
+      const flare = root.querySelector('.flare'); flare.style.left = `${-15 + 130 * easeInOut(p)}%`; flare.style.opacity = Math.sin(Math.PI * p);
+    } else root.querySelector('.bar').style.transform = `scaleX(${easeInOut(ramp(u, .2, .9))})`;
+  },
+  photo(root, u, s) {
+    root.querySelector('img').style.transform = `scale(${1.04 + .08 * easeInOut(u / s.duration)})`;
+    root.querySelector('.scrim').style.opacity = easeOut(ramp(u, .2, .8));
+    revealWords(root, u, .6, .09);
+  },
+  grid(root, u) {
+    root.firstChild.style.opacity = easeOut(ramp(u, .1, .4));
+    root.querySelectorAll('.tile').forEach((tile, i) => {
+      const p = easeOut(ramp(u, .35 + i * .22, .55));
+      tile.style.opacity = p; tile.style.transform = DIR === 'bold' ? `scale(${.9 + .1 * back(ramp(u, .35 + i * .22, .4))})` : `translateY(${(1 - p) * 30}px)`;
+    });
+  },
+  cards(root, u, s) {
+    revealWords(root.querySelector('.lead'), u, .15, .08);
+    const steps = root.querySelectorAll('.step'), dots = root.querySelectorAll('.dot'); const per = (s.duration - 1.0) / steps.length;
+    const index = clamp(Math.floor((u - .7) / per), 0, steps.length - 1); const local = (u - .7) - index * per;
+    const panel = root.querySelector('.panel'); const enter = easeOut(ramp(u, .3, .7)); panel.style.opacity = enter;
+    panel.style.transform = `perspective(1400px) rotateY(${(1 - enter) * -14}deg) rotateX(4deg) translateY(${(1 - enter) * 40}px)`;
+    steps.forEach((step, i) => { const p = i === index ? easeOut(ramp(local, 0, .45)) : 0; step.style.opacity = p; step.style.transform = `translateY(${(1 - p) * 24}px)`; });
+    dots.forEach((d, i) => d.classList.toggle('on', i <= index));
+    // A keycap is pressed as each step arrives; the last press is Enter.
+    const key = root.querySelector('.key'); const r = panel.getBoundingClientRect(), box = root.getBoundingClientRect();
+    key.style.left = `${r.left - box.left - key.offsetWidth * .35}px`; key.style.top = `${r.bottom - box.top - key.offsetHeight * .6}px`;
+    key.textContent = index === steps.length - 1 ? '↵' : String(index + 1);
+    const press = Math.max(0, 1 - Math.abs(local - .05) / .12);
+    key.style.transform = `translateY(${press * 6}px) scale(${1 - press * .04})`; key.style.opacity = enter;
+  },
+  counters(root, u, s) {
+    root.querySelectorAll('.counter').forEach((c, i) => {
+      const start = .3 + i * .55; const p = easeOut(ramp(u, start, .5));
+      c.style.opacity = p; c.style.transform = `translateY(${(1 - p) * 30}px)`;
+      c.querySelector('.value').textContent = countTo(s.items[i].value, ramp(u, start, 1.1));
+    });
+  },
+  wall(root, u) {
+    const imgs = [...root.querySelectorAll('img')]; const W = root.offsetWidth, H = root.offsetHeight;
+    imgs.forEach((img, i) => {
+      const col = i % 4, row = Math.floor(i / 4), depth = .55 + ((i * 37) % 10) / 22, w = W * .2 * depth;
+      img.style.width = `${w}px`; img.style.height = `${w * .62}px`;
+      img.style.transform = `translate(${(col + .5) * W / 4 - w / 2}px, ${(row + .5) * H / 4 - w * .3 - u * 18 * depth}px)`; img.style.opacity = easeOut(ramp(u, i * .06, .5)) * (.45 + depth * .4);
+    });
+    revealWords(root, u, .6, .1);
+  },
+  end(root, u) {
+    const mark = root.firstChild; const p = easeOut(ramp(u, .1, .9));
+    mark.style.opacity = p; mark.style.filter = `blur(${(1 - p) * 10}px)`; mark.style.transform = `scale(${.96 + .04 * p})`;
+    const cta = root.querySelector('.cta'); const q = easeOut(ramp(u, .9, .7)); cta.style.opacity = q; cta.style.clipPath = `inset(0 ${(1 - q) * 100}% 0 0)`;
+  }
+};
+
+let cursor = 0; const OVERLAP = .45;
+const scenes = PLAN.scenes.map((s, i) => {
+  const node = el('div', 'scene'); node.appendChild(builders[s.type](s)); stage.appendChild(node);
+  // Bold films alternate the brand colour as a full background.
+  if (DIR === 'bold' && i % 2 === 1 && s.type !== 'photo') node.classList.add('inverse');
+  else if (DIR === 'bold') node.style.background = 'var(--bg)';
+  const scene = {data: s, node, start: cursor, end: cursor + s.duration}; cursor += s.duration; return scene;
+});
+window.TOTAL = cursor;
+
+function hand(kind, p, entering) {
+  // p is 0..1 through the hand-over. Returns the pose of this scene during it.
+  const q = entering ? 1 - p : p, sign = entering ? 1 : -1;
+  if (kind === 'whip') return {x: sign * q * 35, y: 0, blur: q * 18, opacity: clamp(1 - q * 2), clip: ''};
+  if (kind === 'slide') return {x: 0, y: sign * q * 8, blur: 0, opacity: 1 - q, clip: ''};
+  if (kind === 'wipe') return entering ? {x: 0, y: 0, blur: 0, opacity: 1, clip: `inset(0 ${q * 100}% 0 0)`} : {x: 0, y: 0, blur: 0, opacity: 1, clip: ''};
+  return {x: 0, y: 0, blur: 0, opacity: 1 - q, clip: ''};
+}
+
+window.seek = t => {
+  scenes.forEach((scene, i) => {
+    const next = scenes[i + 1]; const s = scene.data;
+    const visible = t >= scene.start - OVERLAP && t < scene.end + (next ? OVERLAP : 0);
+    scene.node.style.display = visible ? 'flex' : 'none';
+    if (!visible) return;
+    const u = t - scene.start;
+    let x = 0, y = 0, blur = 0, opacity = 1, clip = '';
+    if (s.transition_in !== 'none') {
+      const pose = hand(s.transition_in, easeInOut(ramp(u, -OVERLAP, OVERLAP * 2)), true);
+      x += pose.x; y += pose.y; blur += pose.blur; opacity *= pose.opacity; clip = pose.clip;
+    }
+    if (next && t > scene.end - OVERLAP) {
+      const pose = hand(next.data.transition_in, easeInOut(ramp(t, scene.end - OVERLAP, OVERLAP * 2)), false);
+      x += pose.x; y += pose.y; blur += pose.blur; opacity *= pose.opacity;
+    }
+    // Camera: a slow dolly-in, a gentle drift, or locked off.
+    const scale = s.camera === 'dolly_in' ? 1 + .05 * easeInOut(u / s.duration) : 1;
+    const drift = s.camera === 'drift' ? -1.5 * easeInOut(u / s.duration) : 0;
+    scene.node.style.zIndex = String(i + 1);
+    scene.node.style.opacity = opacity;
+    scene.node.style.transform = `translate(${x + drift}%, ${y}%) scale(${scale})`;
+    scene.node.style.filter = blur > .2 ? `blur(${blur}px)` : 'none';
+    scene.node.style.clipPath = clip;
+    posers[s.type](scene.node.firstChild, u, s);
+  });
+};
+window.seek(0);
+</script>
+</body>
+</html>
