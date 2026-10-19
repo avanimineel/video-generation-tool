@@ -1,5 +1,10 @@
 from app.core.models import CaptionItem
-from app.services.transcript_quality import transcript_issues
+from app.services.transcript_quality import (
+    drop_unreadable_captions,
+    has_enough_usable_speech,
+    is_readable_speech,
+    transcript_issues,
+)
 from app.services.translation_service import translation_service
 import pytest
 
@@ -16,6 +21,37 @@ def test_corrupt_marks_replacement_and_reversed_timing_detected():
 
 def test_valid_hindi_and_numbers_are_not_corruption():
     assert transcript_issues([cap('७'),cap('कैंसर का इलाज',1,2),cap('CAR T-cell therapy',2,3)])==[]
+
+
+def test_punctuation_only_hindi_danda_is_unreadable():
+    assert not is_readable_speech('। । ।')
+    assert not is_readable_speech('। ।')
+    assert is_readable_speech('कैंसर का इलाज')
+
+
+def test_drop_punctuation_only_captions_keeps_readable_hindi():
+    """Podcast intro silence often yields danda-only Whisper lines before real speech."""
+    captions = [
+        cap('। । ।', 0.0, 0.8),
+        cap('। ।', 0.8, 1.2),
+        cap('। । ।', 1.2, 1.6),
+        cap('नमस्ते दोस्तों', 2.0, 3.0),
+        cap('आज हम बात करेंगे', 3.0, 4.5),
+    ]
+    kept, dropped = drop_unreadable_captions(captions)
+    assert len(dropped) == 3
+    assert all('no letters or digits' in d['reason'] for d in dropped)
+    assert [c.text for c in kept] == ['नमस्ते दोस्तों', 'आज हम बात करेंगे']
+    assert transcript_issues(kept) == []
+    assert has_enough_usable_speech(len(kept), len(captions))
+
+
+def test_drop_unreadable_fails_closed_when_almost_nothing_remains():
+    captions = [cap('। । ।'), cap('�'), cap('ू़ी।')]
+    kept, dropped = drop_unreadable_captions(captions)
+    assert kept == []
+    assert len(dropped) == 3
+    assert not has_enough_usable_speech(len(kept), len(captions))
 
 
 def test_translation_does_not_send_corrupt_text_to_provider(monkeypatch):
