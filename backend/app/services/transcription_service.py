@@ -1,8 +1,12 @@
 import re
 import os
+import shutil
 from typing import List, Dict, Any, Tuple, Optional
 from app.core.models import CaptionItem, WordTiming, CaptionStyle, MotionGraphicItem
+from app.core.logging_setup import format_exception_detail, get_logger, stderr_tail
 from app.services.media_search_service import media_search_service
+
+logger = get_logger(__name__)
 
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
@@ -228,7 +232,12 @@ class TranscriptionService:
                     num_workers=1
                 )
             except Exception as e:
-                print(f"Failed to initialize faster-whisper ({target_size}):", e)
+                logger.exception(
+                    "whisper_model_init_failed",
+                    event="whisper_model_init_failed",
+                    model_size=target_size,
+                    error_detail=format_exception_detail(e),
+                )
                 if target_size != 'base':
                     return cls.get_whisper_model('base')
                 return None
@@ -263,22 +272,94 @@ class TranscriptionService:
         audio_target = media_path
         ext = os.path.splitext(media_path)[1].lower()
         if ext in ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']:
+            from app.core.config import settings
+            wav_cand = os.path.splitext(media_path)[0] + "_16k.wav"
+            ffmpeg_bin = settings.ffmpeg_bin
+            if not ffmpeg_bin or not (os.path.isfile(ffmpeg_bin) and os.access(ffmpeg_bin, os.X_OK)):
+                which = shutil.which('ffmpeg')
+                logger.error(
+                    "ffmpeg_bin_missing",
+                    event="ffmpeg_bin_missing",
+                    ffmpeg_bin=ffmpeg_bin,
+                    which_ffmpeg=which,
+                    media_path=media_path,
+                    output_path=wav_cand,
+                    model_size=target_model,
+                )
+                raise FileNotFoundError(
+                    f"ffmpeg_bin missing or not executable: {ffmpeg_bin!r}"
+                    + (f" (PATH has ffmpeg at {which})" if which else " (ffmpeg not on PATH)")
+                )
             try:
-                from app.core.config import settings
-                wav_cand = os.path.splitext(media_path)[0] + "_16k.wav"
                 if not os.path.exists(wav_cand) or os.path.getmtime(media_path) > os.path.getmtime(wav_cand):
                     import subprocess
-                    subprocess.run(
-                        [settings.ffmpeg_bin, "-y", "-i", media_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", wav_cand],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=True
+                    cmd = [
+                        ffmpeg_bin, "-y", "-i", media_path,
+                        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", wav_cand,
+                    ]
+                    logger.info(
+                        "ffmpeg_extract_start",
+                        event="ffmpeg_extract_start",
+                        ffmpeg_bin=ffmpeg_bin,
+                        media_path=media_path,
+                        output_path=wav_cand,
+                        cmd=" ".join(cmd),
+                        model_size=target_model,
+                    )
+                    completed = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    tail = stderr_tail(completed.stderr)
+                    if completed.returncode != 0:
+                        logger.error(
+                            "ffmpeg_extract_failed",
+                            event="ffmpeg_extract_failed",
+                            ffmpeg_bin=ffmpeg_bin,
+                            media_path=media_path,
+                            output_path=wav_cand,
+                            returncode=completed.returncode,
+                            stderr_tail=tail,
+                            model_size=target_model,
+                        )
+                        raise RuntimeError(
+                            f"ffmpeg extract failed rc={completed.returncode} bin={ffmpeg_bin}: {tail or 'no stderr'}"
+                        )
+                    logger.info(
+                        "ffmpeg_extract_end",
+                        event="ffmpeg_extract_end",
+                        ffmpeg_bin=ffmpeg_bin,
+                        media_path=media_path,
+                        output_path=wav_cand,
+                        returncode=completed.returncode,
+                        stderr_tail=tail,
+                        model_size=target_model,
                     )
                 if os.path.exists(wav_cand):
                     audio_target = wav_cand
             except Exception as e:
-                print(f"[Whisper] 16kHz audio extraction notice: {e}")
-                audio_target = media_path
+                detail = format_exception_detail(e)
+                detail.update({
+                    "ffmpeg_bin": ffmpeg_bin,
+                    "media_path": media_path,
+                    "output_path": wav_cand,
+                    "model_size": target_model,
+                })
+                logger.exception(
+                    "ffmpeg_extract_error",
+                    event="ffmpeg_extract_error",
+                    ffmpeg_bin=ffmpeg_bin,
+                    media_path=media_path,
+                    output_path=wav_cand,
+                    model_size=target_model,
+                    error_detail=detail,
+                )
+                # Re-raise so auto-produce can persist structured error_detail;
+                # silent fallback to demuxing video often yields opaque Errno 5 on EC2.
+                raise
 
         # Use beam search for coherent multilingual speech rather than greedy decoding.
         beam_sz = 5
@@ -301,7 +382,14 @@ class TranscriptionService:
         for seg in segments:
             reason = hallucinated(seg)
             if reason:
-                print(f"[Transcription] Dropped {seg.start:.2f}-{seg.end:.2f}s ({reason}): {seg.text.strip()[:60]!r}")
+                logger.info(
+                    "whisper_segment_dropped",
+                    event="whisper_segment_dropped",
+                    reason=reason,
+                    start=round(float(seg.start), 2),
+                    end=round(float(seg.end), 2),
+                    text_preview=(seg.text or "").strip()[:60],
+                )
                 continue
             # Extract acoustic words from this specific segment
             seg_words = []
@@ -470,7 +558,12 @@ class TranscriptionService:
             if caps:
                 return lang, caps
         except Exception as e:
-            print("Gemini transcription error:", e)
+            logger.exception(
+                "gemini_transcription_failed",
+                event="gemini_transcription_failed",
+                media_path=audio_path,
+                error_detail=format_exception_detail(e),
+            )
         return self.generate_timeline_placeholders(30.0)
 
     def enrich_captions_with_keywords(self, captions: List[CaptionItem]) -> List[CaptionItem]:

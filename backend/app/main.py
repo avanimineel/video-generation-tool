@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.logging_setup import configure_logging, get_logger
 from app.api.projects import router as projects_router
 from app.api.media import router as media_router
 from app.api.subtitles import router as subtitles_router
@@ -15,10 +16,16 @@ from app.api.brand_video import router as brand_video_router
 from app.api.studio import router as studio_router
 from app.api.music import router as music_router
 
+logger = get_logger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Structured JSON (or LOG_FORMAT=kv) to stderr for EC2 / journald operators.
+    configure_logging()
     init_db()
+    logger.info("app_startup", event="app_startup", version=settings.version)
     yield
+    logger.info("app_shutdown", event="app_shutdown")
 
 app = FastAPI(
     title=settings.app_name,
