@@ -1969,14 +1969,12 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
       );
     })}
 
-      {/* 4. Render Active Captions with Click-and-Drag (Suppressed when hook/title is active) */}
+      {/* 4. Render Active Captions with Click-and-Drag (only suppress when a title explicitly requests it) */}
       {visibleCaptions.filter(() => {
         const isTitleActive = graphics.some(
           g => g.start <= currentTime && currentTime < g.end && (
-            g.template_id === 'kinetic_typography' ||
-            Boolean(g.parameters?.title_style) ||
-            g.track === 'V5' ||
-            g.parameters?.suppress_subtitles === true
+            g.parameters?.suppress_subtitles === true ||
+            (g.template_id === 'kinetic_typography' && g.parameters?.suppress_subtitles !== false && g.placement_mode === 'insert')
           )
         );
         return !isTitleActive;
@@ -1988,7 +1986,10 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         const textToDisplay =
           activeLanguageView === 'hindi'
             ? caption.text
-            : caption.translated_text || caption.text;
+            : (caption.translated_text || caption.text);
+
+        // Automatic layout can store 8–24px sizes meant for burn-in; keep a readable floor in the studio preview.
+        const displayFontSize = Math.max(28, Number(style.font_size) || 32);
 
         // Check if a graphic / split-screen is active at this moment
         const activeGraphic = graphics.find(g => currentTime >= g.start && currentTime <= g.end);
@@ -2012,12 +2013,22 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         const isPerWord = style.has_background && contrastMode === 'per_word' && !isDocMinimalist;
         const isPill = style.has_background && contrastMode === 'pill' && !isDocMinimalist;
 
-        const containerBg = isDocMinimalist || isPerWord
+        // Apply background alpha on the color only — never set opacity on the caption node
+        // (CSS opacity on the parent would fade the glyph text and make subtitles look "missing").
+        const bgAlpha = Math.max(0, Math.min(1, style.background_opacity ?? 0.75));
+        const containerBg = isDocMinimalist || isPerWord || !style.has_background
           ? "transparent"
-          : (style.has_background ? style.background_color : "transparent");
-        const containerOpacity = isDocMinimalist || isPerWord
-          ? 1
-          : (style.has_background ? style.background_opacity : 1);
+          : (() => {
+              const raw = style.background_color || "#000000";
+              if (raw.startsWith("rgba") || raw.startsWith("rgb")) return raw;
+              const hex = raw.replace("#", "");
+              const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+              if (full.length !== 6) return `rgba(0,0,0,${bgAlpha})`;
+              const r = parseInt(full.slice(0, 2), 16);
+              const g = parseInt(full.slice(2, 4), 16);
+              const b = parseInt(full.slice(4, 6), 16);
+              return `rgba(${r},${g},${b},${bgAlpha})`;
+            })();
         const containerRadius = isPill
           ? "9999px"
           : `${style.corner_radius ?? 12}px`;
@@ -2032,7 +2043,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
               transform: "translate(-50%, -50%)",
               cursor: isDragging ? "grabbing" : "grab"
             }}
-            className={`absolute z-20 group transition-shadow select-none max-w-[85%] text-center ${
+            className={`absolute z-40 group transition-shadow select-none max-w-[90%] text-center pointer-events-auto ${
               isSelected ? "ring-2 ring-lime ring-offset-2 ring-offset-black" : ""
             }`}
           >
@@ -2047,12 +2058,11 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
             <div
               style={{
                 backgroundColor: containerBg,
-                opacity: containerOpacity,
                 borderRadius: containerRadius,
-                padding: isDocMinimalist || isPerWord ? "2px 4px" : `${style.padding_y}px ${style.padding_x}px`,
+                padding: isDocMinimalist || isPerWord ? "2px 4px" : `${style.padding_y ?? 10}px ${style.padding_x ?? 18}px`,
                 boxShadow: !isDocMinimalist && !isPerWord && style.has_background && style.shadow_blur
                   ? `${style.shadow_offset_x}px ${style.shadow_offset_y}px ${style.shadow_blur}px ${style.shadow_color}`
-                  : "none"
+                  : "0 2px 8px rgba(0,0,0,0.45)"
               }}
               className={`inline-block transition-all ${isDocMinimalist || isPerWord ? "" : "backdrop-blur-sm"}`}
             >
@@ -2125,15 +2135,16 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                       <span
                         key={offsetKey + wIdx}
                         style={{
-                          fontSize: `${style.font_size || 32}px`,
-                          color: wordColor,
+                          fontSize: `${displayFontSize}px`,
+                          color: wordColor || "#FFFFFF",
                           transform,
-                          textShadow,
+                          textShadow: textShadow === "none"
+                            ? "0 2px 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95)"
+                            : textShadow,
                           fontFamily: style.font_family || "Montserrat, sans-serif",
                           fontStyle: "normal",
                           fontWeight: style.font_weight || "700",
                           backgroundColor: isPerWord ? style.background_color : undefined,
-                          opacity: isPerWord ? style.background_opacity : undefined,
                           borderRadius: isPerWord ? `${Math.min(style.corner_radius ?? 6, 16)}px` : undefined,
                           padding: isPerWord ? `${Math.max(2, style.padding_y)}px ${Math.max(4, style.padding_x)}px` : undefined,
                           margin: isPerWord ? "0 2px" : undefined
@@ -2157,9 +2168,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                       style={{
                         fontFamily: style.font_family,
                         fontWeight: style.font_weight,
-                        fontSize: `${style.font_size}px`,
-                        lineHeight: style.line_height,
-                        letterSpacing: `${style.letter_spacing}px`,
+                        fontSize: `${displayFontSize}px`,
+                        lineHeight: style.line_height || 1.2,
+                        letterSpacing: `${style.letter_spacing ?? 0}px`,
                         textTransform: style.is_uppercase ? "uppercase" : "none"
                       }}
                       className="flex flex-nowrap items-center justify-center gap-x-2 whitespace-nowrap"
@@ -2169,8 +2180,8 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                   );
                 }
 
-                // Dual-Line (2 Lines) mode
-                const rawText = caption.translated_text || caption.text;
+                // Dual-Line (2 Lines) mode — prefer active language text for line breaks
+                const rawText = textToDisplay || caption.translated_text || caption.text;
                 let line1: typeof caption.words = [];
                 let line2: typeof caption.words = [];
 
@@ -2192,9 +2203,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                     style={{
                       fontFamily: style.font_family,
                       fontWeight: style.font_weight,
-                      fontSize: `${style.font_size}px`,
-                      lineHeight: style.line_height,
-                      letterSpacing: `${style.letter_spacing}px`,
+                      fontSize: `${displayFontSize}px`,
+                      lineHeight: style.line_height || 1.2,
+                      letterSpacing: `${style.letter_spacing ?? 0}px`,
                       textTransform: style.is_uppercase ? "uppercase" : "none"
                     }}
                     className="flex flex-col items-center justify-center gap-y-1"
@@ -2213,14 +2224,15 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 /* Fallback if words array is not yet split */
                 <span
                   style={{
-                    fontFamily: style.font_family,
-                    fontWeight: style.font_weight,
-                    fontSize: `${style.font_size}px`,
-                    color: style.text_color,
-                    lineHeight: style.line_height,
-                    letterSpacing: `${style.letter_spacing}px`,
+                    fontFamily: style.font_family || "Montserrat, sans-serif",
+                    fontWeight: style.font_weight || "700",
+                    fontSize: `${displayFontSize}px`,
+                    color: style.text_color || "#FFFFFF",
+                    lineHeight: style.line_height || 1.2,
+                    letterSpacing: `${style.letter_spacing ?? 0}px`,
                     textTransform: style.is_uppercase ? "uppercase" : "none",
-                    whiteSpace: style.max_lines === 1 ? "nowrap" : "pre-line"
+                    whiteSpace: style.max_lines === 1 ? "nowrap" : "pre-line",
+                    textShadow: "0 2px 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95)"
                   }}
                   className="font-extrabold"
                 >
