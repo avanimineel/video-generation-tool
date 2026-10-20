@@ -169,8 +169,8 @@ def render(project,plan,folder,progress=lambda _:None):
         for scene in plan['scenes']:
             if scene['kind']=='broll' and scene['path'] not in clips:clips[scene['path']]=Clip(scene['path'])
         ff=settings.ffmpeg_bin
-        probe=subprocess.run([ff,'-v','error','-f','lavfi','-i','color=s=1080x1920:r=30','-frames:v','1','-c:v','h264_videotoolbox','-f','null','-'],capture_output=True)
-        codec=['-c:v','h264_videotoolbox','-b:v','10M'] if probe.returncode==0 else ['-c:v','libx264','-preset','veryfast','-crf','19','-threads','4']
+        from app.services.ffmpeg_encoder import resolve_video_encoder
+        _codec,codec,_reason=resolve_video_encoder(ff,bitrate='10M',crf='19',probe_size=(1080,1920))
         with (folder/'render.log').open('w') as log:
             proc=subprocess.Popen([ff,'-y','-v','error','-f','rawvideo','-pix_fmt','rgb24','-s',f"{plan['width']}x{plan['height']}",'-r',str(plan['fps']),'-i','pipe:0','-i',str(source),'-map','0:v','-map','1:a?','-t',str(plan['duration']),*codec,'-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',str(temporary)],stdin=subprocess.PIPE,stderr=log)
             fonts=FontManager(); total=math.ceil(plan['duration']*plan['fps'])

@@ -1614,12 +1614,16 @@ class BurnInRenderer:
 
         fps = float(project.fps or 30.0)
 
+        from app.services.ffmpeg_encoder import resolve_video_encoder
+        _codec, video_enc_args, _enc_reason = resolve_video_encoder(
+            self.ffmpeg_bin, bitrate="4000k", probe_size=(canvas_w, canvas_h)
+        )
         if has_real_source:
             input_args = [
                 "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{canvas_w}x{canvas_h}", "-pix_fmt", "rgb24", "-r", str(fps), "-i", "-",
                 "-i", source_path,
                 "-map", "0:v", "-map", "1:a?",
-                "-c:v", "h264_videotoolbox", "-b:v", "4000k",
+                *video_enc_args,
                 "-c:a", "aac",
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
@@ -1629,7 +1633,7 @@ class BurnInRenderer:
             duration = max(3.0, project.duration_seconds or 10.0)
             input_args = [
                 "-f", "rawvideo", "-vcodec", "rawvideo", "-s", f"{canvas_w}x{canvas_h}", "-pix_fmt", "rgb24", "-r", str(fps), "-i", "-",
-                "-c:v", "h264_videotoolbox", "-b:v", "4000k",
+                *video_enc_args,
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 "-t", str(duration),
@@ -1672,11 +1676,7 @@ class BurnInRenderer:
             if '1:a?' in input_args: input_args[input_args.index('1:a?')] = mix_label
             else: input_args[-1:-1] = ['-map', '0:v', '-map', mix_label, '-c:a', 'aac']
 
-        # VideoToolbox can be installed yet unavailable (busy/headless session).
-        probe=subprocess.run([self.ffmpeg_bin,'-hide_banner','-loglevel','error','-f','lavfi','-i',f'color=black:s={canvas_w}x{canvas_h}:r=30','-frames:v','1','-c:v','h264_videotoolbox','-f','null','-'],capture_output=True,timeout=15)
-        if probe.returncode:
-            input_args[input_args.index('h264_videotoolbox')]='libx264'
-            input_args[-1:-1]=['-preset','veryfast','-threads','4']
+        # Encoder already probed via resolve_video_encoder (NVENC → VideoToolbox → libx264).
         cmd = [self.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", *input_args]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

@@ -2,7 +2,15 @@ import re
 import os
 from typing import List, Dict, Any, Tuple, Optional
 from app.core.models import CaptionItem, WordTiming, CaptionStyle, MotionGraphicItem
+from app.core.logging_setup import get_logger, format_exception_detail
 from app.services.media_search_service import media_search_service
+from app.services.whisper_device import (
+    load_whisper_model,
+    resolve_whisper_device,
+    whisper_cache_key,
+)
+
+logger = get_logger(__name__)
 
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
@@ -213,26 +221,39 @@ class TranscriptionService:
     _whisper_models: Dict[str, Any] = {}
 
     @classmethod
+    def clear_whisper_model_cache(cls):
+        """Test helper: drop cached WhisperModel instances."""
+        cls._whisper_models.clear()
+
+    @classmethod
     def get_whisper_model(cls, model_size: Optional[str] = None):
         target_size = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
-        if target_size not in cls._whisper_models:
-            try:
-                os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-                from faster_whisper import WhisperModel
-                n_threads = min(8, max(4, os.cpu_count() or 4))
-                cls._whisper_models[target_size] = WhisperModel(
-                    target_size,
-                    device='cpu',
-                    compute_type='int8',
-                    cpu_threads=n_threads,
-                    num_workers=1
-                )
-            except Exception as e:
-                print(f"Failed to initialize faster-whisper ({target_size}):", e)
-                if target_size != 'base':
-                    return cls.get_whisper_model('base')
-                return None
-        return cls._whisper_models.get(target_size)
+        # Probe intended device for cache key; load_whisper_model may fall back to CPU.
+        intended_device, intended_compute, _ = resolve_whisper_device()
+        cache_key = whisper_cache_key(target_size, intended_device, intended_compute)
+        if cache_key in cls._whisper_models:
+            return cls._whisper_models[cache_key]
+        # Also hit CPU cache if a prior CUDA attempt already fell back.
+        cpu_key = whisper_cache_key(target_size, 'cpu', resolve_whisper_device('cpu')[1])
+        if intended_device == 'cuda' and cpu_key in cls._whisper_models:
+            return cls._whisper_models[cpu_key]
+
+        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+        try:
+            model, device, compute_type, reason = load_whisper_model(target_size)
+            key = whisper_cache_key(target_size, device, compute_type)
+            cls._whisper_models[key] = model
+            return model
+        except Exception as e:
+            logger.exception(
+                "whisper_model_init_failed",
+                event="whisper_model_init_failed",
+                model_size=target_size,
+                error_detail=format_exception_detail(e),
+            )
+            if target_size != 'base':
+                return cls.get_whisper_model('base')
+            return None
 
     def chunk_segment_words(self, words: List[Dict[str, Any]], words_per_caption: int = 3) -> List[List[Dict[str, Any]]]:
         if not words:
