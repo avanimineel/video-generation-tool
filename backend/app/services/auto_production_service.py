@@ -256,22 +256,72 @@ class AutoProductionService:
                 caption_count=len(state.captions),
             )
 
-        # Never ask translation to invent words from structurally corrupt ASR.
-        from app.services.transcript_quality import transcript_issues
+        # Drop punctuation-only / replacement-char ASR noise (e.g. Hindi danda
+        # bursts at podcast intro silence). Never invent replacement words.
+        from app.services.transcript_quality import (
+            drop_unreadable_captions, has_enough_usable_speech, transcript_issues)
+
+        original_caption_count = len(state.captions)
+        kept, dropped = drop_unreadable_captions(state.captions)
+        if dropped:
+            reason_counts = {}
+            for item in dropped:
+                reason_counts[item['reason']] = reason_counts.get(item['reason'], 0) + 1
+            reason_summary = ', '.join(f'{count}× {reason}' for reason, count in reason_counts.items())
+            _mark_job_stage(project_id, "drop_unreadable_captions")
+            logger.info(
+                "drop_unreadable_captions",
+                event="drop_unreadable_captions",
+                project_id=project_id,
+                dropped_count=len(dropped),
+                kept_count=len(kept),
+                original_count=original_caption_count,
+                reason_summary=reason_summary,
+            )
+            write_json(pdir / 'transcription' / 'dropped_unreadable.json', {
+                'video_hash': video_hash,
+                'dropped_count': len(dropped),
+                'kept_count': len(kept),
+                'original_count': original_caption_count,
+                'dropped': dropped,
+            })
+            state.captions = kept
+            if kept:
+                write_json(pdir / 'transcription' / 'native_source.json', {
+                    'video_hash': video_hash,
+                    'language': state.detected_language,
+                    'captions': [c.model_dump() for c in kept],
+                    'dropped_unreadable_count': len(dropped),
+                    'timing_basis': 'ASR word estimates; not independently certified',
+                })
+
         speech_issues = transcript_issues(state.captions)
-        if speech_issues:
+        # Only treat "almost nothing left" as a hard problem when we actually
+        # filtered unreadable lines out of a non-empty transcript.
+        insufficient_speech = (
+            bool(dropped)
+            and not has_enough_usable_speech(len(state.captions), original_caption_count)
+        )
+        if speech_issues or insufficient_speech:
+            reject_issues = speech_issues or [
+                'almost no usable speech remained after dropping unreadable captions'
+            ]
             _mark_job_stage(project_id, "transcript_quality_reject")
             logger.warning(
                 "transcript_quality_reject",
                 event="transcript_quality_reject",
                 project_id=project_id,
-                issue_count=len(speech_issues),
-                issues="; ".join(speech_issues[:5]),
+                issue_count=len(reject_issues),
+                issues="; ".join(reject_issues[:5]),
                 captions_existed=captions_existed,
                 model_size=model_size,
+                dropped_unreadable_count=len(dropped),
+                insufficient_speech=insufficient_speech,
             )
             write_json(pdir / 'transcription' / 'rejected_source.json', {
-                'video_hash': video_hash, 'issues': speech_issues,
+                'video_hash': video_hash,
+                'issues': reject_issues,
+                'dropped_unreadable_count': len(dropped),
                 'captions': [c.model_dump() for c in state.captions]})
             try:
                 _mark_job_stage(project_id, "whisper_medium_retry")
@@ -286,21 +336,36 @@ class AutoProductionService:
                 )
                 repaired_lang, repaired = transcription_service.transcribe_with_whisper(
                     media_file, words_per_caption=3, task='transcribe', model_size='medium')
-                remaining = transcript_issues(repaired)
-                if not repaired or remaining:
-                    raise ValueError('; '.join(remaining[:5]) or 'No speech recognized')
+                repaired_kept, repaired_dropped = drop_unreadable_captions(repaired or [])
+                if repaired_dropped:
+                    logger.info(
+                        "whisper_medium_retry_drop_unreadable",
+                        event="whisper_medium_retry_drop_unreadable",
+                        project_id=project_id,
+                        dropped_count=len(repaired_dropped),
+                        kept_count=len(repaired_kept),
+                    )
+                remaining = transcript_issues(repaired_kept)
+                if (not repaired_kept or remaining
+                        or not has_enough_usable_speech(len(repaired_kept), max(len(repaired or []), 1))):
+                    raise ValueError(
+                        '; '.join(remaining[:5])
+                        or 'Almost no usable speech remained after dropping unreadable captions'
+                    )
                 state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_layout_pending': True}
                 state.detected_language = repaired_lang
-                state.captions = repaired
+                state.captions = repaired_kept
                 write_json(pdir / 'transcription' / 'native_source.json', {
                     'video_hash': video_hash, 'language': repaired_lang,
-                    'captions': [c.model_dump() for c in repaired],
-                    'recovery_model': 'medium', 'timing_basis': 'ASR estimates; not independently certified'})
+                    'captions': [c.model_dump() for c in repaired_kept],
+                    'recovery_model': 'medium',
+                    'dropped_unreadable_count': len(repaired_dropped),
+                    'timing_basis': 'ASR estimates; not independently certified'})
                 logger.info(
                     "whisper_medium_retry_ok",
                     event="whisper_medium_retry_ok",
                     project_id=project_id,
-                    caption_count=len(repaired),
+                    caption_count=len(repaired_kept),
                 )
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
