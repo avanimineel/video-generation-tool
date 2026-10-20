@@ -46,17 +46,18 @@ class AutoProductionService:
             "summary": ingestion.get("summary", {})
         }
 
-    def run_pipeline(self, project_id, force=False, model_size="base"):
+    def run_pipeline(self, project_id, force=False, model_size="base", mode=None):
         if not self._lock.acquire(blocking=False):
             return {'success':False,'error':'An automatic edit is already running. Wait for it to finish.'}
-        try:return self._run_pipeline(project_id,force,model_size)
+        try:return self._run_pipeline(project_id,force,model_size,mode=mode)
         finally:self._lock.release()
 
     def _run_pipeline(
         self,
         project_id: str,
         force: bool = False,
-        model_size: str = "base"
+        model_size: str = "base",
+        mode=None,
     ) -> Dict[str, Any]:
         """
         Executes the zero-click auto-production pipeline:
@@ -112,7 +113,14 @@ class AutoProductionService:
                 "ingestion": current_ingestion
             }
 
-        print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}'...")
+        from app.services.auto_produce_mode import (
+            CAPTIONS_ONLY_MESSAGE,
+            cloud_readiness,
+            describe_mode,
+            resolve_auto_produce_mode,
+        )
+        produce_mode = resolve_auto_produce_mode(mode)
+        print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}' (mode={produce_mode})...")
 
         from app.services.editorial_planner import write_json
         from uuid import uuid4
@@ -224,15 +232,77 @@ class AutoProductionService:
 
         if translation_errors:
             report = {'status': 'blocked', 'run_id': 'translation-needs-review',
-                      'errors': translation_errors, 'stage': 'translation', 'decisions': []}
+                      'errors': translation_errors, 'stage': 'translation', 'decisions': [],
+                      'auto_produce_mode': produce_mode}
             write_json(pdir/'editorial'/'latest.json', report)
             return {'success': False, 'project': state.model_dump(), 'editorial_report': report,
                     'error': 'Translation needs attention before graphics can be planned.'}
+
+        mode_meta = describe_mode(produce_mode)
+        caption_note = (state.ai_ingestion or {}).get('caption_layout_note')
+
+        def _finish_captions_only(*, reason: str, blockers: Optional[List[str]] = None):
+            """Mark ingestion complete after local captions; skip cloud editorial."""
+            from uuid import uuid4 as _uuid4
+            run_id = 'captions-only-' + _uuid4().hex[:10]
+            summary = {
+                'captions_count': len(state.captions),
+                'graphics_count': len(state.graphics),
+                'inserted': 0,
+                'needs_review': 0,
+                'outcome': 'captions_only',
+                'auto_produce_mode': 'captions_only' if produce_mode == 'captions_only' else produce_mode,
+                'captions_only_reason': reason,
+                'cloud_blockers': blockers or [],
+                **mode_meta,
+            }
+            report = {
+                'status': 'complete',
+                'run_id': run_id,
+                'stage': 'captions_only_complete',
+                'errors': [CAPTIONS_ONLY_MESSAGE] + (blockers or []),
+                'decisions': [],
+                'inserted': 0,
+                'outcome': 'captions_only',
+                'auto_produce_mode': produce_mode,
+                'message': CAPTIONS_ONLY_MESSAGE,
+            }
+            write_json(pdir / 'editorial' / 'latest.json', report)
+            write_json(pdir / 'thumbnails' / 'visual_reasoning_log.json', [])
+            state.ai_ingestion = {
+                'caption_layout_note': caption_note,
+                'status': 'completed',
+                'video_hash': video_hash,
+                'completed_at': datetime.now().isoformat(),
+                'summary': summary,
+                'editorial_run': run_id,
+                'errors': report['errors'],
+                'auto_produce_mode': produce_mode,
+            }
+            project_manager.save_project(state)
+            return {
+                'success': True,
+                'project': state.model_dump(),
+                'ingestion': state.ai_ingestion,
+                'summary': summary,
+                'reasoning_log': [],
+                'editorial_report': report,
+                'message': CAPTIONS_ONLY_MESSAGE,
+            }
+
+        if produce_mode == 'captions_only':
+            return _finish_captions_only(reason='mode_captions_only')
+
+        ready, blockers = cloud_readiness()
+        if not ready:
+            # Full requested but cloud not opted in / keys missing → captions stay usable.
+            return _finish_captions_only(reason='full_cloud_unavailable', blockers=blockers)
 
         # Separate video understanding, editorial planning and asset review.
         from app.services.editorial_planner import run_editorial, write_json
         protected=[g for g in state.graphics if not g.parameters.get('editorial_generated')]
         generated,reasoning_log,report=run_editorial(state,media_file,protected)
+        report['auto_produce_mode'] = produce_mode
         if translation_errors:
             report['errors'] = report.get('errors', []) + translation_errors
             report['status'] = 'blocked'
@@ -254,9 +324,8 @@ class AutoProductionService:
             project_manager.save_project(state)
         # On a cloud failure retain all existing graphics; successfully generated captions remain usable.
         write_json(pdir/'thumbnails'/'visual_reasoning_log.json',reasoning_log)
-        summary={'captions_count':len(state.captions),'graphics_count':len(state.graphics),'inserted':len(state.graphics),'needs_review':report.get('needs_review',0),'outcome':report.get('outcome'),'scorecard':report.get('scorecard')}
-        caption_note=(state.ai_ingestion or {}).get('caption_layout_note')
-        state.ai_ingestion={'caption_layout_note':caption_note,'status':{'needs_attention':'needs_review','complete_with_gaps':'completed_with_gaps'}.get(report.get('outcome'),'needs_review' if report.get('needs_review') and not report.get('inserted') else 'completed') if report['status']=='complete' else 'needs_configuration','video_hash':video_hash,'completed_at':datetime.now().isoformat(),'summary':summary,'editorial_run':report['run_id'],'errors':report['errors']}
+        summary={'captions_count':len(state.captions),'graphics_count':len(state.graphics),'inserted':len(state.graphics),'needs_review':report.get('needs_review',0),'outcome':report.get('outcome'),'scorecard':report.get('scorecard'),'auto_produce_mode':produce_mode,**mode_meta}
+        state.ai_ingestion={'caption_layout_note':caption_note,'status':{'needs_attention':'needs_review','complete_with_gaps':'completed_with_gaps'}.get(report.get('outcome'),'needs_review' if report.get('needs_review') and not report.get('inserted') else 'completed') if report['status']=='complete' else 'needs_configuration','video_hash':video_hash,'completed_at':datetime.now().isoformat(),'summary':summary,'editorial_run':report['run_id'],'errors':report['errors'],'auto_produce_mode':produce_mode}
         project_manager.save_project(state)
         return {'success':True,'project':state.model_dump(),'ingestion':state.ai_ingestion,'summary':summary,'reasoning_log':reasoning_log,'editorial_report':report}
 

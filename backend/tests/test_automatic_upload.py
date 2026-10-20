@@ -84,11 +84,14 @@ def test_new_upload_uses_local_english_without_cloud_translation(monkeypatch,tmp
         return 'en',[CaptionItem(id='spoken',start=0,end=2,text='Actual translated speech',translated_text='Actual translated speech')]
     monkeypatch.setattr(transcription_service,'transcribe_with_whisper',transcribe)
     monkeypatch.setattr(translation_service,'translate_captions_list',lambda *a:(_ for _ in ()).throw(AssertionError('English must not require cloud translation')))
-    monkeypatch.setattr(editorial_planner,'run_editorial',lambda *a:([],[],{'status':'blocked','run_id':'offline-test','errors':['Cloud unavailable']}))
+    # Full mode without cloud keys finishes captions with a clear opt-in message
+    # instead of calling the editorial planner.
+    monkeypatch.setattr('app.services.auto_produce_mode.cloud_readiness',lambda:(False,['TWELVE_LABS_API_KEY is missing or a test placeholder']))
+    monkeypatch.setattr(editorial_planner,'run_editorial',lambda *a:(_ for _ in ()).throw(AssertionError('editorial skipped when cloud unavailable')))
     result=auto_production_service.run_pipeline(state.id)
     assert calls[0]['task']=='transcribe'
     assert result['project']['captions'][0]['translated_text']=='Actual translated speech'
-    assert result['editorial_report']['status']=='blocked'
+    assert result['success'] and result['editorial_report']['stage']=='captions_only_complete'
 
 
 def test_export_dispatches_render_off_api_event_loop(monkeypatch):
@@ -132,6 +135,7 @@ def test_feedback_cut_during_generation_is_not_overwritten(monkeypatch, tmp_path
         latest.graphics=[]  # User cuts an AI item while the new job is running.
         project_manager.save_project(latest)
         return [], [], {'status':'complete','run_id':'conflict-test','errors':[]}
+    monkeypatch.setattr('app.services.auto_produce_mode.cloud_readiness',lambda:(True,[]))
     monkeypatch.setattr(editorial_planner,'run_editorial',plan)
     result=auto_production_service.run_pipeline(state.id,True)
     assert result['editorial_report']['status']=='conflict'
@@ -178,10 +182,12 @@ def test_corrupt_saved_transcript_retries_stronger_model_before_translation(monk
         return captions
     monkeypatch.setattr(transcription_service,'transcribe_with_whisper',transcribe)
     monkeypatch.setattr(translation_service,'translate_captions_list',translate)
+    monkeypatch.setattr('app.services.auto_produce_mode.cloud_readiness',lambda:(True,[]))
     monkeypatch.setattr(editorial_planner,'run_editorial',lambda *a:([],[],{'status':'blocked','run_id':'offline-test','errors':['Cloud unavailable']}))
     result=auto_production_service.run_pipeline(state.id)
     assert calls==['medium']
     assert result['project']['captions'][0]['translated_text']=='Treatment for cancer'
+    assert result['editorial_report']['status']=='blocked'
 
 
 def test_conflicting_job_is_not_reported_complete(monkeypatch):
