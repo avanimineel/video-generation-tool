@@ -422,14 +422,15 @@ class GoogleAIProvider:
             else:
                 zoompan_filter = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},zoompan=z='min(zoom+0.0012,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}:fps=30"
 
+            from app.services.ffmpeg_encoder import resolve_video_encoder
+            _codec, video_enc, _reason = resolve_video_encoder(ffmpeg_bin, bitrate="3M")
             cmd = [
                 ffmpeg_bin, "-y",
                 "-loop", "1",
                 "-i", str(img_temp_path),
                 "-vf", zoompan_filter,
                 "-t", str(veo_dur),
-                "-c:v", "h264_videotoolbox",
-                "-b:v", "3M",
+                *video_enc,
                 "-pix_fmt", "yuv420p",
                 str(output_path)
             ]

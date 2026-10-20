@@ -23,10 +23,15 @@ class ProxyGenerator:
 
         # A file extension is not a codec guarantee. Produce real H.264/AAC MP4,
         # atomically replacing old proxies without following an old symlink.
+        # Prefer NVENC on GPU hosts; VideoToolbox on macOS; else libx264.
+        from app.services.ffmpeg_encoder import resolve_video_encoder
+        _codec, video_enc, _reason = resolve_video_encoder(
+            self.ffmpeg_bin, bitrate='2500k', crf='25', probe_size=(1280, target_height)
+        )
         temp=output.with_name(output.stem+'.encoding.mp4')
         cmd=[self.ffmpeg_bin,'-y','-v','error','-i',source_path,'-map','0:v:0','-map','0:a:0?',
-             '-vf',f'scale=-2:{target_height}','-c:v','libx264','-preset','veryfast','-crf','25',
-             '-threads','4','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',str(temp)]
+             '-vf',f'scale=-2:{target_height}',*video_enc,
+             '-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',str(temp)]
         try:
             result=subprocess.run(cmd,capture_output=True,timeout=600)
             if result.returncode==0 and temp.exists():
