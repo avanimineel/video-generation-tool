@@ -1,6 +1,7 @@
 import os
 import hashlib
 import json
+import logging
 import re
 import threading
 from datetime import datetime
@@ -15,6 +16,8 @@ from app.services.transcription_service import transcription_service
 from app.services.translation_service import translation_service
 from app.services.twelve_labs_service import twelve_labs_service
 from app.services.media_search_service import media_search_service
+
+logger = logging.getLogger(__name__)
 
 def compute_file_hash(file_path: str) -> str:
     """
@@ -139,23 +142,119 @@ class AutoProductionService:
                     model_size=model_size
                 )
             except Exception as e:
-                print(f"[AutoProduction] Whisper transcription notice: {e}")
+                from app.services.editorial_planner import safe_error, write_json as _write_json
+                detail_msg = safe_error(e)
+                error_cause = detail_msg
+                error_detail = {
+                    'type': type(e).__name__,
+                    'message': detail_msg,
+                    'stage': 'whisper_transcribe',
+                    'model_size': model_size,
+                    'media_path': media_file,
+                    'errno': getattr(e, 'errno', None),
+                }
+                # Previously only print()'d — operators saw a generic UI string with no cause.
+                logger.error(
+                    "Speech transcription failed at stage=whisper_transcribe "
+                    "model_size=%s media_path=%s cause=%s",
+                    model_size,
+                    media_file,
+                    detail_msg,
+                    exc_info=True,
+                )
+                try:
+                    _write_json(pdir / 'transcription' / 'last_failure.json', {
+                        'video_hash': video_hash,
+                        'error_cause': error_cause,
+                        'error_detail': error_detail,
+                        'stage': 'whisper_transcribe',
+                        'failed_at': datetime.now().isoformat(),
+                    })
+                except Exception as write_exc:
+                    logger.error(
+                        "Could not persist transcription/last_failure.json: %s",
+                        safe_error(write_exc),
+                        exc_info=True,
+                    )
                 if not captions:
-                    return {'success':False,'error':'Speech transcription failed. Existing project was preserved; no placeholder dialogue was generated.'}
+                    # Keep the stable operator prefix; also return cause fields so
+                    # UI / auto_job.json / status API are actionable.
+                    return {
+                        'success': False,
+                        'error': (
+                            'Speech transcription failed. Existing project was preserved; '
+                            'no placeholder dialogue was generated. Underlying error: '
+                            + detail_msg
+                        ),
+                        'error_cause': error_cause,
+                        'error_detail': error_detail,
+                        'stage': 'whisper_transcribe',
+                    }
 
-            # Keep original speech for audit and cross-language cue alignment.
+            # Keep original speech for audit — including empty ASR — so operators can
+            # tell "Whisper returned []" apart from "exception before any write".
             write_json(pdir/'transcription'/'native_source.json', {
                 'video_hash': video_hash, 'language': detected_lang,
                 'captions': [c.model_dump() for c in captions],
-                'timing_basis': 'ASR word estimates; not independently certified'
+                'timing_basis': 'ASR word estimates; not independently certified',
+                'caption_count': len(captions),
             })
+            # Empty segment iteration after VAD/info must not silently become captions=[]
+            # and look like a successful captions_only run. Fail closed with a cause.
+            if not captions:
+                cause = (
+                    'empty_asr_segments: Whisper completed but produced no caption '
+                    'segments (VAD kept audio and/or language was detected, yet the '
+                    'segment iterator yielded nothing usable after filters).'
+                )
+                error_detail = {
+                    'type': 'EmptyASRSegments',
+                    'message': cause,
+                    'stage': 'whisper_empty_segments',
+                    'model_size': model_size,
+                    'media_path': media_file,
+                    'detected_language': detected_lang,
+                    'caption_count': 0,
+                }
+                logger.error(
+                    "Speech transcription produced zero segments at stage=whisper_empty_segments "
+                    "model_size=%s media_path=%s language=%s",
+                    model_size,
+                    media_file,
+                    detected_lang,
+                )
+                try:
+                    write_json(pdir / 'transcription' / 'last_failure.json', {
+                        'video_hash': video_hash,
+                        'error_cause': cause,
+                        'error_detail': error_detail,
+                        'stage': 'whisper_empty_segments',
+                        'failed_at': datetime.now().isoformat(),
+                    })
+                except Exception as write_exc:
+                    from app.services.editorial_planner import safe_error
+                    logger.error(
+                        "Could not persist transcription/last_failure.json: %s",
+                        safe_error(write_exc),
+                        exc_info=True,
+                    )
+                return {
+                    'success': False,
+                    'error': (
+                        'Speech transcription failed. Existing project was preserved; '
+                        'no placeholder dialogue was generated. Underlying error: '
+                        + cause
+                    ),
+                    'error_cause': cause,
+                    'error_detail': error_detail,
+                    'stage': 'whisper_empty_segments',
+                }
             if detected_lang == 'en':
                 for caption in captions:
                     caption.translated_text = caption.text
             state.detected_language = detected_lang
             state.captions = captions
-            if captions:
-                state.duration_seconds = max(state.duration_seconds, captions[-1].end + 0.5)
+            state.duration_seconds = max(state.duration_seconds, captions[-1].end + 0.5)
 
         # Never ask translation to invent words from structurally corrupt ASR.
         from app.services.transcript_quality import transcript_issues
@@ -179,8 +278,28 @@ class AutoProductionService:
                     'recovery_model': 'medium', 'timing_basis': 'ASR estimates; not independently certified'})
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
-                return {'success': False, 'project': state.model_dump(),
-                        'error': 'Speech recognition produced unreadable text or invalid timings. Stronger local retry failed: ' + safe_error(exc)}
+                detail_msg = safe_error(exc)
+                logger.error(
+                    "Speech quality-gate retry failed at stage=whisper_medium_retry cause=%s",
+                    detail_msg,
+                    exc_info=True,
+                )
+                return {
+                    'success': False,
+                    'project': state.model_dump(),
+                    'error': (
+                        'Speech recognition produced unreadable text or invalid timings. '
+                        'Stronger local retry failed: ' + detail_msg
+                    ),
+                    'error_cause': detail_msg,
+                    'error_detail': {
+                        'type': type(exc).__name__,
+                        'message': detail_msg,
+                        'stage': 'whisper_medium_retry',
+                        'issues': speech_issues[:20],
+                    },
+                    'stage': 'whisper_medium_retry',
+                }
 
         # Ensure subtitle translation runs for non-English or Devanagari speech
         translation_errors = []
