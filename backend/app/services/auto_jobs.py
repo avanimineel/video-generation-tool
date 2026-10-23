@@ -50,10 +50,31 @@ def start(pid,force=False,model_size='small'):
             # visuals, or was blocked, needs the user's attention.
             needs_attention=report.get('status') in ('blocked', 'conflict', 'needs_review', 'needs_configuration') or report.get('outcome')=='needs_attention' or (bool(report.get('needs_review')) and not report.get('inserted'))
             error='; '.join(report.get('errors', [])) or result.get('error')
-            _save(pid,status='needs_attention' if needs_attention else ('complete' if result.get('success') else 'failed'),
-                  stage=report.get('stage', 'review') if needs_attention else 'finished', result=result, error=error,
-                  outcome=report.get('outcome'), scorecard=report.get('scorecard'))
+            # Prefer pipeline stage (e.g. whisper_transcribe) over generic finished/review.
+            finished_stage=result.get('stage') or (report.get('stage', 'review') if needs_attention else 'finished')
+            payload={
+                'status':'needs_attention' if needs_attention else ('complete' if result.get('success') else 'failed'),
+                'stage':finished_stage,
+                'result':result,
+                'error':error,
+                'outcome':report.get('outcome'),
+                'scorecard':report.get('scorecard'),
+            }
+            # Persist cause fields on auto_job.json / status API (not only buried in result).
+            error_cause=result.get('error_cause')
+            if error_cause:
+                payload['error_cause']=error_cause
+            error_detail=result.get('error_detail')
+            if error_detail:
+                payload['error_detail']=error_detail
+            elif error and not result.get('success'):
+                payload['error_detail']={'type':'PipelineError','message':str(error)[:1500]}
+                payload.setdefault('error_cause', str(error)[:1500])
+            _save(pid,**payload)
 
-        except Exception as exc:_save(pid,status='failed',error=safe_error(exc))
+        except Exception as exc:
+            _save(pid,status='failed',stage='auto_job_worker',error=safe_error(exc),
+                  error_cause=safe_error(exc),
+                  error_detail={'type':type(exc).__name__,'message':safe_error(exc),'stage':'auto_job_worker'})
     _executor.submit(work)
     return status(pid)
