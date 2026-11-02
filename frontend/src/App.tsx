@@ -74,7 +74,34 @@ export const App: React.FC = () => {
   const [syncStylesToAll, setSyncStylesToAll] = useState<boolean>(true);
   const [activeLinesMode, setActiveLinesMode] = useState<1 | 2>(1);
   const [prefilledOmni, setPrefilledOmni] = useState<{ prompt: string; cameraMotion: string; headline: string } | null>(null);
-  const [isRightSidebarCollapsed, setIsRightSidebarCollapsed] = useState<boolean>(false);
+  // Collapse inspector by default on short/narrow viewports so 9:16 preview stays dominant; persist preference.
+  const [isRightSidebarCollapsed, setIsRightSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('studio.inspectorCollapsed');
+      if (stored === '1') return true;
+      if (stored === '0') return false;
+    } catch {
+      /* ignore */
+    }
+    if (typeof window !== 'undefined') {
+      // Prefer preview dominance on laptop / portrait editing surfaces.
+      return window.innerHeight < 1000 || window.innerWidth < 1440;
+    }
+    return true;
+  });
+  const [editorialPlanOpen, setEditorialPlanOpen] = useState(false);
+
+  const toggleRightSidebar = () => {
+    setIsRightSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('studio.inspectorCollapsed', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   // Undo / Redo History Stack
   const [history, setHistory] = useState<ProjectState[]>(() => [api.getInitialProject()]);
@@ -1049,7 +1076,7 @@ export const App: React.FC = () => {
         onExportComp={() => {}}
         onBurnAndDownload={handleBurnAndDownload}
         isRightSidebarCollapsed={isRightSidebarCollapsed}
-        onToggleRightSidebar={() => setIsRightSidebarCollapsed((prev) => !prev)}
+        onToggleRightSidebar={toggleRightSidebar}
         onOpenFeedbackDashboard={() => setIsFeedbackModalOpen(true)}
         onOpenBrandVideo={() => setIsBrandVideoOpen(true)}
         onOpenStudio={() => setIsStudioOpen(true)}
@@ -1057,9 +1084,55 @@ export const App: React.FC = () => {
       />
 
 
-      <EditorialPlanPanel onBusy={setIsAutoProducing} projectId={project.id} onSeek={setCurrentTime} onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}} />
+      <EditorialPlanPanel
+        onBusy={setIsAutoProducing}
+        projectId={project.id}
+        onSeek={setCurrentTime}
+        onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
+        open={editorialPlanOpen}
+        onOpenChange={setEditorialPlanOpen}
+      />
       {saveError && <div role="alert" className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-sm flex items-center gap-3"><span>{saveError}</span><button onClick={()=>setSaveRetry(v=>v+1)} disabled={!backendReady} className="underline">Retry save</button><button onClick={()=>setIsProjectDrawerOpen(true)} className="underline">Open projects</button></div>}
-      {!isAutoProducing && project.source_media_path && <div className="px-4 py-2 text-xs bg-neutral-50 border-b text-neutral-600">Video prepared · {project.captions.length} captions · {project.captions.filter(c => /[A-Za-z0-9]/.test(c.translated_text || "")).length} English subtitle lines · {project.graphics.filter(g => !g.parameters?.retention_camera && !['caption_cover','authored_title'].includes(g.template_id)).length} added visuals{project.graphics.some(g => g.parameters?.retention_camera) ? ` · ${project.graphics.filter(g => g.parameters?.retention_camera).length} camera beats` : ''}. {(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status==='needs_review') ? "Automatic editing needs attention. Open Review automatic edit for details and retry." : project.ai_ingestion?.status==='completed_with_gaps' ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')} Open Review automatic edit for details.` : "Open Review automatic edit to inspect inserted or skipped treatments."}</div>}
+      {!isAutoProducing && project.source_media_path && (() => {
+        const englishLines = project.captions.filter(c => /[A-Za-z0-9]/.test(c.translated_text || "")).length;
+        const addedVisuals = project.graphics.filter(g => !g.parameters?.retention_camera && !['caption_cover','authored_title'].includes(g.template_id)).length;
+        const cameraBeats = project.graphics.filter(g => g.parameters?.retention_camera).length;
+        const needsAttention = Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
+        const hasGaps = project.ai_ingestion?.status === 'completed_with_gaps';
+        const statusFacts = `Video prepared · ${project.captions.length} captions · ${englishLines} English subtitle lines · ${addedVisuals} added visuals${cameraBeats ? ` · ${cameraBeats} camera beats` : ''}`;
+        const actionCopy = needsAttention
+          ? 'Automatic editing needs attention.'
+          : hasGaps
+            ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')}`
+            : 'Inspect inserted or skipped treatments when ready.';
+        return (
+          <div
+            className={`px-3 py-1.5 text-xs border-b flex items-center gap-3 shrink-0 ${
+              needsAttention
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
+                : hasGaps
+                  ? 'bg-amber-50/70 border-amber-100 text-amber-900'
+                  : 'bg-neutral-50 border-neutral-200 text-neutral-600'
+            }`}
+          >
+            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="font-medium text-neutral-800 truncate">{statusFacts}</span>
+              <span className={needsAttention || hasGaps ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditorialPlanOpen(true)}
+              className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition shadow-2xs ${
+                needsAttention || hasGaps
+                  ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
+                  : 'bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100'
+              }`}
+            >
+              Review
+            </button>
+          </div>
+        );
+      })()}
       {/* 1B. AI Auto-Production Status Banner */}
       {isAutoProducing && (
         <div className="bg-neutral-900 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-neutral-800 z-30">
@@ -1110,7 +1183,7 @@ export const App: React.FC = () => {
         {isRightSidebarCollapsed ? (
           <div className="w-10 bg-white border-l border-neutral-200 flex flex-col items-center py-3 z-15 select-none transition-all shadow-2xs shrink-0">
             <button
-              onClick={() => setIsRightSidebarCollapsed(false)}
+              onClick={toggleRightSidebar}
               className="p-1.5 rounded text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 transition"
               title="Expand Inspector"
             >
@@ -1123,7 +1196,7 @@ export const App: React.FC = () => {
         ) : (
           <div className="relative flex shrink-0">
             <button
-              onClick={() => setIsRightSidebarCollapsed(true)}
+              onClick={toggleRightSidebar}
               className="absolute -left-3 top-3 z-30 bg-white hover:bg-neutral-100 text-neutral-500 hover:text-neutral-800 border border-neutral-300 rounded-full p-1 shadow-2xs transition"
               title="Collapse Inspector"
             >
