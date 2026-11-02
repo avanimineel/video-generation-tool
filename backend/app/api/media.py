@@ -19,6 +19,9 @@ from app.services.media_search_service import media_search_service
 from app.services.asset_downloader import asset_downloader
 from app.services.media_providers.google_ai import GoogleAIProvider, google_ai_provider
 from app.services.auto_production_service import auto_production_service
+from app.core.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 
@@ -435,6 +438,16 @@ async def upload_video_stream(project_id: str, request: Request):
     from app.services.editorial_planner import write_json
     from uuid import uuid4
     write_json(pdir/'recovery'/('before-upload-'+uuid4().hex+'.json'),state.model_dump())
+    content_type = request.headers.get("content-type") or request.headers.get("x-content-type")
+    logger.info(
+        "media_upload_received",
+        event="media_upload_received",
+        media_id=state.id,
+        project_id=state.id,
+        filename=filename,
+        size_bytes=total_bytes,
+        content_type=content_type,
+    )
     state.captions=[]
     state.graphics=[]
     state.ai_ingestion={}
