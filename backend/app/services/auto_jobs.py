@@ -2,11 +2,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from datetime import datetime, timezone
+from typing import Any
 import json
 from pathlib import Path
 from app.core.config import settings
+from app.core.logging_setup import get_logger
 from app.services.project_manager import project_manager
 from app.services.editorial_planner import write_json,safe_error
+
+logger = get_logger(__name__)
 
 _executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='automatic-edit')
 _lock=Lock()
@@ -34,6 +38,30 @@ def active(pid):return status(pid).get('status') in ('queued','running')
 def _save(pid,**changes):
     with _lock:
         _jobs[pid].update(changes);write_json(_path(pid),_jobs[pid])
+
+
+def mark_stage(media_id: str, stage: str, status: str = 'running', **fields: Any) -> None:
+    """Single place for auto-produce stage transitions (job JSON + INFO log)."""
+    try:
+        with _lock:
+            if media_id in _jobs:
+                _jobs[media_id].update(stage=stage, status=status)
+                write_json(_path(media_id), _jobs[media_id])
+    except Exception:
+        pass
+    payload = {
+        'event': 'auto_produce_stage',
+        'media_id': media_id,
+        'project_id': media_id,
+        'stage': stage,
+        'status': status,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            payload[key] = value
+    logger.info('auto_produce_stage', **payload)
+
+
 def start(pid,force=False,model_size='small',mode=None):
     if not project_manager.get_project(pid):raise ValueError('Project not found')
     with _lock:
@@ -42,11 +70,20 @@ def start(pid,force=False,model_size='small',mode=None):
         produce_mode=resolve_auto_produce_mode(mode)
         _jobs[pid]={'status':'queued','stage':'waiting','auto_produce_mode':produce_mode,'started_epoch':datetime.now(timezone.utc).timestamp()}
         write_json(_path(pid),_jobs[pid])
+    logger.info(
+        'auto_produce_started',
+        event='auto_produce_started',
+        media_id=pid,
+        project_id=pid,
+        mode=produce_mode,
+        force=bool(force),
+        model_size=model_size,
+    )
     def work():
         from app.services.auto_production_service import auto_production_service
         from app.services.auto_produce_mode import resolve_auto_produce_mode
         produce_mode=resolve_auto_produce_mode(mode)
-        _save(pid,status='running',stage='transcription_and_translation',auto_produce_mode=produce_mode)
+        _save(pid,status='running',stage='transcription',auto_produce_mode=produce_mode)
         try:
             result=auto_production_service.run_pipeline(pid,force,model_size,mode=produce_mode)
             report=result.get('editorial_report', {})
@@ -64,7 +101,7 @@ def start(pid,force=False,model_size='small',mode=None):
                 )
             )
             error='; '.join(report.get('errors', [])) or result.get('error')
-# Prefer pipeline stage (e.g. whisper_transcribe) over generic finished/review.
+            # Prefer pipeline stage (e.g. whisper_transcribe) over generic finished/review.
             if captions_only:
                 finished_stage = result.get('stage') or 'captions_only_complete'
             else:
@@ -89,10 +126,29 @@ def start(pid,force=False,model_size='small',mode=None):
                 payload['error_detail']={'type':'PipelineError','message':str(error)[:1500]}
                 payload.setdefault('error_cause', str(error)[:1500])
             _save(pid,**payload)
+            mark_stage(
+                pid,
+                finished_stage,
+                status=payload['status'],
+                mode=produce_mode,
+                success=bool(result.get('success')),
+            )
 
         except Exception as exc:
+            mark_stage(pid, 'failed', status='failed', mode=produce_mode, error=safe_error(exc))
             _save(pid,status='failed',stage='auto_job_worker',error=safe_error(exc),
                   error_cause=safe_error(exc),
                   error_detail={'type':type(exc).__name__,'message':safe_error(exc),'stage':'auto_job_worker'})
+            logger.exception(
+                'auto_produce_failed',
+                event='auto_produce_failed',
+                media_id=pid,
+                project_id=pid,
+                stage='failed',
+                status='failed',
+                mode=produce_mode,
+                force=bool(force),
+                model_size=model_size,
+            )
     _executor.submit(work)
     return status(pid)

@@ -156,6 +156,7 @@ class AutoProductionService:
         produce_mode = resolve_auto_produce_mode(mode)
         print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}' (mode={produce_mode})...")
 
+        from app.services.auto_jobs import mark_stage
         from app.services.editorial_planner import write_json
         from uuid import uuid4
         write_json(pdir/'recovery'/('before-auto-'+uuid4().hex+'.json'),state.model_dump())
@@ -167,6 +168,7 @@ class AutoProductionService:
             if wf:
                 state.waveform_data = wf
 
+        mark_stage(project_id, 'transcription', status='running', model_size=model_size)
         if not state.captions:
             state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_layout_pending': True}
             # Phase 1: Dialogue Transcription (Whisper)
@@ -218,6 +220,7 @@ class AutoProductionService:
                 if not captions:
                     # Keep the stable operator prefix; also return cause fields so
                     # UI / auto_job.json / status API are actionable.
+                    mark_stage(project_id, 'transcription', status='failed')
                     return {
                         'success': False,
                         'error': (
@@ -323,6 +326,7 @@ class AutoProductionService:
                     detail_msg,
                     exc_info=True,
                 )
+                mark_stage(project_id, 'transcription', status='failed')
                 return {
                     'success': False,
                     'project': state.model_dump(),
@@ -342,6 +346,7 @@ class AutoProductionService:
 
         # Ensure subtitle translation runs for non-English or Devanagari speech
         translation_errors = []
+        mark_stage(project_id, 'transcription', status='complete')
         needs_translation = (
             state.detected_language != 'en'
             or any(translation_service.is_devanagari(c.text) for c in state.captions)
@@ -374,6 +379,11 @@ class AutoProductionService:
             translation_backend_env=os.getenv("TRANSLATION_BACKEND"),
             local_translation_model=os.getenv("LOCAL_TRANSLATION_MODEL") or "facebook/nllb-200-distilled-600M",
         )
+        mark_stage(
+            project_id,
+            'translation',
+            status='running' if (needs_translation and not is_already_translated) else 'skipped',
+        )
         if needs_translation and not is_already_translated:
             _mark_job_stage(project_id, "translation")
             _stage_log(
@@ -391,7 +401,8 @@ class AutoProductionService:
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
                 )
                 _stage_log(
-                    "translation_end",
+                    mark_stage(project_id, 'translation', status='complete')
+                "translation_end",
                     project_id=project_id,
                     stage="translation",
                     caption_count=len(state.captions or []),
@@ -400,7 +411,8 @@ class AutoProductionService:
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
                 _stage_exception(
-                    "translation_failed",
+                    mark_stage(project_id, 'translation', status='failed')
+                "translation_failed",
                     project_id=project_id,
                     stage="translation",
                     preference=translation_preference,
@@ -515,6 +527,7 @@ class AutoProductionService:
 
         # Separate video understanding, editorial planning and asset review.
         from app.services.editorial_planner import run_editorial, write_json
+        mark_stage(project_id, 'editorial', status='running')
         _mark_job_stage(project_id, "editorial")
         _stage_log(
             "editorial_stage_start",
@@ -524,6 +537,11 @@ class AutoProductionService:
         )
         protected=[g for g in state.graphics if not g.parameters.get('editorial_generated')]
         generated,reasoning_log,report=run_editorial(state,media_file,protected)
+        mark_stage(
+            project_id,
+            'editorial',
+            status='complete' if report.get('status') == 'complete' else report.get('status', 'finished'),
+        )
         report['auto_produce_mode'] = produce_mode
         if translation_errors:
             report['errors'] = report.get('errors', []) + translation_errors
