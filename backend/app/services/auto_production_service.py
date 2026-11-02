@@ -114,6 +114,7 @@ class AutoProductionService:
 
         print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}'...")
 
+        from app.services.auto_jobs import mark_stage
         from app.services.editorial_planner import write_json
         from uuid import uuid4
         write_json(pdir/'recovery'/('before-auto-'+uuid4().hex+'.json'),state.model_dump())
@@ -125,6 +126,7 @@ class AutoProductionService:
             if wf:
                 state.waveform_data = wf
 
+        mark_stage(project_id, 'transcription', status='running', model_size=model_size)
         if not state.captions:
             state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_layout_pending': True}
             # Phase 1: Dialogue Transcription (Whisper)
@@ -141,6 +143,7 @@ class AutoProductionService:
             except Exception as e:
                 print(f"[AutoProduction] Whisper transcription notice: {e}")
                 if not captions:
+                    mark_stage(project_id, 'transcription', status='failed')
                     return {'success':False,'error':'Speech transcription failed. Existing project was preserved; no placeholder dialogue was generated.'}
 
             # Keep original speech for audit and cross-language cue alignment.
@@ -179,9 +182,11 @@ class AutoProductionService:
                     'recovery_model': 'medium', 'timing_basis': 'ASR estimates; not independently certified'})
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
+                mark_stage(project_id, 'transcription', status='failed')
                 return {'success': False, 'project': state.model_dump(),
                         'error': 'Speech recognition produced unreadable text or invalid timings. Stronger local retry failed: ' + safe_error(exc)}
 
+        mark_stage(project_id, 'transcription', status='complete')
         # Ensure subtitle translation runs for non-English or Devanagari speech
         translation_errors = []
         needs_translation = (
@@ -196,12 +201,19 @@ class AutoProductionService:
             and not any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
             and any((c.translated_text or '') != c.text for c in state.captions)
         )
+        mark_stage(
+            project_id,
+            'translation',
+            status='running' if (needs_translation and not is_already_translated) else 'skipped',
+        )
         if needs_translation and not is_already_translated:
             try:
                 state.captions = translation_service.translate_captions_list(state.captions, checkpoint_dir=pdir/'transcription'/'translation_checkpoints')
+                mark_stage(project_id, 'translation', status='complete')
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
                 translation_errors.append('Subtitle translation failed: ' + safe_error(exc))
+                mark_stage(project_id, 'translation', status='failed')
 
         if not translation_errors and (state.ai_ingestion or {}).get('caption_layout_pending'):
             from app.services.automatic_captions import layout_automatic_captions
@@ -231,8 +243,14 @@ class AutoProductionService:
 
         # Separate video understanding, editorial planning and asset review.
         from app.services.editorial_planner import run_editorial, write_json
+        mark_stage(project_id, 'editorial', status='running')
         protected=[g for g in state.graphics if not g.parameters.get('editorial_generated')]
         generated,reasoning_log,report=run_editorial(state,media_file,protected)
+        mark_stage(
+            project_id,
+            'editorial',
+            status='complete' if report.get('status') == 'complete' else report.get('status', 'finished'),
+        )
         if translation_errors:
             report['errors'] = report.get('errors', []) + translation_errors
             report['status'] = 'blocked'

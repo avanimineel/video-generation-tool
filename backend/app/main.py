@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.logging_setup import configure_logging
 from app.api.projects import router as projects_router
 from app.api.media import router as media_router
 from app.api.subtitles import router as subtitles_router
@@ -15,8 +16,14 @@ from app.api.brand_video import router as brand_video_router
 from app.api.studio import router as studio_router
 from app.api.music import router as music_router
 
+# Install safe handlers as early as the app module loads (before most requests).
+configure_logging()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Rebind after uvicorn installs its own StreamHandlers so access logs
+    # also use SafeStreamHandler / LOG_FILE sinks (avoids errno 5 spam).
+    configure_logging(force=True)
     init_db()
     yield
 
