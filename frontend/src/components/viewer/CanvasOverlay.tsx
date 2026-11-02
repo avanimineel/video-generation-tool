@@ -1989,7 +1989,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
             : (caption.translated_text || caption.text);
 
         // Automatic layout can store 8–24px sizes meant for burn-in; keep a readable floor in the studio preview.
-        const displayFontSize = Math.max(28, Number(style.font_size) || 32);
+        const displayFontSize = Math.max(30, Number(style.font_size) || 32);
 
         // Check if a graphic / split-screen is active at this moment
         const activeGraphic = graphics.find(g => currentTime >= g.start && currentTime <= g.end);
@@ -2015,7 +2015,8 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
 
         // Apply background alpha on the color only — never set opacity on the caption node
         // (CSS opacity on the parent would fade the glyph text and make subtitles look "missing").
-        const bgAlpha = Math.max(0, Math.min(1, style.background_opacity ?? 0.75));
+        // Floor alpha so larger Resolve-like previews keep caption pill contrast.
+        const bgAlpha = Math.max(0.7, Math.min(1, style.background_opacity ?? 0.82));
         const containerBg = isDocMinimalist || isPerWord || !style.has_background
           ? "transparent"
           : (() => {

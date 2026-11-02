@@ -85,7 +85,7 @@ export const UnifiedStudioInspector: React.FC<UnifiedStudioInspectorProps> = ({
   }, [selectedGraphicId]);
 
   return (
-    <aside className="w-96 bg-white border-l border-neutral-200 flex flex-col h-full z-15 select-none shadow-xs text-neutral-900">
+    <aside className="w-80 bg-white border-l border-neutral-200 flex flex-col h-full z-15 select-none shadow-xs text-neutral-900">
       {/* 3 Top-Level Tabs: Subtitles | Graphics | Music/SFX */}
       <div className="flex border-b border-neutral-200 bg-neutral-100 p-1.5 text-xs font-semibold">
         <button
