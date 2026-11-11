@@ -1,7 +1,8 @@
 import React, { useRef, useState } from "react";
 import { 
   Scissors, Plus, ZoomIn, ZoomOut, Volume2, 
-  Sparkles, Video as VideoIcon, Type, Trash2, Globe, Film, Music
+  Sparkles, Video as VideoIcon, Type, Trash2, Globe, Film, Music,
+  ChevronDown, ChevronUp
 } from "lucide-react";
 import { ProjectState, CaptionItem, MotionGraphicItem, AudioTrackItem } from "../../types";
 
@@ -44,6 +45,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(60); // pixels per second
   const [isScrubbing, setIsScrubbing] = useState(false);
+  // Compact default (~190px) so the center preview dominates; collapse to toolbar only when needed.
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
 
   // Unified Trimming / Dragging state for captions and graphics
   const [activeTrim, setActiveTrim] = useState<{
@@ -255,11 +258,21 @@ export const Timeline: React.FC<TimelineProps> = ({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      className="h-[310px] bg-white border-t border-neutral-200 flex flex-col select-none relative z-10"
+      className={`${timelineCollapsed ? "h-8" : "h-[200px]"} bg-white border-t border-neutral-200 flex flex-col select-none relative z-10 shrink-0 transition-[height] duration-200`}
     >
       {/* Timeline Controls & Quick Tools */}
-      <div className="h-8 bg-neutral-50 border-b border-neutral-200 px-3 flex items-center justify-between text-xs">
+      <div className="h-8 bg-neutral-50 border-b border-neutral-200 px-3 flex items-center justify-between text-xs shrink-0">
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTimelineCollapsed((v) => !v)}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-white hover:bg-neutral-100 border border-neutral-200 text-neutral-800 transition shadow-xs"
+            title={timelineCollapsed ? "Expand timeline" : "Collapse timeline (give preview more room)"}
+          >
+            {timelineCollapsed ? <ChevronUp className="h-3 w-3 text-neutral-700" /> : <ChevronDown className="h-3 w-3 text-neutral-700" />}
+            <span className="text-[11px] font-medium">{timelineCollapsed ? "Expand" : "Collapse"}</span>
+          </button>
+
           {/* Blade / Split Tool */}
           <button
             onClick={() => captionAtPlayhead && onSplitCaption(captionAtPlayhead.id, currentTime)}
@@ -299,9 +312,9 @@ export const Timeline: React.FC<TimelineProps> = ({
       </div>
 
       {/* Main Multi-Track Workspace */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className={`flex-1 flex overflow-hidden min-h-0 ${timelineCollapsed ? "hidden" : ""}`}>
         {/* Track Headers */}
-        <div className="w-36 bg-neutral-50 border-r border-neutral-200 flex flex-col text-[10px] font-medium text-neutral-600 z-10 select-none shrink-0">
+        <div className="w-36 bg-neutral-50 border-r border-neutral-200 flex flex-col text-[10px] font-medium text-neutral-600 z-10 select-none shrink-0 overflow-y-auto">
           {/* Header spacer */}
           <div className="h-6 border-b border-neutral-200 px-2 flex items-center text-[9px] uppercase tracking-wider text-neutral-400 font-semibold">
             Tracks
@@ -388,7 +401,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         <div
           ref={containerRef}
           onMouseDown={handleTimelineMouseDown}
-          className="flex-1 overflow-x-auto overflow-y-hidden relative bg-neutral-50/70 cursor-pointer"
+          className="flex-1 overflow-x-auto overflow-y-auto relative bg-neutral-50/70 cursor-pointer"
         >
           <div
             style={{ width: `${totalWidth}px` }}

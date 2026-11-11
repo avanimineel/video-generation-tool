@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Play, Pause, RotateCcw, Volume2, Maximize2 } from "lucide-react";
+import { Play, Pause, RotateCcw } from "lucide-react";
 import { CanvasOverlay, TimelineVideo } from "./CanvasOverlay";
 import { ProjectState, ProjectSettings, MotionGraphicItem, AudioTrackItem } from "../../types";
 import { api, BACKEND_ORIGIN } from "../../services/api";
@@ -137,17 +137,19 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   );
 
   return (
-    <div className="flex-1 bg-neutral-100 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
+    <div className="flex-1 min-h-0 bg-neutral-100 flex flex-col relative overflow-hidden select-none">
       {(project?.audio_tracks || []).filter(t => t.type === "music" && t.music_id).map(t => (
         <MusicBed key={t.id} track={t} time={currentTime} playing={isPlaying} speaking={captions.some(c => currentTime >= c.start && currentTime < c.end)} />
       ))}
-      {playbackError&&<p role="alert" className="absolute top-2 z-50 bg-red-50 text-red-800 p-3 rounded text-sm">{playbackError}</p>}
-      {/* Aspect Ratio Video Container */}
+      {playbackError&&<p role="alert" className="absolute top-2 left-1/2 -translate-x-1/2 z-50 bg-red-50 text-red-800 p-3 rounded text-sm">{playbackError}</p>}
+      {/* Stage: preview fills nearly all vertical space between header and timeline (Resolve-like) */}
+      <div className="flex-1 min-h-0 flex items-center justify-center px-2 py-1">
+      {/* No artificial max-width cap — height drives 9:16 size; width follows aspect ratio within the center column */}
       <div
-        className={`relative bg-neutral-900 rounded-2xl overflow-hidden shadow-xl border border-neutral-300 flex items-center justify-center mb-16 ${
+        className={`relative bg-neutral-900 rounded-xl overflow-hidden shadow-lg border border-neutral-300 flex items-center justify-center ${
           is916
-            ? "aspect-[9/16] h-[85%] max-h-[calc(100%-80px)] max-w-[420px]"
-            : "aspect-[16/9] w-[90%] max-h-[calc(100%-80px)] max-w-[800px]"
+            ? "aspect-[9/16] h-full max-h-full w-auto max-w-full"
+            : "aspect-[16/9] w-full max-w-full h-auto max-h-full"
         }`}
       >
         {/* Top 50% Archival B-Roll Container (when 50/50 Vertical Split is active) */}
@@ -379,37 +381,37 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
           activeLanguageView={activeLanguageView}
         />
       </div>
+      </div>
 
-      {/* Floating Transport Bar under Video */}
-      <div className="absolute bottom-6 flex items-center gap-3 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full border border-neutral-300 shadow-xl z-25 text-neutral-900">
-        <button
-          onClick={() => onTimeUpdate(0)}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition cursor-pointer"
-          title="Return to start"
-        >
-          <RotateCcw className="h-4 w-4" />
-        </button>
+      {/* Compact transport strip — keeps preview height free (no large pb-* reservation) */}
+      <div className="shrink-0 h-11 flex items-center justify-center border-t border-neutral-200 bg-white z-25">
+        <div className="flex items-center gap-3 px-3 py-1 text-neutral-900">
+          <button
+            onClick={() => onTimeUpdate(0)}
+            className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition cursor-pointer"
+            title="Return to start"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
 
-        <button
-          aria-label={isPlaying ? "Pause" : "Play"}
-          onClick={onTogglePlay}
-          className="h-8 w-8 rounded-full bg-neutral-900 flex items-center justify-center text-white font-semibold hover:bg-neutral-800 shadow-md transition cursor-pointer"
-        >
-          {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
-        </button>
+          <button
+            aria-label={isPlaying ? "Pause" : "Play"}
+            onClick={onTogglePlay}
+            className="h-8 w-8 rounded-full bg-neutral-900 flex items-center justify-center text-white font-semibold hover:bg-neutral-800 shadow-md transition cursor-pointer"
+          >
+            {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
+          </button>
 
-        {/* Timecode Readout */}
-        <div className="text-xs font-mono font-bold text-neutral-900 tracking-wider px-2">
-          {formatTime(currentTime)} / {formatTime(project?.duration_seconds || 15.0)}
+          <div className="text-xs font-mono font-bold text-neutral-900 tracking-wider px-2">
+            {formatTime(currentTime)} / {formatTime(project?.duration_seconds || 15.0)}
+          </div>
+
+          <div className="h-4 w-px bg-neutral-300 mx-1" />
+
+          <div className="text-[10px] font-mono font-bold text-neutral-500 uppercase">
+            {project?.settings?.aspect_ratio ?? "9:16"}
+          </div>
         </div>
-
-        <div className="h-4 w-px bg-neutral-300 mx-1" />
-
-        <div className="text-[10px] font-mono font-bold text-neutral-500 uppercase">
-          {project?.settings?.aspect_ratio ?? "9:16"}
-        </div>
-
-        
       </div>
     </div>
   );

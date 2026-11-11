@@ -1074,7 +1074,7 @@ export const App: React.FC = () => {
       )}
 
       {/* 2. Main Studio Workspace: Center Viewer & Right 3-Tab Inspector */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 min-h-0 flex overflow-hidden relative">
         {/* Center: Real-Time Video Viewer */}
         <VideoViewer
           project={project}
