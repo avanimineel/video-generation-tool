@@ -255,7 +255,7 @@ export const Timeline: React.FC<TimelineProps> = ({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      className="h-[310px] bg-white border-t border-neutral-200 flex flex-col select-none relative z-10"
+      className="h-[260px] bg-white border-t border-neutral-200 flex flex-col select-none relative z-10 shrink-0"
     >
       {/* Timeline Controls & Quick Tools */}
       <div className="h-8 bg-neutral-50 border-b border-neutral-200 px-3 flex items-center justify-between text-xs">

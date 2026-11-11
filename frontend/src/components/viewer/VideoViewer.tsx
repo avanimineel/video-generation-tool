@@ -137,17 +137,17 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   );
 
   return (
-    <div className="flex-1 bg-neutral-100 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
+    <div className="flex-1 min-h-0 bg-neutral-100 flex flex-col items-center justify-center px-3 pt-2 pb-16 relative overflow-hidden select-none">
       {(project?.audio_tracks || []).filter(t => t.type === "music" && t.music_id).map(t => (
         <MusicBed key={t.id} track={t} time={currentTime} playing={isPlaying} speaking={captions.some(c => currentTime >= c.start && currentTime < c.end)} />
       ))}
       {playbackError&&<p role="alert" className="absolute top-2 z-50 bg-red-50 text-red-800 p-3 rounded text-sm">{playbackError}</p>}
-      {/* Aspect Ratio Video Container */}
+      {/* Aspect Ratio Video Container — fill available studio height; portrait max width raised so the preview is dominant */}
       <div
-        className={`relative bg-neutral-900 rounded-2xl overflow-hidden shadow-xl border border-neutral-300 flex items-center justify-center mb-16 ${
+        className={`relative bg-neutral-900 rounded-2xl overflow-hidden shadow-xl border border-neutral-300 flex items-center justify-center ${
           is916
-            ? "aspect-[9/16] h-[85%] max-h-[calc(100%-80px)] max-w-[420px]"
-            : "aspect-[16/9] w-[90%] max-h-[calc(100%-80px)] max-w-[800px]"
+            ? "aspect-[9/16] h-[calc(100%-0.5rem)] max-h-full w-auto max-w-[min(100%,560px)]"
+            : "aspect-[16/9] w-[min(96%,1100px)] max-h-[calc(100%-0.5rem)]"
         }`}
       >
         {/* Top 50% Archival B-Roll Container (when 50/50 Vertical Split is active) */}
