@@ -13,6 +13,7 @@ from app.core.logging_setup import (
     SafeRotatingFileHandler,
     SafeStreamHandler,
     configure_logging,
+    format_exception_detail,
     is_eio,
 )
 
@@ -182,3 +183,19 @@ def test_auto_produce_stage_event_shape(tmp_path: Path, monkeypatch: pytest.Monk
     assert stage["stage"] == "transcription"
     assert stage["status"] == "running"
     assert stage["media_id"] == "media42"
+
+
+def test_format_exception_detail_includes_type_message_errno():
+    exc = OSError(errno.EIO, "Input/output error")
+    detail = format_exception_detail(exc)
+    assert detail["type"] == "OSError"
+    assert "Input/output error" in detail["message"]
+    assert detail["errno"] == errno.EIO
+
+
+def test_auto_production_service_module_parses():
+    """Regression: nested mark_stage inside _stage_log args broke boot (SyntaxError)."""
+    import ast
+
+    path = Path(__file__).resolve().parents[1] / "app" / "services" / "auto_production_service.py"
+    ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

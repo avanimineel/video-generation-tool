@@ -83,6 +83,28 @@ def redact_secrets(text: str) -> str:
     return out
 
 
+def format_exception_detail(exc: BaseException, *, limit: int = 1500) -> Dict[str, Any]:
+    """Structured exception payload for auto_job.json / status (not only str(exc))."""
+    detail: Dict[str, Any] = {
+        "type": type(exc).__name__,
+        "message": truncate(redact_secrets(str(exc)), limit),
+    }
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if isinstance(cause, BaseException) and cause is not exc:
+        detail["cause"] = {
+            "type": type(cause).__name__,
+            "message": truncate(redact_secrets(str(cause)), limit),
+        }
+    # OSError / errno chain is often what operators need on EC2.
+    err_no = getattr(exc, "errno", None)
+    if err_no is not None:
+        detail["errno"] = err_no
+    filename = getattr(exc, "filename", None)
+    if filename:
+        detail["filename"] = truncate(filename, 200)
+    return detail
+
+
 def bind_context(
     *,
     project_id: Optional[str] = None,
