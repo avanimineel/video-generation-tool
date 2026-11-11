@@ -1,6 +1,7 @@
 import os
 import hashlib
 import json
+import logging
 import re
 import threading
 from datetime import datetime
@@ -15,6 +16,39 @@ from app.services.transcription_service import transcription_service
 from app.services.translation_service import translation_service
 from app.services.twelve_labs_service import twelve_labs_service
 from app.services.media_search_service import media_search_service
+
+try:
+    from app.core.logging_setup import get_logger
+    logger = get_logger(__name__)
+except Exception:  # pragma: no cover
+    logger = logging.getLogger(__name__)
+
+
+def _stage_log(event: str, **fields: Any) -> None:
+    try:
+        logger.info(event, event=event, **fields)
+    except TypeError:
+        logger.info("%s %s", event, fields)
+
+
+def _stage_exception(event: str, **fields: Any) -> None:
+    import sys
+    exc_info = sys.exc_info()
+    try:
+        logger.exception(event, event=event, **fields)
+    except TypeError:
+        # Stdlib logging rejects structured kwargs; keep the *original* exc_info.
+        logger.error("%s %s", event, fields, exc_info=exc_info)
+
+
+def _mark_job_stage(project_id: str, stage: str) -> None:
+    """Best-effort auto_job.json stage update so UI/status matches log events."""
+    try:
+        from app.services import auto_jobs
+        auto_jobs._save(project_id, stage=stage)
+    except Exception:
+        pass
+
 
 def compute_file_hash(file_path: str) -> str:
     """
@@ -196,12 +230,70 @@ class AutoProductionService:
             and not any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
             and any((c.translated_text or '') != c.text for c in state.captions)
         )
+        translation_preference = translation_service.translation_backend_preference()
+        gemini_key_present = False
+        try:
+            from app.core.config import get_provider_key
+            gemini_key_present = bool(get_provider_key("GEMINI_API_KEY"))
+        except Exception:
+            gemini_key_present = bool(os.getenv("GEMINI_API_KEY"))
+        _stage_log(
+            "translation_stage_decision",
+            project_id=project_id,
+            stage="translation",
+            needs_translation=needs_translation,
+            is_already_translated=is_already_translated,
+            detected_language=state.detected_language,
+            caption_count=len(state.captions or []),
+            preference=translation_preference,
+            gemini_key_present=gemini_key_present,
+            translation_backend_env=os.getenv("TRANSLATION_BACKEND"),
+            local_translation_model=os.getenv("LOCAL_TRANSLATION_MODEL") or "facebook/nllb-200-distilled-600M",
+        )
         if needs_translation and not is_already_translated:
+            _mark_job_stage(project_id, "translation")
+            _stage_log(
+                "translation_start",
+                project_id=project_id,
+                stage="translation",
+                detected_language=state.detected_language,
+                caption_count=len(state.captions or []),
+                preference=translation_preference,
+                gemini_key_present=gemini_key_present,
+            )
             try:
-                state.captions = translation_service.translate_captions_list(state.captions, checkpoint_dir=pdir/'transcription'/'translation_checkpoints')
+                state.captions = translation_service.translate_captions_list(
+                    state.captions,
+                    checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
+                )
+                _stage_log(
+                    "translation_end",
+                    project_id=project_id,
+                    stage="translation",
+                    caption_count=len(state.captions or []),
+                    preference=translation_preference,
+                )
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
+                _stage_exception(
+                    "translation_failed",
+                    project_id=project_id,
+                    stage="translation",
+                    preference=translation_preference,
+                    gemini_key_present=gemini_key_present,
+                    error=str(exc)[:500],
+                )
                 translation_errors.append('Subtitle translation failed: ' + safe_error(exc))
+        else:
+            _stage_log(
+                "translation_skipped",
+                project_id=project_id,
+                stage="translation",
+                reason="already_translated" if is_already_translated else "not_needed",
+                detected_language=state.detected_language,
+                caption_count=len(state.captions or []),
+                preference=translation_preference,
+            )
 
         if not translation_errors and (state.ai_ingestion or {}).get('caption_layout_pending'):
             from app.services.automatic_captions import layout_automatic_captions
@@ -223,6 +315,13 @@ class AutoProductionService:
             write_json(pdir/"editorial"/"checkpoint.json",initial_content)
 
         if translation_errors:
+            _mark_job_stage(project_id, "translation")
+            _stage_log(
+                "translation_blocked",
+                project_id=project_id,
+                stage="translation",
+                error_count=len(translation_errors),
+            )
             report = {'status': 'blocked', 'run_id': 'translation-needs-review',
                       'errors': translation_errors, 'stage': 'translation', 'decisions': []}
             write_json(pdir/'editorial'/'latest.json', report)
@@ -231,6 +330,13 @@ class AutoProductionService:
 
         # Separate video understanding, editorial planning and asset review.
         from app.services.editorial_planner import run_editorial, write_json
+        _mark_job_stage(project_id, "editorial")
+        _stage_log(
+            "editorial_stage_start",
+            project_id=project_id,
+            stage="editorial",
+            after="translation",
+        )
         protected=[g for g in state.graphics if not g.parameters.get('editorial_generated')]
         generated,reasoning_log,report=run_editorial(state,media_file,protected)
         if translation_errors:

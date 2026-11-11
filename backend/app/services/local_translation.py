@@ -13,6 +13,7 @@ Env:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Callable, List, Optional, Sequence
@@ -22,8 +23,6 @@ try:
 
     logger = get_logger(__name__)
 except Exception:  # pragma: no cover — Phase A logging helper may not be merged yet
-    import logging
-
     logger = logging.getLogger(__name__)
 
 _DEVANAGARI = re.compile(r"[\u0900-\u097F]")
@@ -61,11 +60,29 @@ def default_model_name() -> str:
     return (os.getenv("LOCAL_TRANSLATION_MODEL") or "facebook/nllb-200-distilled-600M").strip()
 
 
-def _log(event: str, **fields: Any) -> None:
+def _log(level: int, event: str, **fields: Any) -> None:
     try:
-        logger.info(event, event=event, **fields)
+        logger.log(level, event, event=event, **fields)
     except TypeError:
-        logger.info("%s %s", event, fields)
+        logger.log(level, "%s %s", event, fields)
+
+
+def _log_info(event: str, **fields: Any) -> None:
+    _log(logging.INFO, event, **fields)
+
+
+def _log_debug(event: str, **fields: Any) -> None:
+    _log(logging.DEBUG, event, **fields)
+
+
+def _log_exception(event: str, **fields: Any) -> None:
+    import sys
+    exc_info = sys.exc_info()
+    try:
+        logger.exception(event, event=event, **fields)
+    except TypeError:
+        # Stdlib logging rejects structured kwargs; keep the *original* exc_info.
+        logger.error("%s %s", event, fields, exc_info=exc_info)
 
 
 def get_nllb(model_name: Optional[str] = None, device: Optional[str] = None):
@@ -75,18 +92,31 @@ def get_nllb(model_name: Optional[str] = None, device: Optional[str] = None):
     dev = device or resolve_local_device()
     key = f"{name}:{dev}"
     if _MODEL is not None and _TOKENIZER is not None and _LOADED_KEY == key:
+        _log_debug("local_translation_model_cache_hit", model=name, device=dev)
         return _TOKENIZER, _MODEL, dev
 
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    try:
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    except Exception:
+        _log_exception(
+            "local_translation_transformers_import_failed",
+            model=name,
+            device=dev,
+        )
+        raise
 
-    _log("local_translation_model_loading", model=name, device=dev)
-    tokenizer = AutoTokenizer.from_pretrained(name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(name)
-    if dev == "cuda":
-        model = model.to("cuda")
-    model.eval()
+    _log_info("local_translation_model_loading", model=name, device=dev)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(name)
+        if dev == "cuda":
+            model = model.to("cuda")
+        model.eval()
+    except Exception:
+        _log_exception("local_translation_model_load_failed", model=name, device=dev)
+        raise
     _TOKENIZER, _MODEL, _LOADED_KEY = tokenizer, model, key
-    _log("local_translation_model_ready", model=name, device=dev)
+    _log_info("local_translation_model_ready", model=name, device=dev)
     return tokenizer, model, dev
 
 
@@ -94,6 +124,7 @@ def clear_local_translation_cache() -> None:
     global _MODEL, _TOKENIZER, _LOADED_KEY
     _MODEL = _TOKENIZER = None
     _LOADED_KEY = None
+    _log_debug("local_translation_cache_cleared")
 
 
 def _translate_one(
@@ -146,25 +177,76 @@ def translate_lines_local(
     if not texts:
         return []
 
-    if translate_fn is None:
-        tokenizer, model, dev = get_nllb(model_name, device)
+    name = model_name or default_model_name()
+    dev_pref = device or resolve_local_device()
+    _log_info(
+        "local_translation_batch_start",
+        model=name,
+        device=dev_pref,
+        line_count=len(texts),
+        injected_fn=translate_fn is not None,
+    )
 
-        def translate_fn(line: str) -> str:  # type: ignore
-            return _translate_one(line, tokenizer, model, dev)
+    try:
+        if translate_fn is None:
+            tokenizer, model, dev = get_nllb(model_name, device)
 
-    results: List[str] = []
-    for raw in texts:
-        text = (raw or "").strip()
-        if not text:
-            raise ValueError("Local translation refused an empty subtitle line; original speech is saved.")
-        if not is_devanagari(text):
-            results.append(text)
-            continue
-        out = (translate_fn(text) or "").strip()
-        if not out or not any(c.isalnum() for c in out) or is_devanagari(out):
-            raise ValueError(
-                "Local translation produced unusable English for a Devanagari line; "
-                "original speech is saved."
+            def translate_fn(line: str) -> str:  # type: ignore
+                return _translate_one(line, tokenizer, model, dev)
+
+            _log_debug(
+                "local_translation_nllb_ready",
+                model=name,
+                device=dev,
+                line_count=len(texts),
             )
-        results.append(out)
-    return results
+        else:
+            dev = device or "injected"
+
+        results: List[str] = []
+        passthrough = 0
+        translated = 0
+        for line_index, raw in enumerate(texts):
+            text = (raw or "").strip()
+            if not text:
+                raise ValueError("Local translation refused an empty subtitle line; original speech is saved.")
+            if not is_devanagari(text):
+                passthrough += 1
+                _log_debug(
+                    "local_translation_passthrough",
+                    line_index=line_index,
+                    char_count=len(text),
+                )
+                results.append(text)
+                continue
+            _log_debug(
+                "local_translation_line_start",
+                line_index=line_index,
+                char_count=len(text),
+                model=name,
+            )
+            out = (translate_fn(text) or "").strip()
+            if not out or not any(c.isalnum() for c in out) or is_devanagari(out):
+                raise ValueError(
+                    "Local translation produced unusable English for a Devanagari line; "
+                    "original speech is saved."
+                )
+            translated += 1
+            results.append(out)
+        _log_info(
+            "local_translation_batch_end",
+            model=name,
+            device=dev,
+            line_count=len(texts),
+            passthrough_count=passthrough,
+            translated_count=translated,
+        )
+        return results
+    except Exception:
+        _log_exception(
+            "local_translation_batch_failed",
+            model=name,
+            device=dev_pref,
+            line_count=len(texts),
+        )
+        raise
