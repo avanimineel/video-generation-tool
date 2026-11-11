@@ -37,6 +37,9 @@ backend/models/*.download
 # Private provider credentials; never commit or bundle.
 backend/.private/
 
+# Runtime logs (LOG_FILE / start_companion.sh console redirects)
+backend/logs/
+
 # Generated brand films (site assets belong to their owners)
 backend/brand_videos/
 backend/studio_films/

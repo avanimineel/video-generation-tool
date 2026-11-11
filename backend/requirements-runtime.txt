@@ -2,3 +2,8 @@
 imageio-ffmpeg==0.6.0
 
 onnxruntime>=1.18,<2
+
+# Optional local Hindi→English NMT (Phase B). Install on EC2/T4 hosts:
+#   pip install 'transformers>=4.40' 'torch' sentencepiece
+# Model (default): facebook/nllb-200-distilled-600M — set LOCAL_TRANSLATION_MODEL to override.
+# TRANSLATION_BACKEND=auto|local|gemini  (auto = local first, Gemini fallback if key present)

@@ -1,8 +1,8 @@
-import logging
 import re
 import os
 from typing import List, Dict, Any, Tuple, Optional
 from app.core.models import CaptionItem, WordTiming, CaptionStyle, MotionGraphicItem
+from app.core.logging_setup import get_logger, format_exception_detail
 from app.services.media_search_service import media_search_service
 from app.services.whisper_device import (
     classify_cuda_fallback,
@@ -13,7 +13,7 @@ from app.services.whisper_device import (
     whisper_cache_key,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
@@ -250,8 +250,12 @@ class TranscriptionService:
             cls._whisper_model_devices[key] = device
             return model
         except Exception as e:
-            logger.exception("whisper_model_init_failed model_size=%s", target_size)
-            print(f"Failed to initialize faster-whisper ({target_size}):", e)
+            logger.exception(
+                "whisper_model_init_failed",
+                event="whisper_model_init_failed",
+                model_size=target_size,
+                error_detail=format_exception_detail(e),
+            )
             if target_size != 'base':
                 return cls.get_whisper_model('base', force_device=force_device)
             return None

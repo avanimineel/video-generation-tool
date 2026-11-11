@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
-import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+# Optional structured logger — keep import soft so unit tests need no FastAPI stack.
+try:
+    from app.core.logging_setup import format_exception_detail, get_logger
 
+    logger = get_logger(__name__)
+except Exception:  # pragma: no cover
+    logger = None
 
-def format_exception_detail(exc: BaseException, *, limit: int = 1500) -> Dict[str, Any]:
-    return {"type": type(exc).__name__, "message": str(exc)[:limit]}
+    def format_exception_detail(exc, *, limit=1500):  # type: ignore
+        return {"type": type(exc).__name__, "message": str(exc)}
 
 
 def is_cublas_error(exc: BaseException) -> bool:
@@ -141,7 +145,9 @@ def log_cuda_fallback(
     exc: Optional[BaseException] = None,
 ):
     """Emit structured whisper_cuda_fallback (reason e.g. missing_libcublas)."""
-    extra = {
+    if not logger:
+        return
+    kwargs: Dict[str, Any] = {
         "event": "whisper_cuda_fallback",
         "model_size": model_size,
         "device": device,
@@ -149,15 +155,8 @@ def log_cuda_fallback(
         "fallback_reason": reason,
     }
     if exc is not None:
-        extra["error_detail"] = format_exception_detail(exc)
-    logger.warning(
-        "whisper_cuda_fallback reason=%s device=%s compute_type=%s model_size=%s",
-        reason,
-        device,
-        compute_type,
-        model_size,
-        extra=extra,
-    )
+        kwargs["error_detail"] = format_exception_detail(exc)
+    logger.warning("whisper_cuda_fallback", **kwargs)
 
 
 def load_whisper_model(
@@ -172,6 +171,7 @@ def load_whisper_model(
     """Construct a WhisperModel with CUDA→CPU fallback.
 
     Returns ``(model, device, compute_type, fallback_reason)``.
+    ``model_factory`` defaults to ``faster_whisper.WhisperModel`` (injectable for tests).
     """
     device, compute_type, reason = resolve_whisper_device(
         preference, cuda_count=cuda_count, cublas_ok=cublas_ok
@@ -193,21 +193,16 @@ def load_whisper_model(
 
     try:
         model = _construct(device, compute_type)
-        logger.info(
-            "whisper_device_selected device=%s compute_type=%s model_size=%s fallback_reason=%s",
-            device,
-            compute_type,
-            model_size,
-            reason,
-            extra={
-                "event": "whisper_device_selected",
-                "model_size": model_size,
-                "device": device,
-                "compute_type": compute_type,
-                "fallback_reason": reason,
-                "whisper_device_env": (os.getenv("WHISPER_DEVICE") or "auto"),
-            },
-        )
+        if logger:
+            logger.info(
+                "whisper_device_selected",
+                event="whisper_device_selected",
+                model_size=model_size,
+                device=device,
+                compute_type=compute_type,
+                fallback_reason=reason,
+                whisper_device_env=(os.getenv("WHISPER_DEVICE") or "auto"),
+            )
         return model, device, compute_type, reason
     except Exception as exc:
         if device != "cuda":
@@ -216,19 +211,14 @@ def load_whisper_model(
         cpu_device, cpu_compute, _ = resolve_whisper_device("cpu")
         log_cuda_fallback(model_size, cpu_device, cpu_compute, fallback_reason, exc)
         model = _construct(cpu_device, cpu_compute)
-        logger.info(
-            "whisper_device_selected device=%s compute_type=%s model_size=%s fallback_reason=%s",
-            cpu_device,
-            cpu_compute,
-            model_size,
-            fallback_reason,
-            extra={
-                "event": "whisper_device_selected",
-                "model_size": model_size,
-                "device": cpu_device,
-                "compute_type": cpu_compute,
-                "fallback_reason": fallback_reason,
-                "whisper_device_env": (os.getenv("WHISPER_DEVICE") or "auto"),
-            },
-        )
+        if logger:
+            logger.info(
+                "whisper_device_selected",
+                event="whisper_device_selected",
+                model_size=model_size,
+                device=cpu_device,
+                compute_type=cpu_compute,
+                fallback_reason=fallback_reason,
+                whisper_device_env=(os.getenv("WHISPER_DEVICE") or "auto"),
+            )
         return model, cpu_device, cpu_compute, fallback_reason
