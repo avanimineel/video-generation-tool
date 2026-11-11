@@ -64,12 +64,35 @@ def start(pid,force=False,model_size='small',mode=None):
                 )
             )
             error='; '.join(report.get('errors', [])) or result.get('error')
-            finished_stage='captions_only_complete' if captions_only else 'finished'
-            _save(pid,status='needs_attention' if needs_attention else ('complete' if result.get('success') else 'failed'),
-                  stage=report.get('stage', 'review') if needs_attention else finished_stage, result=result, error=error,
-                  outcome=report.get('outcome'), scorecard=report.get('scorecard'),
-                  auto_produce_mode=report.get('auto_produce_mode', produce_mode))
+# Prefer pipeline stage (e.g. whisper_transcribe) over generic finished/review.
+            if captions_only:
+                finished_stage = result.get('stage') or 'captions_only_complete'
+            else:
+                finished_stage = result.get('stage') or (report.get('stage', 'review') if needs_attention else 'finished')
+            payload={
+                'status':'needs_attention' if needs_attention else ('complete' if result.get('success') else 'failed'),
+                'stage':finished_stage,
+                'result':result,
+                'error':error,
+                'outcome':report.get('outcome'),
+                'scorecard':report.get('scorecard'),
+                'auto_produce_mode':report.get('auto_produce_mode', produce_mode),
+            }
+            # Persist cause fields on auto_job.json / status API (not only buried in result).
+            error_cause=result.get('error_cause')
+            if error_cause:
+                payload['error_cause']=error_cause
+            error_detail=result.get('error_detail')
+            if error_detail:
+                payload['error_detail']=error_detail
+            elif error and not result.get('success'):
+                payload['error_detail']={'type':'PipelineError','message':str(error)[:1500]}
+                payload.setdefault('error_cause', str(error)[:1500])
+            _save(pid,**payload)
 
-        except Exception as exc:_save(pid,status='failed',error=safe_error(exc))
+        except Exception as exc:
+            _save(pid,status='failed',stage='auto_job_worker',error=safe_error(exc),
+                  error_cause=safe_error(exc),
+                  error_detail={'type':type(exc).__name__,'message':safe_error(exc),'stage':'auto_job_worker'})
     _executor.submit(work)
     return status(pid)

@@ -5,7 +5,10 @@ from app.core.models import CaptionItem, WordTiming, CaptionStyle, MotionGraphic
 from app.core.logging_setup import get_logger, format_exception_detail
 from app.services.media_search_service import media_search_service
 from app.services.whisper_device import (
+    classify_cuda_fallback,
+    is_cublas_error,
     load_whisper_model,
+    log_cuda_fallback,
     resolve_whisper_device,
     whisper_cache_key,
 )
@@ -219,30 +222,32 @@ class TranscriptionService:
         return lang, captions
 
     _whisper_models: Dict[str, Any] = {}
+    _whisper_model_devices: Dict[str, str] = {}
 
     @classmethod
     def clear_whisper_model_cache(cls):
         """Test helper: drop cached WhisperModel instances."""
         cls._whisper_models.clear()
+        cls._whisper_model_devices.clear()
 
     @classmethod
-    def get_whisper_model(cls, model_size: Optional[str] = None):
+    def get_whisper_model(cls, model_size: Optional[str] = None, *, force_device: Optional[str] = None):
         target_size = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
-        # Probe intended device for cache key; load_whisper_model may fall back to CPU.
-        intended_device, intended_compute, _ = resolve_whisper_device()
+        preference = force_device or None
+        intended_device, intended_compute, _ = resolve_whisper_device(preference)
         cache_key = whisper_cache_key(target_size, intended_device, intended_compute)
         if cache_key in cls._whisper_models:
             return cls._whisper_models[cache_key]
-        # Also hit CPU cache if a prior CUDA attempt already fell back.
         cpu_key = whisper_cache_key(target_size, 'cpu', resolve_whisper_device('cpu')[1])
-        if intended_device == 'cuda' and cpu_key in cls._whisper_models:
+        if intended_device == 'cuda' and cpu_key in cls._whisper_models and force_device != 'cuda':
             return cls._whisper_models[cpu_key]
 
         os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
         try:
-            model, device, compute_type, reason = load_whisper_model(target_size)
+            model, device, compute_type, _reason = load_whisper_model(target_size, preference=preference)
             key = whisper_cache_key(target_size, device, compute_type)
             cls._whisper_models[key] = model
+            cls._whisper_model_devices[key] = device
             return model
         except Exception as e:
             logger.exception(
@@ -252,8 +257,15 @@ class TranscriptionService:
                 error_detail=format_exception_detail(e),
             )
             if target_size != 'base':
-                return cls.get_whisper_model('base')
+                return cls.get_whisper_model('base', force_device=force_device)
             return None
+
+    @classmethod
+    def _cached_model_device(cls, model: Any) -> Optional[str]:
+        for key, cached in cls._whisper_models.items():
+            if cached is model:
+                return cls._whisper_model_devices.get(key)
+        return None
 
     def chunk_segment_words(self, words: List[Dict[str, Any]], words_per_caption: int = 3) -> List[List[Dict[str, Any]]]:
         if not words:
@@ -302,18 +314,41 @@ class TranscriptionService:
                 audio_target = media_path
 
         # Use beam search for coherent multilingual speech rather than greedy decoding.
+        # Materialize segments so CUDA/cublas decode errors surface here (not as a
+        # half-written empty transcript after VAD ONNX already logged success).
         beam_sz = 5
-        segments, info = model.transcribe(
-            audio_target,
-            beam_size=beam_sz,
-            best_of=1,
-            task=whisper_task,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=400, speech_pad_ms=200),
-            initial_prompt=prompt,
-            condition_on_previous_text=False,
-            word_timestamps=True
-        )
+
+        def _run_transcribe(active_model):
+            segs, info = active_model.transcribe(
+                audio_target,
+                beam_size=beam_sz,
+                best_of=1,
+                task=whisper_task,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=400, speech_pad_ms=200),
+                initial_prompt=prompt,
+                condition_on_previous_text=False,
+                word_timestamps=True
+            )
+            return list(segs), info
+
+        try:
+            segments, info = _run_transcribe(model)
+        except Exception as exc:
+            # Model may load on CUDA while decode needs libcublas.so.12 (Amazon Linux).
+            device = self._cached_model_device(model)
+            if device == 'cuda' or is_cublas_error(exc):
+                reason = classify_cuda_fallback(exc)
+                log_cuda_fallback(target_model, 'cpu', resolve_whisper_device('cpu')[1], reason, exc)
+                self.clear_whisper_model_cache()
+                model = self.get_whisper_model(target_model, force_device='cpu')
+                if not model:
+                    raise RuntimeError(
+                        'Speech model could not load on CPU after CUDA/cublas failure: ' + str(exc)
+                    ) from exc
+                segments, info = _run_transcribe(model)
+            else:
+                raise
         detected_lang = 'en' if whisper_task == 'translate' else (info.language or 'en')
 
         captions: List[CaptionItem] = []
