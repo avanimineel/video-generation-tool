@@ -400,9 +400,9 @@ class AutoProductionService:
                     state.captions,
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
                 )
+                mark_stage(project_id, 'translation', status='complete')
                 _stage_log(
-                    mark_stage(project_id, 'translation', status='complete')
-                "translation_end",
+                    "translation_end",
                     project_id=project_id,
                     stage="translation",
                     caption_count=len(state.captions or []),
@@ -410,9 +410,9 @@ class AutoProductionService:
                 )
             except Exception as exc:
                 from app.services.editorial_planner import safe_error
+                mark_stage(project_id, 'translation', status='failed')
                 _stage_exception(
-                    mark_stage(project_id, 'translation', status='failed')
-                "translation_failed",
+                    "translation_failed",
                     project_id=project_id,
                     stage="translation",
                     preference=translation_preference,
