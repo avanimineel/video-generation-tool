@@ -17,6 +17,8 @@ from app.api.music import router as music_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.core.logging_setup import configure_logging
+    configure_logging()
     init_db()
     yield
 
