@@ -248,205 +248,205 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
         </div>
       </div>
 
-      {/* Right: Export & Integrations */}
-      <div className="flex items-center gap-2">
-        {/* DaVinci Connection Status Badge */}
-        <div
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
-            davinciStatus.is_connected
-              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-              : "bg-neutral-100 text-neutral-600 border-neutral-200"
-          }`}
-          title={
-            davinciStatus.is_connected
-              ? `Connected to DaVinci timeline: ${davinciStatus.timeline_name || "Active"}`
-              : "DaVinci Resolve not detected. Compositions and SRT will export locally."
-          }
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              davinciStatus.is_connected ? "bg-emerald-500 animate-pulse" : "bg-neutral-400"
-            }`}
-          />
-          <Tv className="h-3 w-3" />
-          <span className="hidden md:inline">
-            {davinciStatus.is_connected ? "Resolve Live" : "Resolve Standalone"}
-          </span>
+      {/* Right: Create · tools · Resolve · Export (secondary chrome quieter than Export) */}
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1">
+          {onOpenStudio && (
+            <button
+              onClick={onOpenStudio}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-neutral-900 hover:bg-neutral-800 text-white border-neutral-900"
+              title="Studio: make an editable film from a website or an idea"
+            >
+              <Clapperboard className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Studio</span>
+            </button>
+          )}
+          {onOpenBrandVideo && (
+            <button
+              onClick={onOpenBrandVideo}
+              className="flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-200"
+              title="Make a brand film from a website"
+            >
+              <Clapperboard className="h-3.5 w-3.5 text-neutral-600" />
+              <span className="hidden lg:inline">Brand film</span>
+            </button>
+          )}
         </div>
 
-        {/* Studio: films made in one go by AI, then fully editable */}
-        {onOpenStudio && (
-          <button
-            onClick={onOpenStudio}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-neutral-900 hover:bg-neutral-800 text-white border-neutral-900"
-            title="Studio: make an editable film from a website or an idea"
-          >
-            <Clapperboard className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Studio</span>
-          </button>
-        )}
+        <div className="hidden md:block h-5 w-px bg-neutral-200 mx-0.5" aria-hidden />
 
-        {/* Brand film from a website */}
-        {onOpenBrandVideo && (
-          <button
-            onClick={onOpenBrandVideo}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-white hover:bg-neutral-50 text-neutral-900 border-neutral-200"
-            title="Make a brand film from a website"
-          >
-            <Clapperboard className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Brand film</span>
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {onOpenFeedbackDashboard && (
+            <button
+              onClick={onOpenFeedbackDashboard}
+              className="flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-200"
+              title="Open Human-In-The-Loop AI Feedback & Training Hub"
+            >
+              <Brain className="h-3.5 w-3.5 text-neutral-600" />
+              <span className="hidden xl:inline">Feedback</span>
+              <span className="bg-neutral-100 text-neutral-700 px-1.5 py-0.2 rounded text-[10px] font-mono font-medium border border-neutral-200">
+                {feedbackStats ? feedbackStats.total_decisions : "Hub"}
+              </span>
+            </button>
+          )}
 
-        {/* AI Editorial Feedback & Training Button */}
-        {onOpenFeedbackDashboard && (
-          <button
-            onClick={onOpenFeedbackDashboard}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-semibold transition shadow-2xs bg-purple-50 hover:bg-purple-100 text-purple-900 border-purple-200"
-            title="Open Human-In-The-Loop AI Feedback & Training Hub"
-          >
-            <Brain className="h-3.5 w-3.5 text-purple-700" />
-            <span className="hidden sm:inline">Feedback</span>
-            <span className="bg-purple-200/80 text-purple-900 px-1.5 py-0.2 rounded text-[10px] font-mono font-bold">
-              {feedbackStats ? feedbackStats.total_decisions : "Hub"}
-            </span>
-          </button>
-        )}
+          <div className="relative" ref={twelveLabsRef}>
+            <button
+              onClick={() => setShowTwelveLabsModal((prev) => !prev)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition bg-white hover:bg-neutral-50 text-neutral-600 border-neutral-200"
+              title="Twelve Labs Video Understanding Credits"
+            >
+              <Zap className="h-3.5 w-3.5 text-neutral-500" />
+              <span className="hidden xl:inline font-mono text-neutral-700">12Labs</span>
+              <span className="bg-neutral-100 text-neutral-600 px-1 py-0.2 rounded text-[10px] font-mono">
+                {twelveLabsCredits ? `${twelveLabsCredits.one_minute_videos_left}` : "600"}
+              </span>
+            </button>
 
-        {/* Twelve Labs Credits & Status */}
-        <div className="relative" ref={twelveLabsRef}>
-          <button
-            onClick={() => setShowTwelveLabsModal((prev) => !prev)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition shadow-2xs bg-neutral-50 hover:bg-neutral-100 text-neutral-800 border-neutral-200"
-            title="Twelve Labs Video Understanding Credits"
-          >
-            <Zap className="h-3.5 w-3.5 text-neutral-700" />
-            <span className="hidden sm:inline font-mono">12Labs</span>
-            <span className="bg-neutral-200 text-neutral-800 px-1 py-0.2 rounded text-[10px] font-mono font-medium">
-              {twelveLabsCredits ? `${twelveLabsCredits.one_minute_videos_left} left` : "600m left"}
-            </span>
-          </button>
-
-
-          {/* Twelve Labs Credit Meter Popover */}
-          {showTwelveLabsModal && twelveLabsCredits && (
-            <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-neutral-200 p-4 z-50 text-neutral-900 animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-md bg-neutral-100 text-neutral-700">
-                    <Zap className="h-4 w-4" />
+            {showTwelveLabsModal && twelveLabsCredits && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-neutral-200 p-4 z-50 text-neutral-900 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-md bg-neutral-100 text-neutral-700">
+                      <Zap className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-xs text-neutral-950">Twelve Labs Video Intelligence</div>
+                      <div className="text-[10px] font-mono text-neutral-500">Marengo 3.0 Multimodal Index</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-bold text-xs text-neutral-950">Twelve Labs Video Intelligence</div>
-                    <div className="text-[10px] font-mono text-neutral-500">Marengo 3.0 Multimodal Index</div>
-                  </div>
-                </div>
-                <span className="px-2 py-0.5 rounded text-[9px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  Active
-                </span>
-              </div>
-
-              {/* Progress Bar of Consumed Allowance */}
-              <div className="space-y-1.5 mb-3">
-                <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-neutral-500">Indexed Consumption</span>
-                  <span className="font-semibold text-neutral-800">
-                    {twelveLabsCredits.consumed_minutes} / {twelveLabsCredits.total_credit_minutes} min ({twelveLabsCredits.percent_used}%)
+                  <span className="px-2 py-0.5 rounded text-[9px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Active
                   </span>
                 </div>
-                <div className="w-full h-1.5 rounded-full bg-neutral-100 overflow-hidden border border-neutral-200">
-                  <div
-                    className="h-full bg-neutral-800 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.max(3, twelveLabsCredits.percent_used)}%` }}
-                  />
-                </div>
-              </div>
 
-              {/* Key Highlights Grid */}
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
-                  <div className="text-[10px] font-mono text-neutral-500 uppercase font-medium">1-Min Videos Left</div>
-                  <div className="text-lg font-bold text-neutral-900 font-mono mt-0.5">
-                    {twelveLabsCredits.one_minute_videos_left}
+                <div className="space-y-1.5 mb-3">
+                  <div className="flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-neutral-500">Indexed Consumption</span>
+                    <span className="font-semibold text-neutral-800">
+                      {twelveLabsCredits.consumed_minutes} / {twelveLabsCredits.total_credit_minutes} min ({twelveLabsCredits.percent_used}%)
+                    </span>
                   </div>
-                  <div className="text-[9px] text-neutral-500 font-mono mt-0.5">
-                    {twelveLabsCredits.remaining_minutes} min remaining
+                  <div className="w-full h-1.5 rounded-full bg-neutral-100 overflow-hidden border border-neutral-200">
+                    <div
+                      className="h-full bg-neutral-800 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(3, twelveLabsCredits.percent_used)}%` }}
+                    />
                   </div>
                 </div>
 
-                <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
-                  <div className="text-[10px] font-mono text-neutral-500 uppercase font-medium">Validity</div>
-                  <div className="text-xs font-bold text-neutral-900 font-mono mt-1">
-                    {twelveLabsCredits.expiry_date}
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                    <div className="text-[10px] font-mono text-neutral-500 uppercase font-medium">1-Min Videos Left</div>
+                    <div className="text-lg font-bold text-neutral-900 font-mono mt-0.5">
+                      {twelveLabsCredits.one_minute_videos_left}
+                    </div>
+                    <div className="text-[9px] text-neutral-500 font-mono mt-0.5">
+                      {twelveLabsCredits.remaining_minutes} min remaining
+                    </div>
                   </div>
-                  <div className="text-[9px] text-neutral-500 font-mono font-medium mt-1">
-                    {twelveLabsCredits.days_remaining} days left
+
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                    <div className="text-[10px] font-mono text-neutral-500 uppercase font-medium">Validity</div>
+                    <div className="text-xs font-bold text-neutral-900 font-mono mt-1">
+                      {twelveLabsCredits.expiry_date}
+                    </div>
+                    <div className="text-[9px] text-neutral-500 font-mono font-medium mt-1">
+                      {twelveLabsCredits.days_remaining} days left
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Video Analysis Action */}
-              <div className="space-y-2 pt-1 border-t border-neutral-100">
-                <button
-                  disabled={isAnalyzingVideo || !project?.id}
-                  onClick={async () => {
-                    if (!project?.id) return;
-                    setIsAnalyzingVideo(true);
-                    try {
-                      const res = await api.analyzeWithTwelveLabs(project.id);
-                      if (res && res.success) {
-                        alert(`Video indexed with Twelve Labs!\nAsset ID: ${res.asset_id || res.task_id || 'Ready'}\nStatus: ${res.status || 'Ready'}`);
-                        const updated = await api.getTwelveLabsCredits();
-                        setTwelveLabsCredits(updated);
-                      } else {
-                        alert(res?.error || "Twelve Labs indexing could not be completed.");
+                <div className="space-y-2 pt-1 border-t border-neutral-100">
+                  <button
+                    disabled={isAnalyzingVideo || !project?.id}
+                    onClick={async () => {
+                      if (!project?.id) return;
+                      setIsAnalyzingVideo(true);
+                      try {
+                        const res = await api.analyzeWithTwelveLabs(project.id);
+                        if (res && res.success) {
+                          alert(`Video indexed with Twelve Labs!\nAsset ID: ${res.asset_id || res.task_id || 'Ready'}\nStatus: ${res.status || 'Ready'}`);
+                          const updated = await api.getTwelveLabsCredits();
+                          setTwelveLabsCredits(updated);
+                        } else {
+                          alert(res?.error || "Twelve Labs indexing could not be completed.");
+                        }
+                      } catch (e) {
+                        alert("Twelve Labs error: " + String(e));
+                      } finally {
+                        setIsAnalyzingVideo(false);
                       }
-                    } catch (e) {
-                      alert("Twelve Labs error: " + String(e));
-                    } finally {
-                      setIsAnalyzingVideo(false);
-                    }
-                  }}
-                  className="w-full py-2 px-3 rounded-lg bg-neutral-900 hover:bg-black text-white font-medium text-xs flex items-center justify-center gap-1.5 transition shadow-2xs disabled:opacity-50"
-                >
-                  {isAnalyzingVideo ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  <span>{isAnalyzingVideo ? "Indexing in Twelve Labs..." : "Analyze Video with 12Labs"}</span>
-                </button>
+                    }}
+                    className="w-full py-2 px-3 rounded-lg bg-neutral-900 hover:bg-black text-white font-medium text-xs flex items-center justify-center gap-1.5 transition shadow-2xs disabled:opacity-50"
+                  >
+                    {isAnalyzingVideo ? (
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    <span>{isAnalyzingVideo ? "Indexing in Twelve Labs..." : "Analyze Video with 12Labs"}</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Sync to DaVinci */}
-        <button
-          onClick={onSyncToDaVinci}
-          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md bg-neutral-50 hover:bg-neutral-100 text-neutral-800 border border-neutral-200 transition"
-          title="Send tracks, subtitles, and Fusion comps directly into DaVinci Resolve timeline"
-        >
-          <Send className="h-3.5 w-3.5 text-neutral-700" />
-          <span className="hidden lg:inline">Sync Resolve</span>
-        </button>
+        <div className="hidden md:block h-5 w-px bg-neutral-200 mx-0.5" aria-hidden />
 
-        {/* Save as DaVinci Project Bundle */}
-        <button
-          onClick={onSaveDaVinciProject}
-          disabled={isSavingDaVinciProject}
-          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 transition shadow-2xs disabled:opacity-50"
-          title="Save complete project as DaVinci Resolve bundle"
-        >
-          {isSavingDaVinciProject ? (
-            <RefreshCw className="h-3.5 w-3.5 animate-spin text-neutral-600" />
-          ) : (
-            <FolderOpen className="h-3.5 w-3.5 text-neutral-700" />
-          )}
-          <span className="hidden sm:inline">Save DaVinci Project</span>
-        </button>
+        {/* Resolve group */}
+        <div className="flex items-center gap-1">
+          <div
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border ${
+              davinciStatus.is_connected
+                ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                : "bg-neutral-50 text-neutral-500 border-neutral-200"
+            }`}
+            title={
+              davinciStatus.is_connected
+                ? `Connected to DaVinci timeline: ${davinciStatus.timeline_name || "Active"}`
+                : "DaVinci Resolve not detected. Compositions and SRT will export locally."
+            }
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                davinciStatus.is_connected ? "bg-emerald-500 animate-pulse" : "bg-neutral-400"
+              }`}
+            />
+            <Tv className="h-3 w-3" />
+            <span className="hidden xl:inline">
+              {davinciStatus.is_connected ? "Resolve Live" : "Standalone"}
+            </span>
+          </div>
 
-        {/* Export / Burn Video Dropdown */}
+          <button
+            onClick={onSyncToDaVinci}
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 transition"
+            title="Send tracks, subtitles, and Fusion comps directly into DaVinci Resolve timeline"
+          >
+            <Send className="h-3.5 w-3.5 text-neutral-600" />
+            <span className="hidden xl:inline">Sync</span>
+          </button>
+
+          <button
+            onClick={onSaveDaVinciProject}
+            disabled={isSavingDaVinciProject}
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 transition disabled:opacity-50"
+            title="Save complete project as DaVinci Resolve bundle"
+          >
+            {isSavingDaVinciProject ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin text-neutral-600" />
+            ) : (
+              <FolderOpen className="h-3.5 w-3.5 text-neutral-600" />
+            )}
+            <span className="hidden xl:inline">Save DaVinci</span>
+          </button>
+        </div>
+
+        <div className="hidden sm:block h-5 w-px bg-neutral-200 mx-0.5" aria-hidden />
+
+        {/* Primary export */}
         {isRendering ? (
           <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-neutral-100 border border-neutral-300 text-neutral-900 text-xs font-semibold">
             <RefreshCw className="h-3.5 w-3.5 animate-spin text-neutral-700" />
@@ -465,7 +465,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                 title="Export complete video with subtitles and graphics"
               >
                 <Download className="h-3.5 w-3.5 stroke-[2.2]" />
-                <span>Export MP4</span>
+                <span>Export</span>
               </button>
               <button
                 onClick={() => setShowExportMenu((prev) => !prev)}
@@ -476,7 +476,6 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
               </button>
             </div>
 
-            {/* Dropdown Menu */}
             {showExportMenu && (
               <div className="absolute right-0 top-full mt-1.5 w-64 bg-white rounded-lg shadow-xl border border-neutral-200 p-1.5 z-50 text-neutral-900 animate-in fade-in zoom-in-95 duration-100">
                 <button
@@ -511,14 +510,13 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           </div>
         )}
 
-        {/* Right Inspector Toggle */}
         {onToggleRightSidebar && (
           <button
             onClick={onToggleRightSidebar}
-            className={`p-1.5 rounded-md border transition ml-1 ${
-              isRightSidebarCollapsed 
-                ? 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-300' 
-                : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 border-transparent'
+            className={`p-1.5 rounded-md border transition ${
+              isRightSidebarCollapsed
+                ? "bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-300"
+                : "text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 border-transparent"
             }`}
             title={isRightSidebarCollapsed ? "Expand Inspector" : "Collapse Inspector"}
           >

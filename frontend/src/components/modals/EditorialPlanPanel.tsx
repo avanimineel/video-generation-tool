@@ -9,15 +9,25 @@ interface EditorialPlanPanelProps {
   onSeek: (t: number) => void;
   onUpdated: (p: any) => void;
   onBusy: (b: boolean) => void;
+  /** Controlled open — lets the status banner CTA open Review without a second entry point. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function EditorialPlanPanel({
   projectId,
   onSeek,
   onUpdated,
-  onBusy
+  onBusy,
+  open: controlledOpen,
+  onOpenChange
 }: EditorialPlanPanelProps) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    onOpenChange?.(next);
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+  };
   const [report, setReport] = useState<any>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -107,12 +117,17 @@ export function EditorialPlanPanel({
 
   return (
     <>
-      <div className="px-4 py-1 border-b border-neutral-200 bg-white flex items-center justify-between text-xs">
-        <QualityPreview projectId={projectId} />
-        <UnderstandingReview projectId={projectId} onSeek={onSeek} />
-        <span className="text-neutral-500">Meaning → visual purpose → media review → timing</span>
+      <div className="px-3 py-1 border-b border-neutral-200 bg-white flex items-center gap-2 text-xs shrink-0 min-h-[32px]">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <QualityPreview projectId={projectId} />
+          <UnderstandingReview projectId={projectId} onSeek={onSeek} />
+        </div>
+        <span className="hidden md:inline text-neutral-400 truncate flex-1 text-[11px] tracking-wide">
+          Meaning → visual purpose → media review → timing
+        </span>
         <button
-          className="px-3 py-1 rounded border border-neutral-300 hover:bg-neutral-100 font-medium text-neutral-800 transition"
+          type="button"
+          className="ml-auto px-3 py-1 rounded-md border border-neutral-300 bg-white hover:bg-neutral-50 font-semibold text-neutral-900 transition shadow-2xs shrink-0"
           onClick={() => setOpen(true)}
         >
           Review automatic edit

@@ -137,16 +137,16 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   );
 
   return (
-    <div className="flex-1 min-h-0 bg-neutral-100 flex flex-col relative overflow-hidden select-none">
+    <div className="flex-1 min-h-0 bg-neutral-200/70 flex flex-col relative overflow-hidden select-none">
       {(project?.audio_tracks || []).filter(t => t.type === "music" && t.music_id).map(t => (
         <MusicBed key={t.id} track={t} time={currentTime} playing={isPlaying} speaking={captions.some(c => currentTime >= c.start && currentTime < c.end)} />
       ))}
       {playbackError&&<p role="alert" className="absolute top-2 left-1/2 -translate-x-1/2 z-50 bg-red-50 text-red-800 p-3 rounded text-sm">{playbackError}</p>}
-      {/* Stage: preview fills nearly all vertical space between header and timeline (Resolve-like) */}
-      <div className="flex-1 min-h-0 flex items-center justify-center px-2 py-1">
-      {/* No artificial max-width cap — height drives 9:16 size; width follows aspect ratio within the center column */}
+      {/* Stage: preview is the single composition hero between chrome and timeline */}
+      <div className="flex-1 min-h-0 flex items-center justify-center px-1 py-1">
+      {/* Height drives 9:16 size; width follows aspect within the center column — no artificial max-width cap */}
       <div
-        className={`relative bg-neutral-900 rounded-xl overflow-hidden shadow-lg border border-neutral-300 flex items-center justify-center ${
+        className={`relative bg-neutral-900 rounded-lg overflow-hidden shadow-md border border-neutral-400/80 flex items-center justify-center ${
           is916
             ? "aspect-[9/16] h-full max-h-full w-auto max-w-full"
             : "aspect-[16/9] w-full max-w-full h-auto max-h-full"

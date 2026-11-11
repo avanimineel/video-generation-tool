@@ -45,8 +45,29 @@ export const Timeline: React.FC<TimelineProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(60); // pixels per second
   const [isScrubbing, setIsScrubbing] = useState(false);
-  // Compact default (~190px) so the center preview dominates; collapse to toolbar only when needed.
-  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  // Prefer collapsed for 9:16 so the center preview owns the viewport; persist user choice.
+  const [timelineCollapsed, setTimelineCollapsed] = useState(() => {
+    try {
+      const stored = localStorage.getItem("studio.timelineCollapsed");
+      if (stored === "1") return true;
+      if (stored === "0") return false;
+    } catch {
+      /* ignore */
+    }
+    return project?.settings?.aspect_ratio === "9:16";
+  });
+
+  const toggleTimelineCollapsed = () => {
+    setTimelineCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("studio.timelineCollapsed", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   // Unified Trimming / Dragging state for captions and graphics
   const [activeTrim, setActiveTrim] = useState<{
@@ -258,14 +279,14 @@ export const Timeline: React.FC<TimelineProps> = ({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      className={`${timelineCollapsed ? "h-8" : "h-[200px]"} bg-white border-t border-neutral-200 flex flex-col select-none relative z-10 shrink-0 transition-[height] duration-200`}
+      className={`${timelineCollapsed ? "h-8" : "h-[168px]"} bg-white border-t border-neutral-200 flex flex-col select-none relative z-10 shrink-0 transition-[height] duration-200`}
     >
       {/* Timeline Controls & Quick Tools */}
       <div className="h-8 bg-neutral-50 border-b border-neutral-200 px-3 flex items-center justify-between text-xs shrink-0">
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setTimelineCollapsed((v) => !v)}
+            onClick={toggleTimelineCollapsed}
             className="flex items-center gap-1 px-2 py-0.5 rounded bg-white hover:bg-neutral-100 border border-neutral-200 text-neutral-800 transition shadow-xs"
             title={timelineCollapsed ? "Expand timeline" : "Collapse timeline (give preview more room)"}
           >
