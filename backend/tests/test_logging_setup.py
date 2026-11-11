@@ -107,3 +107,78 @@ def test_default_prefers_var_log_when_writable(
     monkeypatch.setattr(logging_setup, "_VAR_LOG_FILE", fake_var)
     monkeypatch.delenv("LOG_FILE", raising=False)
     assert logging_setup._resolve_log_file() == fake_var
+
+
+def test_structured_json_event_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import json
+
+    log_path = tmp_path / "events.log"
+    monkeypatch.setenv("LOG_FILE", str(log_path))
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    monkeypatch.delenv("LOG_TO_STDERR", raising=False)
+    configure_logging(force=True)
+
+    from app.core.logging_setup import get_logger
+
+    get_logger("app.test.events").info(
+        "media_upload_received",
+        event="media_upload_received",
+        media_id="proj1",
+        filename="clip.mp4",
+        size_bytes=1234,
+        content_type="video/mp4",
+    )
+    lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    payload = json.loads(lines[-1])
+    assert payload["event"] == "media_upload_received"
+    assert payload["media_id"] == "proj1"
+    assert payload["filename"] == "clip.mp4"
+    assert payload["size_bytes"] == 1234
+    assert payload["content_type"] == "video/mp4"
+    assert payload["level"] == "INFO"
+
+
+def test_auto_produce_stage_event_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Mirrors auto_jobs.mark_stage / auto_produce_started field layout."""
+    import json
+
+    log_path = tmp_path / "stages.log"
+    monkeypatch.setenv("LOG_FILE", str(log_path))
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    monkeypatch.delenv("LOG_TO_STDERR", raising=False)
+    configure_logging(force=True)
+
+    from app.core.logging_setup import get_logger
+
+    log = get_logger("app.services.auto_jobs")
+    log.info(
+        "auto_produce_started",
+        event="auto_produce_started",
+        media_id="media42",
+        mode="captions_only",
+        force=True,
+        model_size="small",
+    )
+    log.info(
+        "auto_produce_stage",
+        event="auto_produce_stage",
+        media_id="media42",
+        stage="transcription",
+        status="running",
+        mode="captions_only",
+    )
+    text = log_path.read_text(encoding="utf-8")
+    started = json.loads(
+        [ln for ln in text.splitlines() if '"auto_produce_started"' in ln][-1]
+    )
+    stage = json.loads(
+        [ln for ln in text.splitlines() if '"auto_produce_stage"' in ln][-1]
+    )
+    assert started["mode"] == "captions_only"
+    assert started["force"] is True
+    assert started["model_size"] == "small"
+    assert stage["stage"] == "transcription"
+    assert stage["status"] == "running"
+    assert stage["media_id"] == "media42"

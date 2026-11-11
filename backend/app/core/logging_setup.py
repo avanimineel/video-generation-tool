@@ -29,19 +29,29 @@ Env:
                         (off by default when a file sink is active — avoids
                         duplicating into a shell-redirected LOG_FILE).
   LOG_LEVEL             Default INFO
-  LOG_FORMAT / LOG_DATEFMT
+  LOG_FORMAT            json (default for structured events) | kv | printf pattern
+  LOG_DATEFMT           Only used for classic printf LOG_FORMAT patterns
   LOG_FILE_MAX_BYTES / LOG_FILE_BACKUP_COUNT
   UVICORN_ACCESS_LOG    Consumed by start_companion.sh (1 = enable access log).
+
+Structured events (via get_logger)::kwargs)::
+
+    logger.info("media_upload_received", event="media_upload_received", media_id=..., filename=...)
 """
 from __future__ import annotations
 
 import errno
+import json
 import logging
 import os
 import sys
+import traceback
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 _CONFIGURED = False
 _BROKEN_SINK_LOGGED = False
@@ -49,6 +59,155 @@ _ACTIVE_LOG_FILE: Optional[Path] = None
 
 _VAR_LOG_FILE = Path("/var/log/resolve-companion.log")
 _FALLBACK_LOG_FILE = Path(__file__).resolve().parent.parent.parent / "logs" / "companion.log"
+
+_project_id: ContextVar[Optional[str]] = ContextVar("log_project_id", default=None)
+_job_stage: ContextVar[Optional[str]] = ContextVar("log_job_stage", default=None)
+_run_id: ContextVar[Optional[str]] = ContextVar("log_run_id", default=None)
+
+_SECRET_MARKERS = ("API_KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
+_MAX_FIELD = 500
+
+
+def truncate(value: Any, limit: int = _MAX_FIELD) -> str:
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def redact_secrets(text: str) -> str:
+    out = text
+    for key, value in os.environ.items():
+        if any(m in key.upper() for m in _SECRET_MARKERS) and value and len(value) > 5:
+            out = out.replace(value, "[REDACTED]")
+    return out
+
+
+def bind_context(
+    *,
+    project_id: Optional[str] = None,
+    job_stage: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    tokens: Dict[str, Any] = {}
+    if project_id is not None:
+        tokens["project_id"] = _project_id.set(project_id)
+    if job_stage is not None:
+        tokens["job_stage"] = _job_stage.set(job_stage)
+    if run_id is not None:
+        tokens["run_id"] = _run_id.set(run_id)
+    return tokens
+
+
+def reset_context(tokens: Dict[str, Any]) -> None:
+    if "project_id" in tokens:
+        _project_id.reset(tokens["project_id"])
+    if "job_stage" in tokens:
+        _job_stage.reset(tokens["job_stage"])
+    if "run_id" in tokens:
+        _run_id.reset(tokens["run_id"])
+
+
+@contextmanager
+def log_context(
+    *,
+    project_id: Optional[str] = None,
+    job_stage: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Iterator[None]:
+    tokens = bind_context(project_id=project_id, job_stage=job_stage, run_id=run_id)
+    try:
+        yield
+    finally:
+        reset_context(tokens)
+
+
+def current_context() -> Dict[str, str]:
+    ctx: Dict[str, str] = {}
+    pid = _project_id.get()
+    stage = _job_stage.get()
+    rid = _run_id.get()
+    if pid:
+        ctx["project_id"] = pid
+    if stage:
+        ctx["job_stage"] = stage
+    if rid:
+        ctx["run_id"] = rid
+    return ctx
+
+
+class StructuredFormatter(logging.Formatter):
+    """One JSON object per line (CloudWatch / journald / LOG_FILE friendly)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: Dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": redact_secrets(record.getMessage()),
+        }
+        payload.update(current_context())
+        extras = getattr(record, "structured", None)
+        if isinstance(extras, dict):
+            for key, value in extras.items():
+                if key in payload:
+                    continue
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    payload[key] = truncate(value) if isinstance(value, str) else value
+                else:
+                    payload[key] = truncate(value)
+        if record.exc_info:
+            payload["exc_type"] = (
+                record.exc_info[0].__name__ if record.exc_info[0] else None
+            )
+            payload["traceback"] = redact_secrets(
+                "".join(traceback.format_exception(*record.exc_info))
+            )[:4000]
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+class KeyValueFormatter(logging.Formatter):
+    """Compact key=value lines when LOG_FORMAT=kv."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        parts = [
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            record.levelname,
+            record.name,
+            redact_secrets(record.getMessage()),
+        ]
+        for key, value in {
+            **current_context(),
+            **(getattr(record, "structured", None) or {}),
+        }.items():
+            parts.append(
+                f"{key}={truncate(value)!r}" if isinstance(value, str) else f"{key}={value}"
+            )
+        if record.exc_info:
+            parts.append(
+                "traceback="
+                + redact_secrets("".join(traceback.format_exception(*record.exc_info)))[:2000]
+            )
+        return " ".join(str(p) for p in parts)
+
+
+class StructuredAdapter(logging.LoggerAdapter):
+    """Logger that accepts kwargs as structured fields (not % formatting)."""
+
+    def process(self, msg, kwargs):
+        extra = kwargs.setdefault("extra", {})
+        structured = dict(extra.get("structured") or {})
+        for key in list(kwargs.keys()):
+            if key in ("exc_info", "stack_info", "stacklevel", "extra"):
+                continue
+            structured[key] = kwargs.pop(key)
+        if structured:
+            extra["structured"] = structured
+        return msg, kwargs
+
+
+def get_logger(name: str) -> StructuredAdapter:
+    return StructuredAdapter(logging.getLogger(name), {})
 
 
 class SafeStreamHandler(logging.StreamHandler):
@@ -141,10 +300,13 @@ def _want_stderr_handler(file_active: bool) -> bool:
 
 
 def _build_formatter() -> logging.Formatter:
-    fmt = os.getenv(
-        "LOG_FORMAT",
-        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    fmt = (os.getenv("LOG_FORMAT") or "json").strip()
+    fmt_lower = fmt.lower()
+    if fmt_lower in ("json", "structured"):
+        return StructuredFormatter()
+    if fmt_lower in ("kv", "keyvalue", "text"):
+        return KeyValueFormatter()
+    # Classic printf-style pattern (e.g. "%(asctime)s %(levelname)s %(message)s").
     datefmt = os.getenv("LOG_DATEFMT", "%Y-%m-%d %H:%M:%S")
     return logging.Formatter(fmt=fmt, datefmt=datefmt)
 
@@ -261,17 +423,20 @@ def configure_logging(force: bool = False) -> Optional[Path]:
         # No file sink: propagate to root's SafeStreamHandler only.
         access.propagate = True
 
+    # Keep noisy HTTP client libraries quiet unless the process is at DEBUG.
     if level > logging.DEBUG:
         for noisy in ("httpx", "httpcore", "urllib3", "asyncio"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
     _CONFIGURED = True
     _ACTIVE_LOG_FILE = active_file
-    logging.getLogger(__name__).info(
-        "logging configured level=%s log_file=%s stderr=%s",
-        level_name,
-        str(active_file) if active_file else "(none)",
-        _want_stderr_handler(file_active=active_file is not None),
+    get_logger(__name__).info(
+        "logging_configured",
+        event="logging_configured",
+        log_level=level_name,
+        log_format=(os.getenv("LOG_FORMAT") or "json"),
+        log_file=str(active_file) if active_file else None,
+        stderr=_want_stderr_handler(file_active=active_file is not None),
     )
     return active_file
 
