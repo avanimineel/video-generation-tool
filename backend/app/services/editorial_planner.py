@@ -470,6 +470,16 @@ Spoken Text & Query Precision:
         from app.services.local_editorial import auth_failure, deterministic_decisions, local_llm_json
         if not auth_failure(str(exc)):
             raise
+        from app.services.local_models import qwen_plan
+        try:
+            planned = qwen_plan(segments)
+        except Exception:
+            planned = None
+        if planned:
+            try:
+                return PlanResponse.model_validate(planned).decisions
+            except (ValueError, TypeError):
+                pass
         local = local_llm_json(prompt, PlanResponse.model_json_schema())
         if local:
             try:
@@ -1147,6 +1157,41 @@ def execute_plan(state,rows,run_dir):
     return graphics,logs
 
 
+def _ensure_local_index(state, source, run_dir, report):
+    """YOLO, Florence, and SigLIP still run when a cached transcript understanding is reused."""
+    ingestion = dict(state.ai_ingestion or {})
+    if ingestion.get('detection_frames') or not source.is_file():
+        return
+    from app.core.config import settings
+    cache = settings.projects_dir / state.id / 'semantic_cache' / 'local_picture_index.json'
+    if cache.is_file():
+        try:
+            saved = json.loads(cache.read_text())
+            state.ai_ingestion = {**ingestion, **{key: saved[key] for key in ('shot_cuts', 'detection_frames', 'picture_index') if key in saved}}
+            report['picture_index'] = saved.get('picture_index')
+            report['shot_cuts'] = saved.get('shot_cuts') or []
+            report['shot_captions'] = saved.get('shot_captions') or []
+            return
+        except (ValueError, TypeError, OSError):
+            pass
+    from app.services.editorial_features import detect_shot_cuts
+    from app.services.local_models import index_picture
+    cuts = list(ingestion.get('shot_cuts') or []) or detect_shot_cuts(str(source), threshold=0.3)
+    domain = getattr(getattr(state, 'settings', None), 'domain_profile', None) or 'general'
+    try:
+        indexed = index_picture(str(source), cuts, float(state.duration_seconds or 0), domain, run_dir / 'local_frames')
+    except Exception as exc:
+        report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(exc))
+        return
+    saved = {'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'shot_captions': indexed['captions'], 'picture_index': 'local_yolo_florence_siglip'}
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    write_json(cache, saved)
+    state.ai_ingestion = {**ingestion, 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': saved['picture_index']}
+    report['shot_cuts'] = cuts
+    report['shot_captions'] = indexed['captions']
+    report['picture_index'] = saved['picture_index']
+
+
 def run_editorial(state,media_file,protected=(),plan_only=False):
     from datetime import datetime
     from uuid import uuid4
@@ -1214,12 +1259,21 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                 if '401' in message or '403' in message or 'api_key_invalid' in message:
                     note_provider_failure('twelve_labs', 401)
                 cuts = detect_shot_cuts(str(media_file), threshold=0.3) if source.is_file() else []
-                state.ai_ingestion = {**(state.ai_ingestion or {}), 'shot_cuts': cuts, 'picture_index': 'ffmpeg_scene'}
-                report['errors'].append('Picture index unavailable ('+message+'). Planning from the spoken transcript and '+str(len(cuts))+' shot cuts.')
-                report['understanding_source']='transcript'
+                indexed = {'frames': [], 'captions': []}
+                if source.is_file():
+                    try:
+                        from app.services.local_models import index_picture
+                        indexed = index_picture(str(media_file), cuts, float(state.duration_seconds or 0), getattr(getattr(state, 'settings', None), 'domain_profile', None) or 'general', run_dir / 'local_frames')
+                    except Exception as vision_exc:
+                        report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(vision_exc))
+                state.ai_ingestion = {**(state.ai_ingestion or {}), 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': 'local_yolo_florence_siglip'}
+                report['errors'].append('Picture index unavailable ('+message+'). Local shot captions: '+str(len(indexed['captions']))+'. Shot cuts: '+str(len(cuts))+'.')
+                report['understanding_source']='local_models'
                 report['shot_cuts']=cuts
+                report['shot_captions']=indexed['captions']
                 raw=speech_only_understanding(state.captions,state.duration_seconds)
                 if not raw:raise ValueError('No spoken captions were available after the picture index failed.') from exc
+        _ensure_local_index(state, source, run_dir, report)
         # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
         write_json(run_dir/'01_understanding_raw.json',raw)
         normalize_segments(raw,state.captions,state.duration_seconds)

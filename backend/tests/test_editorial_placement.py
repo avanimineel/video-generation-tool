@@ -193,6 +193,16 @@ def test_offline_import_skips_the_source_clip_and_keeps_unmapped_titles():
     assert not is_live_feedback(imported["feedback"][0])
 
 
+def test_local_box_math_and_sample_times():
+    from app.services.local_models import head_box, map_yolo_label, sample_times, xyxy_to_center
+    center = xyxy_to_center((0, 0, 100, 50), 200, 100)
+    assert center == (0.25, 0.25, 0.5, 0.5)
+    assert map_yolo_label("sports ball") == "ball"
+    assert map_yolo_label("person") == "face"
+    assert head_box((0, 0, 10, 100))[3] == 42
+    assert sample_times([], 10, limit=4)[0] == 0.0
+
+
 def test_deterministic_planner_places_a_spoken_phrase_without_gemini():
     from app.services.editorial_planner import Segment
     from app.services.local_editorial import deterministic_decisions, note_provider_failure, provider_degraded

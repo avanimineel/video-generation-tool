@@ -1,9 +1,8 @@
 """Local editorial path used when Gemini or Twelve Labs reject a key.
 
-Order is Gemini, then a local JSON planner if LOCAL_PLANNER_URL is set,
+Order is Gemini, then in-process Qwen, then LOCAL_PLANNER_URL,
 then a deterministic planner that needs no GPU. Shot cuts come from ffmpeg.
-Avoid boxes are read from an ONNX detector only when EDITORIAL_YOLO_ONNX
-points at a model file. Missing weights stay empty rather than inventing boxes.
+YOLO11n, Florence-2, and SigLIP live in local_models and stay empty when a weight fails to load.
 """
 
 from __future__ import annotations

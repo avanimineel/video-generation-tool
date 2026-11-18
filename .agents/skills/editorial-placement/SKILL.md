@@ -17,7 +17,7 @@ Place graphics with measured picture and audio features, then a deterministic sn
 3. Four-metric scorecard on finished edits.
 4. A fine-tune only after that scorecard exists. It is not part of this module.
 
-When Gemini or Twelve Labs returns 401 or 403, mark that provider degraded in `provider_health.json` and do not keep retrying it. Picture indexing falls back to ffmpeg shot cuts plus the transcript. Planning falls back to `LOCAL_PLANNER_URL` when that server is up, and otherwise to `local_editorial.deterministic_decisions`, which places spoken titles and numbers with the existing snap and safe-slot code. An ONNX avoid-box model is used only when `EDITORIAL_YOLO_ONNX` points at a file.
+When Gemini or Twelve Labs returns 401 or 403, mark that provider degraded in `provider_health.json` and do not keep retrying it. Picture indexing then uses ffmpeg shot cuts, YOLO11n avoid boxes, Florence-2 captions, and SigLIP embeddings from `local_models.py`. Planning tries in-process Qwen2.5-7B, then `LOCAL_PLANNER_URL`, then the deterministic spoken-title planner. Weights stay in the Hugging Face cache and `/data/developer/oonex/models/yolo11n.pt`. One GPU model is loaded at a time.
 
 `timeline_import.py` is an offline CLI. It parses FCPXML, converts center-origin positions into `screen_rect`, maps generator names onto the four families, and attaches shot cuts and avoid boxes supplied from the feature probes. It writes `fcpxml_placements.json`, `fcpxml_feedback.json`, `training_export.json`, and, when a separate shadow plan is passed, `scorecard_baseline.json`. Those rows use `source: fcpxml_import`. The live feedback endpoint rejects that source, and `planning_feedback` ignores it.
 
