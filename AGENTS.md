@@ -7,6 +7,7 @@ Welcome to the **DaVinci Resolve AI Editing Companion** project directory.
 1. **Light Theme Design System**:
    * Maintain the clean, modern light-theme UI tokens across all React components (`bg-white`, `border-neutral-200`, `text-neutral-900`, neutral hover states).
    * Ensure sidebar columns retain their collapsible behavior and toggle state.
+   * Studio UI changes follow `docs/07_STUDIO_UI_UX_CONTEXT.md`. That file is the current shell and the ordered UX suggestions. `docs/02_FRONTEND_ARCHITECTURE_AND_COMPONENTS.md` still describes an older left-rail layout.
 
 2. **Media Search Priority Order**:
    * Media provider orchestration strictly follows:
