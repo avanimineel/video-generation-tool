@@ -5,11 +5,13 @@ import { api } from '../../services/api';
 import { findNextFreeSlot } from '../../services/safePlacement';
 import { AspectPreset, CenterRect } from '../../types/editorial';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
+import { SegmentPicture } from './SegmentPicture';
 
 interface EditorialPlanPanelProps {
   projectId: string;
   onSeek: (t: number) => void;
   onUpdated: (p: any) => void;
+  graphics?: Array<{ id: string; media_url?: string | null; title?: string }>;
   onBusy: (b: boolean) => void;
   /** Controlled open — lets the status banner CTA open Review without a second entry point. */
   open?: boolean;
@@ -20,6 +22,7 @@ export function EditorialPlanPanel({
   projectId,
   onSeek,
   onUpdated,
+  graphics = [],
   onBusy,
   open: controlledOpen,
   onOpenChange
@@ -347,6 +350,17 @@ export function EditorialPlanPanel({
                         <p className="text-xs text-neutral-700 leading-relaxed">
                           {d.decision_reason || d.rationale}
                         </p>
+
+                        <SegmentPicture
+                          projectId={projectId}
+                          graphicId={d.graphic_id}
+                          startSec={d.placement?.start_sec ?? d.start_sec}
+                          endSec={d.placement?.end_sec ?? d.end_sec}
+                          transcript={d.anchor_phrase || d.display_text || ''}
+                          initialQuery={d.asset?.retrieval_query || d.display_text || ''}
+                          currentUrl={d.placed_media?.media_url || graphics.find((item) => item.id === d.graphic_id)?.media_url}
+                          onReplaced={(project) => { if (project) onUpdated(project); }}
+                        />
 
                         {Array.isArray(d.placement?.screen_rect) && (
                           <div className="flex items-center justify-between text-[11px] text-neutral-600">

@@ -488,7 +488,7 @@ Spoken Text & Query Precision:
                 return PlanResponse.model_validate(local).decisions
             except (ValueError, TypeError):
                 pass
-        return deterministic_decisions(segments)
+        return deterministic_decisions(segments, feedback)
     expected={s.id for s in segments}
     decisions=[d for d in decisions if d.segment_id in expected]
     missing=expected-{d.segment_id for d in decisions}
@@ -1144,7 +1144,9 @@ def execute_plan(state,rows,run_dir):
         else:
             row.update(status='needs_source_or_renderer',decision_reason=f'{strategy} requires a verified source or supported renderer. No invented substitute was inserted.');continue
         place_decision(row, g, state)
-        row['status']='inserted';row['graphic_id']=g.id;graphics.append(g)
+        row['status']='inserted';row['graphic_id']=g.id
+        row['placed_media']={'media_url': g.media_url, 'media_type': g.media_type, 'title': g.title, 'provider': g.source_name}
+        graphics.append(g)
         logs.append(dict(cue_index=i+1,graphic_id=g.id,template_id=g.template_id,template_name=g.title,timestamp_start=g.start,timestamp_end=g.end,timestamp_formatted=f'{int(g.start//60):02d}:{g.start%60:05.2f}',duration_sec=g.end-g.start,trigger_term=row['anchor_phrase'],cue_category=row['intent'],timestamp_logic=row['timing_method'],image_logic=row['rationale'],layout_logic=json.dumps(row['realized_composition']),pacing_logic=row['decision_reason'],search_query=row['asset']['retrieval_query'],source_provider=selected.get('provider','') if selected else '',media_url=g.media_url or '',media_type=g.media_type,strength=row['utility'],reasoning=row['rationale']))
     write_json(run_dir/'05_placement.json',rows)
     write_json(run_dir/'06_timeline.json',[g.model_dump() for g in graphics])

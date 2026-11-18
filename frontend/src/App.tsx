@@ -1087,6 +1087,7 @@ export const App: React.FC = () => {
       <EditorialPlanPanel
         onBusy={setIsAutoProducing}
         projectId={project.id}
+        graphics={project.graphics}
         onSeek={setCurrentTime}
         onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
         open={editorialPlanOpen}

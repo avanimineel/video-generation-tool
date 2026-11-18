@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Any, Dict, Optional
 from app.core.models import ProjectState
 from app.services.project_manager import project_manager, same_project_content
 
@@ -162,6 +162,78 @@ def get_media_coverage(project_id: str):
     if not project_manager.get_project(project_id):
         raise HTTPException(404, 'Project not found')
     return calculate_media_coverage(project_id)
+
+class ReplaceVisualRequest(BaseModel):
+    graphic_id: Optional[str] = None
+    start_sec: float = 0
+    end_sec: float = 1
+    transcript: str = ""
+    editor_note: str = ""
+    search_query: str = ""
+    asset: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post('/{project_id}/replace-visual')
+def replace_visual(project_id: str, req: ReplaceVisualRequest):
+    """Download one internet image onto this beat and keep the editor's note for similar sections."""
+    from uuid import uuid4
+    from app.core.models import MotionGraphicItem
+    from app.services.asset_downloader import asset_downloader
+    from app.services.feedback_service import feedback_service
+    state = project_manager.get_project(project_id)
+    if not state:
+        raise HTTPException(404, 'Project not found')
+    if not req.asset:
+        raise HTTPException(400, 'Choose an image from the search results.')
+    try:
+        saved = asset_downloader.download_asset(project_id, req.asset)
+    except Exception as exc:
+        raise HTTPException(502, f'Could not download that image: {exc}')
+    graphic = next((item for item in state.graphics if req.graphic_id and item.id == req.graphic_id), None)
+    if graphic is None:
+        graphic = MotionGraphicItem(
+            id=f'swap_{uuid4().hex[:8]}',
+            start=req.start_sec,
+            end=max(req.end_sec, req.start_sec + 1.2),
+            template_id='split_screen_vertical',
+            title=req.asset.get('title') or req.search_query or 'Stock image',
+        )
+        state.graphics.append(graphic)
+    graphic.media_url = saved['media_url']
+    graphic.media_type = saved.get('media_type') or 'image'
+    graphic.template_id = 'split_screen_vertical'
+    graphic.split_layout = 'split_50_50_vertical'
+    graphic.placement_mode = 'overlay'
+    graphic.source_name = req.asset.get('provider')
+    graphic.source_url = req.asset.get('url')
+    graphic.author = req.asset.get('author')
+    graphic.license = req.asset.get('license')
+    graphic.title = req.asset.get('title') or graphic.title
+    graphic.parameters = {
+        **(graphic.parameters or {}),
+        'media_url': saved['media_url'],
+        'media_type': graphic.media_type,
+        'editor_note': req.editor_note,
+        'search_query': req.search_query,
+        'editorial_generated': True,
+    }
+    project_manager.save_project(state)
+    feedback_service.record_decision(
+        project_id=project_id,
+        cue_id=graphic.id,
+        decision='swap',
+        reasoning=req.editor_note or 'Editor replaced this beat with an internet image.',
+        strength=0.9,
+        graphic_type='split_screen_vertical',
+        start_sec=graphic.start,
+        end_sec=graphic.end,
+        search_query=req.search_query,
+        transcript_context=req.transcript,
+        selected_asset={**req.asset, 'media_url': saved['media_url'], 'title': graphic.title},
+        editor_notes=req.editor_note,
+    )
+    return {'success': True, 'graphic_id': graphic.id, 'media_url': saved['media_url'], 'project': state}
+
 
 @router.post('/{project_id}/maximize-media-density')
 def maximize_project_media_density(project_id: str):

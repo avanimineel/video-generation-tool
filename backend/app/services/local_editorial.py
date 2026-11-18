@@ -75,9 +75,11 @@ def local_llm_json(prompt: str, schema: Optional[dict] = None) -> Optional[dict]
     return None
 
 
-def deterministic_decisions(segments) -> list:
+def deterministic_decisions(segments, feedback=None) -> list:
     """A stock image for a visible subject, otherwise a spoken title or a number."""
     decisions = []
+    seen = set()
+    domain = str(((feedback or {}).get("domain") or {}).get("domain") or "")
     for segment in segments:
         choices = _cues(segment)
         if not choices:
@@ -85,11 +87,28 @@ def deterministic_decisions(segments) -> list:
             continue
         for cue in choices:
             query, alternates = visual_query(cue["text"])
+            saved = _saved_example(domain, cue["text"])
+            if saved and saved.get("query"):
+                query = str(saved["query"])
+                note = str(saved.get("note") or "")
+                if note and note not in alternates:
+                    alternates = [note, *alternates][:2]
+            if query in seen and alternates:
+                query = next((item for item in alternates if item not in seen), query)
+            if query:
+                seen.add(query)
             if query and cue["cue_kind"] != "number":
                 decisions.append(_picture(segment, cue, query, alternates))
             else:
                 decisions.append(_title(segment, cue))
     return decisions
+
+
+def _saved_example(domain: str, text: str):
+    if not domain:
+        return None
+    from app.services.domain_knowledge import match_example
+    return match_example(domain, text)
 
 
 def auth_failure(message: str) -> bool:

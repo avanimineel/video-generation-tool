@@ -251,6 +251,24 @@ def test_speech_only_understanding_groups_captions():
     assert "speech only" in segments[0].understanding_warnings[0]
 
 
+def test_a_section_note_is_reused_for_a_similar_line():
+    from app.services.domain_knowledge import match_example, remember
+    remember({
+        "domain_profile": "medical",
+        "decision": "swap",
+        "graphic_type": "split_screen_vertical",
+        "project_id": "lung",
+        "editor_notes": "show a chest x-ray on a lightbox",
+        "transcript_context": "Lung cancer is the commonest cancer in men",
+        "search_query": "chest xray lightbox",
+        "selected_asset": {"url": "https://images.example/xray.jpg", "title": "Chest x-ray"},
+    })
+    hit = match_example("medical", "The commonest cancer in men is lung cancer")
+    assert hit is not None
+    assert hit["query"] == "chest xray lightbox"
+    assert match_example("sports", "The commonest cancer in men is lung cancer") is None
+
+
 def test_domain_memory_stays_inside_its_field():
     from app.services.domain_knowledge import for_planner, remember, same_domain
     remember({"domain_profile": "medical", "decision": "cut", "graphic_type": "stat_counter", "editor_notes": "do not cover the incision", "project_id": "lung"})

@@ -1239,6 +1239,27 @@ export const api = {
     return await res.json();
   },
 
+  async replaceVisual(projectId: string, body: {
+    graphic_id?: string;
+    start_sec: number;
+    end_sec: number;
+    transcript: string;
+    editor_note: string;
+    search_query: string;
+    asset: any;
+  }): Promise<{ success: boolean; graphic_id: string; media_url: string; project: any }> {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/replace-visual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Could not replace this image' }));
+      throw new Error(err.detail || 'Could not replace this image');
+    }
+    return await res.json();
+  },
+
   async generateAIImage(
     projectId: string,
     prompt: string,

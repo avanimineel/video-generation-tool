@@ -1,13 +1,14 @@
 """Per-field editing memory.
 
 Each keep, cut, or swap is stored under the project's domain. The next video
-in that field sees those notes. A medical cut does not teach a sports video,
-and this file is not a fine-tune.
+in that field sees those notes. A section note also becomes a training example
+for the same kind of spoken section. A medical cut does not teach a sports video.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -60,6 +61,24 @@ def remember(entry: Dict[str, Any]) -> Dict[str, Any]:
     if note:
         profile["notes"].insert(0, {"project_id": entry.get("project_id"), "decision": decision, "note": note[:240], "at": datetime.utcnow().isoformat()})
         profile["notes"] = profile["notes"][:40]
+    transcript = str(entry.get("transcript_context") or "").strip()
+    query = str(entry.get("search_query") or "").strip()
+    if transcript and (note or query):
+        asset = entry.get("selected_asset") if isinstance(entry.get("selected_asset"), dict) else {}
+        example = {
+            "project_id": entry.get("project_id"),
+            "transcript": transcript[:240],
+            "note": note[:240],
+            "query": query[:160],
+            "words": section_words(transcript + " " + note),
+            "asset_url": asset.get("url") or asset.get("media_url") or "",
+            "asset_title": str(asset.get("title") or "")[:120],
+            "at": datetime.utcnow().isoformat(),
+        }
+        profile.setdefault("examples", [])
+        profile["examples"].insert(0, example)
+        profile["examples"] = profile["examples"][:80]
+        _append_training(domain, example)
     profile["updated_at"] = datetime.utcnow().isoformat()
     _save(path, profile)
     return for_planner(domain)
@@ -76,6 +95,7 @@ def for_planner(domain: str) -> Dict[str, Any]:
         "family_counts": profile["families"],
         "preferred_families": [name for name, counts in ranked if counts.get("keep", 0) > counts.get("cut", 0)][:4],
         "notes": profile["notes"][:8],
+        "examples": profile.get("examples", [])[:12],
     }
 
 
@@ -83,8 +103,47 @@ def _path(domain: str):
     return settings.projects_dir / "domain_knowledge" / f"{normalize_domain(domain)}.json"
 
 
+_STOP = {
+    "this", "that", "with", "from", "your", "have", "been", "were", "they", "them",
+    "their", "about", "after", "before", "there", "here", "into", "over", "under",
+    "very", "just", "also", "than", "then", "will", "would", "could", "should",
+    "what", "when", "where", "which", "while", "because", "today", "starting",
+    "start", "discussion", "discuss", "talking", "video", "people", "something", "really",
+}
+
+
+def section_words(text: str) -> list[str]:
+    found: list[str] = []
+    for word in re.findall(r"[A-Za-z]{3,}", text or ""):
+        token = word.lower()
+        if token in _STOP or token in found:
+            continue
+        found.append(token)
+    return found[:8]
+
+
+def match_example(domain: str, text: str) -> Optional[Dict[str, Any]]:
+    """The saved section whose words overlap this line. Two shared words is the minimum."""
+    wanted = set(section_words(text))
+    best = None
+    score = 1
+    for example in _load(_path(normalize_domain(domain))).get("examples") or []:
+        shared = wanted & set(example.get("words") or [])
+        if len(shared) > score:
+            best = example
+            score = len(shared)
+    return best
+
+
+def _append_training(domain: str, example: Dict[str, Any]) -> None:
+    path = settings.projects_dir / "domain_knowledge" / f"{normalize_domain(domain)}_training.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"domain": normalize_domain(domain), **example}, ensure_ascii=False) + "\n")
+
+
 def _empty() -> Dict[str, Any]:
-    return {"counts": {}, "families": {}, "notes": [], "updated_at": None}
+    return {"counts": {}, "families": {}, "notes": [], "examples": [], "updated_at": None}
 
 
 def _load(path) -> Dict[str, Any]:
@@ -97,6 +156,7 @@ def _load(path) -> Dict[str, Any]:
     loaded.setdefault("counts", {})
     loaded.setdefault("families", {})
     loaded.setdefault("notes", [])
+    loaded.setdefault("examples", [])
     return loaded
 
 
