@@ -137,7 +137,9 @@ class AutoProductionService:
 
         # Idempotency check: Skip if already executed for this exact video hash
         current_ingestion = state.ai_ingestion or {}
-        if not force and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash:
+        prior_summary = current_ingestion.get("summary") or {}
+        prior_was_captions_only = prior_summary.get("outcome") == "captions_only" or current_ingestion.get("auto_produce_mode") == "captions_only"
+        if not force and not prior_was_captions_only and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash:
             print(f"[AutoProduction] Video {project_id} with hash {video_hash[:8]} already auto-produced. Skipping duplicate run.")
             return {
                 "success": True,

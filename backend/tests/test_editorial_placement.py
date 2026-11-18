@@ -193,6 +193,20 @@ def test_offline_import_skips_the_source_clip_and_keeps_unmapped_titles():
     assert not is_live_feedback(imported["feedback"][0])
 
 
+def test_speech_only_understanding_groups_captions():
+    from types import SimpleNamespace
+    from app.services.editorial_planner import normalize_segments, speech_only_understanding
+    captions = [
+        SimpleNamespace(start=0.0, end=3.0, text="We are starting a", translated_text="We are starting a", id="a"),
+        SimpleNamespace(start=3.0, end=9.0, text="discussion of lung cancer", translated_text="discussion of lung cancer", id="b"),
+    ]
+    raw = speech_only_understanding(captions, 12.0, window=8.0)
+    segments = normalize_segments(raw, captions, 12.0)
+    assert segments
+    assert segments[0].observations == []
+    assert "speech only" in segments[0].understanding_warnings[0]
+
+
 def test_domain_memory_stays_inside_its_field():
     from app.services.domain_knowledge import for_planner, remember, same_domain
     remember({"domain_profile": "medical", "decision": "cut", "graphic_type": "stat_counter", "editor_notes": "do not cover the incision", "project_id": "lung"})

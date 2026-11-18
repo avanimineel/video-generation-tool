@@ -211,6 +211,47 @@ def transcript_rows(captions):
     return [dict(start_sec=c.start,end_sec=c.end,text=c.translated_text or c.text,words=[w.model_dump() for w in c.words]) for c in captions]
 
 
+def speech_only_understanding(captions, duration, window=8.0):
+    """Segments from speech when the picture index is unavailable.
+
+    Observations stay empty so the planner knows it has not seen the frame.
+    """
+    rows = []
+    bucket = []
+    start = None
+    end = None
+    def flush():
+        if start is None or not bucket:
+            return
+        stop = min(float(duration), max(end, start + 0.4))
+        if stop <= start:
+            return
+        text = ' '.join(bucket)
+        rows.append({
+            'start_sec': float(start),
+            'end_sec': stop,
+            'transcript': text,
+            'semantic_summary': text[:240],
+            'observations': [],
+            'understanding_warnings': ['Picture index unavailable; this segment is speech only.'],
+        })
+    for caption in captions:
+        text = (getattr(caption, 'translated_text', None) or getattr(caption, 'text', '') or '').strip()
+        if not text:
+            continue
+        if start is None:
+            start = float(caption.start)
+        bucket.append(text)
+        end = float(caption.end)
+        if end - start >= window:
+            flush()
+            bucket = []
+            start = None
+            end = None
+    flush()
+    return rows
+
+
 def normalize_segments(raw,captions,duration):
     if not isinstance(raw,list):raise ValueError('Video understanding must return a segment array')
 
@@ -1139,11 +1180,17 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     except (ValueError,TypeError):continue
                 if raw is not None: break
         if raw is None:
-            result=tl.analyze_video(media_file,state.duration_seconds)
-            asset_id=result.get('asset_id')
-            if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
-            if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
-            raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
+            try:
+                result=tl.analyze_video(media_file,state.duration_seconds)
+                asset_id=result.get('asset_id')
+                if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
+                if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
+                raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
+            except Exception as exc:
+                report['errors'].append('Picture index unavailable ('+safe_error(exc)+'). Planning from the spoken transcript.')
+                report['understanding_source']='transcript'
+                raw=speech_only_understanding(state.captions,state.duration_seconds)
+                if not raw:raise ValueError('No spoken captions were available after the picture index failed.') from exc
         # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
         write_json(run_dir/'01_understanding_raw.json',raw)
         normalize_segments(raw,state.captions,state.duration_seconds)
