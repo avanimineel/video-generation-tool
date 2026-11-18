@@ -107,7 +107,7 @@ def index_picture(video: str, cuts: list[float], duration: float, domain: str, o
         frames.append({"time_sec": time_sec, "detections": detections, "caption": caption})
         captions.append({"time_sec": time_sec, "caption": caption})
         embeddings.append({"time_sec": time_sec, "vector": vector})
-        release_vision()
+    release_vision()
     if embeddings:
         (out_dir / "siglip_index.json").write_text(json.dumps(embeddings), encoding="utf-8")
     return {"frames": frames, "captions": captions}
