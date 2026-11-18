@@ -300,51 +300,61 @@ class AutoProductionService:
             state.captions = captions
             state.duration_seconds = max(state.duration_seconds, captions[-1].end + 0.5)
 
-        # Never ask translation to invent words from structurally corrupt ASR.
-        from app.services.transcript_quality import transcript_issues
+        # A few unreadable lines are dropped. The edit continues on the lines that remain.
+        from app.services.transcript_quality import caption_skip_message, salvage_captions, salvage_is_enough, transcript_issues
+        caption_warnings = []
         speech_issues = transcript_issues(state.captions)
         if speech_issues:
+            kept, dropped = salvage_captions(state.captions)
             write_json(pdir/'transcription'/'rejected_source.json', {
-                'video_hash': video_hash, 'issues': speech_issues,
+                'video_hash': video_hash, 'issues': speech_issues, 'dropped': dropped,
                 'captions': [c.model_dump() for c in state.captions]})
-            try:
-                repaired_lang, repaired = transcription_service.transcribe_with_whisper(
-                    media_file, words_per_caption=3, task='transcribe', model_size='medium')
-                remaining = transcript_issues(repaired)
-                if not repaired or remaining:
-                    raise ValueError('; '.join(remaining[:5]) or 'No speech recognized')
-                state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_layout_pending': True}
-                state.detected_language = repaired_lang
-                state.captions = repaired
-                write_json(pdir/'transcription'/'native_source.json', {
-                    'video_hash': video_hash, 'language': repaired_lang,
-                    'captions': [c.model_dump() for c in repaired],
-                    'recovery_model': 'medium', 'timing_basis': 'ASR estimates; not independently certified'})
-            except Exception as exc:
-                from app.services.editorial_planner import safe_error
-                detail_msg = safe_error(exc)
-                logger.error(
-                    "Speech quality-gate retry failed at stage=whisper_medium_retry cause=%s",
-                    detail_msg,
-                    exc_info=True,
-                )
-                mark_stage(project_id, 'transcription', status='failed')
-                return {
-                    'success': False,
-                    'project': state.model_dump(),
-                    'error': (
-                        'Speech recognition produced unreadable text or invalid timings. '
-                        'Stronger local retry failed: ' + detail_msg
-                    ),
-                    'error_cause': detail_msg,
-                    'error_detail': {
-                        'type': type(exc).__name__,
-                        'message': detail_msg,
+            if salvage_is_enough(state.captions, kept, dropped):
+                state.captions = kept
+                caption_warnings.append(caption_skip_message(dropped))
+            else:
+                try:
+                    repaired_lang, repaired = transcription_service.transcribe_with_whisper(
+                        media_file, words_per_caption=3, task='transcribe', model_size='medium')
+                    kept, dropped = salvage_captions(repaired)
+                    if not salvage_is_enough(repaired, kept, dropped):
+                        raise ValueError('; '.join(dropped[:5]) or 'No speech recognized')
+                    state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_layout_pending': True}
+                    state.detected_language = repaired_lang
+                    state.captions = kept
+                    if dropped:
+                        caption_warnings.append(caption_skip_message(dropped))
+                    write_json(pdir/'transcription'/'native_source.json', {
+                        'video_hash': video_hash, 'language': repaired_lang,
+                        'captions': [c.model_dump() for c in kept],
+                        'recovery_model': 'medium', 'timing_basis': 'ASR estimates; not independently certified'})
+                except Exception as exc:
+                    from app.services.editorial_planner import safe_error
+                    detail_msg = safe_error(exc)
+                    logger.error(
+                        "Speech quality-gate retry failed at stage=whisper_medium_retry cause=%s",
+                        detail_msg,
+                        exc_info=True,
+                    )
+                    mark_stage(project_id, 'transcription', status='failed')
+                    return {
+                        'success': False,
+                        'project': state.model_dump(),
+                        'error': (
+                            'Too much of the transcript is unreadable, so automatic editing stopped. '
+                            'The usable lines were not enough to continue. ' + detail_msg
+                        ),
+                        'error_cause': detail_msg,
+                        'error_detail': {
+                            'type': type(exc).__name__,
+                            'message': detail_msg,
+                            'stage': 'whisper_medium_retry',
+                            'issues': speech_issues[:20],
+                        },
                         'stage': 'whisper_medium_retry',
-                        'issues': speech_issues[:20],
-                    },
-                    'stage': 'whisper_medium_retry',
-                }
+                    }
+        if caption_warnings:
+            state.ai_ingestion = {**(state.ai_ingestion or {}), 'caption_warnings': caption_warnings}
 
         # Ensure subtitle translation runs for non-English or Devanagari speech
         translation_errors = []
@@ -489,7 +499,7 @@ class AutoProductionService:
                 'status': 'complete',
                 'run_id': run_id,
                 'stage': 'captions_only_complete',
-                'errors': [CAPTIONS_ONLY_MESSAGE] + (blockers or []),
+                'errors': [CAPTIONS_ONLY_MESSAGE] + (blockers or []) + caption_warnings,
                 'decisions': [],
                 'inserted': 0,
                 'outcome': 'captions_only',
@@ -500,6 +510,7 @@ class AutoProductionService:
             write_json(pdir / 'thumbnails' / 'visual_reasoning_log.json', [])
             state.ai_ingestion = {
                 'caption_layout_note': caption_note,
+                'caption_warnings': caption_warnings,
                 'status': 'completed',
                 'video_hash': video_hash,
                 'completed_at': datetime.now().isoformat(),
@@ -567,7 +578,9 @@ class AutoProductionService:
         # On a cloud failure retain all existing graphics; successfully generated captions remain usable.
         write_json(pdir/'thumbnails'/'visual_reasoning_log.json',reasoning_log)
         summary={'captions_count':len(state.captions),'graphics_count':len(state.graphics),'inserted':len(state.graphics),'needs_review':report.get('needs_review',0),'outcome':report.get('outcome'),'scorecard':report.get('scorecard'),'auto_produce_mode':produce_mode,**mode_meta}
-        state.ai_ingestion={'caption_layout_note':caption_note,'status':{'needs_attention':'needs_review','complete_with_gaps':'completed_with_gaps'}.get(report.get('outcome'),'needs_review' if report.get('needs_review') and not report.get('inserted') else 'completed') if report['status']=='complete' else 'needs_configuration','video_hash':video_hash,'completed_at':datetime.now().isoformat(),'summary':summary,'editorial_run':report['run_id'],'errors':report['errors'],'auto_produce_mode':produce_mode}
+        if caption_warnings:
+            report['errors'] = list(report.get('errors') or []) + caption_warnings
+        state.ai_ingestion={'caption_layout_note':caption_note,'caption_warnings':caption_warnings,'status':{'needs_attention':'needs_review','complete_with_gaps':'completed_with_gaps'}.get(report.get('outcome'),'needs_review' if report.get('needs_review') and not report.get('inserted') else 'completed') if report['status']=='complete' else 'needs_configuration','video_hash':video_hash,'completed_at':datetime.now().isoformat(),'summary':summary,'editorial_run':report['run_id'],'errors':report['errors'],'auto_produce_mode':produce_mode}
         project_manager.save_project(state)
         return {'success':True,'project':state.model_dump(),'ingestion':state.ai_ingestion,'summary':summary,'reasoning_log':reasoning_log,'editorial_report':report}
 
