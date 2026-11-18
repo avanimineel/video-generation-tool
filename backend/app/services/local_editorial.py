@@ -76,7 +76,7 @@ def local_llm_json(prompt: str, schema: Optional[dict] = None) -> Optional[dict]
 
 
 def deterministic_decisions(segments) -> list:
-    """One spoken title on a number or a substantive phrase. No stock search."""
+    """A stock image for a visible subject, otherwise a spoken title or a number."""
     decisions = []
     for segment in segments:
         choices = _cues(segment)
@@ -84,7 +84,11 @@ def deterministic_decisions(segments) -> list:
             decisions.append(_quiet(segment, "No number or substantive spoken phrase in this stretch."))
             continue
         for cue in choices:
-            decisions.append(_title(segment, cue))
+            query, alternates = visual_query(cue["text"])
+            if query and cue["cue_kind"] != "number":
+                decisions.append(_picture(segment, cue, query, alternates))
+            else:
+                decisions.append(_title(segment, cue))
     return decisions
 
 
@@ -156,6 +160,68 @@ def _quiet(segment, reason: str) -> Decision:
         start_sec=segment.start_sec,
         end_sec=segment.end_sec,
         scores=_scores(),
+    )
+
+
+_ABSTRACT = {
+    "this", "that", "these", "those", "there", "here", "with", "from", "into", "about",
+    "after", "before", "today", "where", "when", "what", "which", "while", "because",
+    "would", "could", "should", "their", "them", "they", "your", "our", "are", "was",
+    "were", "been", "being", "have", "has", "had", "the", "and", "for", "not", "but",
+    "very", "just", "also", "than", "then", "over", "under", "starting", "start",
+    "discuss", "discussion", "talking", "video", "people", "something", "anything",
+    "really", "most", "more", "such", "will", "can", "may", "into",
+}
+
+
+def visual_query(text: str) -> tuple[str, list[str]]:
+    """Stock search words taken from the spoken line, in the order they were said."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", text or "")
+    content: list[str] = []
+    for word in words:
+        token = word.lower().strip("'")
+        if token in _ABSTRACT or token in content:
+            continue
+        content.append(token)
+    if len(content) < 2:
+        return "", []
+    query = " ".join(content[:5])
+    alternates = []
+    pair = " ".join(content[:2])
+    tail = " ".join(content[-2:])
+    for item in (pair, tail):
+        if item and item != query and item not in alternates:
+            alternates.append(item)
+    return query, alternates[:2]
+
+
+def _picture(segment, cue: dict, query: str, alternates: list[str]) -> Decision:
+    from app.services.editorial_planner import AssetPlan, Composition
+    return Decision(
+        segment_id=segment.id,
+        intervene=True,
+        rationale="Local planner. The spoken line names a visible subject, so a fresh stock image is searched.",
+        intent="ILLUSTRATE",
+        strategy="STOCK_IMAGE",
+        anchor_phrase=cue["text"],
+        audio_anchor_id=cue.get("audio_anchor_id"),
+        audio_anchor_word=cue.get("audio_anchor_word") or "",
+        cue_kind="object",
+        start_sec=cue["start_sec"],
+        end_sec=cue["end_sec"],
+        display_text=cue["text"],
+        visual_role="illustration",
+        scores=_scores(),
+        asset=AssetPlan(
+            asset_type="image",
+            semantic_target=query,
+            retrieval_query=query,
+            alternate_queries=alternates,
+            required_entities=query.split()[:2],
+            desired_visual_description=query,
+            negative_constraints=["watermark", "logo", "slide with only text"],
+        ),
+        composition=Composition(layout="split_screen", position=[0.5, 0.5]),
     )
 
 

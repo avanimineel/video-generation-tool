@@ -203,6 +203,15 @@ def test_local_box_math_and_sample_times():
     assert sample_times([], 10, limit=4)[0] == 0.0
 
 
+def test_visual_query_comes_from_the_spoken_line():
+    from app.services.local_editorial import visual_query
+    query, alternates = visual_query("Lung cancer is the commonest cancer in men")
+    assert query.startswith("lung cancer")
+    assert "men" in query
+    assert alternates
+    assert visual_query("We are starting today") == ("", [])
+
+
 def test_deterministic_planner_places_a_spoken_phrase_without_gemini():
     from app.services.editorial_planner import Segment
     from app.services.local_editorial import deterministic_decisions, note_provider_failure, provider_degraded
@@ -220,7 +229,8 @@ def test_deterministic_planner_places_a_spoken_phrase_without_gemini():
     assert placed
     assert placed[0].display_text == "discussion of lung cancer"
     assert placed[0].audio_anchor_word == "कैंसर"
-    assert placed[0].strategy == "KINETIC_TYPOGRAPHY"
+    assert placed[0].strategy == "STOCK_IMAGE"
+    assert "lung" in placed[0].asset.retrieval_query and "cancer" in placed[0].asset.retrieval_query
     note_provider_failure("gemini", 401)
     assert provider_degraded("gemini")
     note_provider_failure("gemini", 500)

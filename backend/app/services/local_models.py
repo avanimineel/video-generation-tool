@@ -193,6 +193,38 @@ def _tie_florence(model) -> None:
     model.language_model.lm_head.weight = shared
 
 
+def siglip_choose(images, query: str, floor: float = 0.12) -> tuple[int, float]:
+    """Best thumbnail for the spoken query. A weak score is a rejection."""
+    if not images or not (query or "").strip():
+        return -1, 0.0
+    model, processor = _siglip()
+    import torch
+    inputs = processor(text=[query], images=list(images), padding="max_length", return_tensors="pt")
+    inputs = {key: value.to(model.device) for key, value in inputs.items()}
+    dtype = next(model.parameters()).dtype
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
+    with torch.no_grad():
+        image_features = _pooled(model.get_image_features(pixel_values=inputs["pixel_values"]))
+        text_features = _pooled(model.get_text_features(input_ids=inputs.get("input_ids"), attention_mask=inputs.get("attention_mask")))
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        scores = (image_features @ text_features.T).squeeze(-1)
+    best = int(scores.argmax().item()) if scores.ndim else 0
+    score = float(scores[best].item()) if scores.ndim else float(scores.item())
+    if score < floor:
+        return -1, score
+    return best, score
+
+
+def _pooled(features):
+    if hasattr(features, "pooler_output") and features.pooler_output is not None:
+        return features.pooler_output
+    if isinstance(features, tuple):
+        return features[0]
+    return features
+
+
 def siglip_embed(image) -> list[float]:
     model, processor = _siglip()
     import torch
@@ -221,7 +253,10 @@ def qwen_plan(segments) -> Optional[dict]:
         "Each decision needs segment_id, intervene, rationale, strategy, start_sec, end_sec, display_text, "
         "intent, cue_kind, and scores with semantic_relevance, visual_value, information_gain, evidence_value, "
         "attention_value, redundancy, visual_fatigue, confidence. "
-        "strategy is KINETIC_TYPOGRAPHY, STAT_COUNTER, or NO_INTERVENTION. "
+        "strategy is STOCK_IMAGE, BROLL_VIDEO, KINETIC_TYPOGRAPHY, STAT_COUNTER, or NO_INTERVENTION. "
+        "Use STOCK_IMAGE when the transcript names a concrete visible subject. "
+        "Put that subject's words in asset.retrieval_query and two shorter asset.alternate_queries taken from the same transcript. "
+        "Use KINETIC_TYPOGRAPHY or STAT_COUNTER for a number or an abstract phrase. "
         "display_text must be an exact contiguous phrase from transcript. No extra prose.\n"
         + json.dumps(brief, ensure_ascii=False)
     )

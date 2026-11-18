@@ -477,7 +477,9 @@ Spoken Text & Query Precision:
             planned = None
         if planned:
             try:
-                return PlanResponse.model_validate(planned).decisions
+                chosen = PlanResponse.model_validate(planned).decisions
+                if any(item.strategy in ("STOCK_IMAGE", "BROLL_VIDEO") and (item.asset.retrieval_query or "").strip() for item in chosen):
+                    return chosen
             except (ValueError, TypeError):
                 pass
         local = local_llm_json(prompt, PlanResponse.model_json_schema())
@@ -1154,6 +1156,11 @@ def execute_plan(state,rows,run_dir):
     from app.services.subject_layers import prepare_subject_layers,place_titles_face_safe
     place_titles_face_safe(state,titles)
     prepare_subject_layers(state,graphics)
+    try:
+        from app.services.local_models import release_vision
+        release_vision()
+    except Exception:
+        pass
     return graphics,logs
 
 
