@@ -707,12 +707,12 @@ export const api = {
     }
   },
 
-  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void): Promise<any> {
+  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/media/${projectId}/auto-produce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force, model_size: modelSize })
+        body: JSON.stringify({ force, model_size: modelSize, ...(mode ? { mode } : {}) })
       });
       if (res.ok) {
         const response = await res.json();
