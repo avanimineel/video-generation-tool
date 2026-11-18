@@ -18,6 +18,7 @@ For incoming engineers, follow this reading order to build full system mastery:
 | **03** | [**03_API_REFERENCE_AND_PAYLOADS.md**](./03_API_REFERENCE_AND_PAYLOADS.md) | Complete REST API dictionary with endpoints, request/response JSON schemas, and error definitions. |
 | **04** | [**04_CORE_ALGORITHMS_AND_EDITORIAL_LOGIC.md**](./04_CORE_ALGORITHMS_AND_EDITORIAL_LOGIC.md) | Core logic: Twelve Labs split ingestion, Pegasus prompt reasoning, Gemini vision reranking, 1.0s clamping, and burn-in math. |
 | **05** | [**05_SETUP_RUNBOOK_AND_TROUBLESHOOTING.md**](./05_SETUP_RUNBOOK_AND_TROUBLESHOOTING.md) | Local environment setup, dependency management, server startup, and debugging runbooks. |
+| **07** | [**07_STUDIO_UI_UX_CONTEXT.md**](./07_STUDIO_UI_UX_CONTEXT.md) | Current studio shell and the ordered UI/UX suggestions. Use this before changing the editor interface. |
 
 ---
 
