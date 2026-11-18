@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.core.config import settings
 
+def _append_edits(existing: Optional[Dict[str, Any]], incoming: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Keep earlier drags and retimes when a later decision is saved for the same cue."""
+    history = list((existing or {}).get("edits") or [])
+    for edit in incoming or []:
+        history.append(edit)
+    return history
+
 def serialized_feedback_write(fn):
     """Keep simultaneous feedback submissions from overwriting each other."""
     @wraps(fn)
@@ -106,7 +113,8 @@ class FeedbackService:
         selected_asset: Optional[Dict[str, Any]] = None,
         swap_details: Optional[Dict[str, Any]] = None,
         final_decision: Optional[Dict[str, Any]] = None,
-        editor_notes: str = ""
+        editor_notes: str = "",
+        edits: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Records or updates an editor's Keep, Cut, or Swap judgment.
@@ -139,6 +147,7 @@ class FeedbackService:
             "swap_details": swap_details or {},
             "final_decision": final_decision or {},
             "editor_notes": editor_notes,
+            "edits": _append_edits(all_decisions[existing_idx] if existing_idx >= 0 else None, edits),
             "created_at": all_decisions[existing_idx]["created_at"] if existing_idx >= 0 else now_iso,
             "updated_at": now_iso
         }

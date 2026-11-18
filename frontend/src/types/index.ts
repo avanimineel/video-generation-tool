@@ -96,6 +96,7 @@ export interface ProjectSettings {
   davinci_project_name?: string | null;
   davinci_timeline_name?: string | null;
   sub_lines_mode?: 1 | 2;
+  domain_profile?: 'general' | 'medical' | 'sports';
 }
 
 export interface AudioTrackItem {

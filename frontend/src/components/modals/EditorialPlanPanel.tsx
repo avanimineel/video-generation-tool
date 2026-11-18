@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { UnderstandingReview } from './UnderstandingReview';
 import { QualityPreview } from './QualityPreview';
 import { api } from '../../services/api';
+import { findNextFreeSlot } from '../../services/safePlacement';
+import { AspectPreset, CenterRect } from '../../types/editorial';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
 
 interface EditorialPlanPanelProps {
@@ -70,24 +72,34 @@ export function EditorialPlanPanel({
     }
   }
 
+  const clearDecisions = (report?.decisions || []).filter((d: any) => d.placement?.clear);
+
+  async function logEdits(d: any, decision: 'keep' | 'cut' | 'swap' | 'manual_add', edits?: any[]) {
+    const cueKey = d.graphic_id || `${d.segment_id}_${d.start_sec}`;
+    await api.logDecision({
+      project_id: projectId,
+      cue_id: cueKey,
+      decision,
+      reasoning: d.rationale || d.decision_reason || '',
+      strength: d.utility || 0.85,
+      graphic_type: d.strategy || 'split_screen_vertical',
+      start_sec: d.placement?.start_sec ?? d.start_sec,
+      end_sec: d.placement?.end_sec ?? d.end_sec,
+      search_query: d.asset?.retrieval_query || d.asset?.semantic_target || d.display_text || '',
+      transcript_context: d.anchor_phrase || d.display_text || '',
+      selected_asset: d.asset || {},
+      edits
+    });
+    return cueKey;
+  }
+
   async function handleFeedbackAction(d: any, decision: 'keep' | 'cut') {
     const cueKey = d.graphic_id || `${d.segment_id}_${d.start_sec}`;
     setLoggingDecision(prev => ({ ...prev, [cueKey]: true }));
     setDecisionFeedback(prev => ({ ...prev, [cueKey]: decision }));
     try {
-      await api.logDecision({
-        project_id: projectId,
-        cue_id: cueKey,
-        decision: decision,
-        reasoning: d.rationale || d.decision_reason || '',
-        strength: d.utility || 0.85,
-        graphic_type: d.strategy || 'split_screen_vertical',
-        start_sec: d.start_sec,
-        end_sec: d.end_sec,
-        search_query: d.asset?.retrieval_query || d.asset?.semantic_target || d.display_text || '',
-        transcript_context: d.anchor_phrase || d.display_text || '',
-        selected_asset: d.asset || {}
-      });
+      const hint = decision === 'cut' ? (d.placement?.hits_avoid ? 'overlapping_cue' : 'false_positive') : 'none';
+      await logEdits(d, decision, decision === 'cut' ? [{ type: 'cut', timestamp: new Date().toISOString(), refused_rect: d.placement?.screen_rect, geometric_hint: hint }] : undefined);
     } catch (e) {
       console.error('Failed to log feedback decision:', e);
     } finally {
@@ -241,8 +253,13 @@ export function EditorialPlanPanel({
                     )}
                   </div>
                   {report.decisions && (
-                    <span className="text-neutral-500 font-mono text-[11px]">
-                      {report.decisions.length} interventions planned
+                    <span className="flex items-center gap-2 text-neutral-500 font-mono text-[11px]">
+                      <span>{report.decisions.length} interventions planned</span>
+                      {clearDecisions.length > 0 && (
+                        <button type="button" className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-sans font-semibold text-neutral-800 hover:bg-neutral-100" onClick={() => { clearDecisions.forEach((d: any) => void handleFeedbackAction(d, 'keep')); }}>
+                          Accept {clearDecisions.length} clear cues
+                        </button>
+                      )}
                     </span>
                   )}
                 </div>
@@ -330,6 +347,18 @@ export function EditorialPlanPanel({
                         <p className="text-xs text-neutral-700 leading-relaxed">
                           {d.decision_reason || d.rationale}
                         </p>
+
+                        {Array.isArray(d.placement?.screen_rect) && (
+                          <div className="flex items-center justify-between text-[11px] text-neutral-600">
+                            <span>{d.placement.clear ? 'Clear of faces and cuts' : d.placement.hits_avoid ? 'Overlaps a protected region' : 'Crosses a camera cut'}</span>
+                            <button type="button" className="rounded border border-neutral-300 px-2 py-0.5 hover:bg-neutral-100" onClick={async () => {
+                              const preset = (d.placement.preset || 'reels') as AspectPreset;
+                              const slot = findNextFreeSlot(d.placement.screen_rect as CenterRect, (d.placement.avoid_rects || []) as CenterRect[], preset);
+                              if (!slot) return;
+                              await logEdits(d, 'swap', [{ type: 'move', timestamp: new Date().toISOString(), old_rect: d.placement.screen_rect, new_rect: slot, old_rect_hit_avoid: Boolean(d.placement.hits_avoid) }]);
+                            }}>Next free slot</button>
+                          </div>
+                        )}
 
                         <div className="flex items-center justify-between text-[11px] text-neutral-500 pt-1 border-t border-neutral-100">
                           <span>Timing: {d.timing_method}</span>

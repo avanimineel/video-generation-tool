@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/feedback", tags=["Editor Feedback & AI Training"
 class DecisionLogRequest(BaseModel):
     project_id: str
     cue_id: str
-    decision: str = Field(..., description="'keep' | 'cut' | 'swap'")
+    decision: str = Field(..., description="'keep' | 'cut' | 'swap' | 'manual_add'")
     reasoning: str = ""
     strength: float = 0.75
     graphic_type: str = "split_screen_vertical"
@@ -27,11 +27,12 @@ class DecisionLogRequest(BaseModel):
     swap_details: Optional[Dict[str, Any]] = None
     final_decision: Optional[Dict[str, Any]] = None
     editor_notes: str = ""
+    edits: Optional[List[Dict[str, Any]]] = None
 
 @router.post("/decisions")
 async def log_editor_decision(req: DecisionLogRequest):
-    if req.decision.lower() not in ["keep", "cut", "swap"]:
-        raise HTTPException(status_code=400, detail="Decision must be 'keep', 'cut', or 'swap'")
+    if req.decision.lower() not in ["keep", "cut", "swap", "manual_add"]:
+        raise HTTPException(status_code=400, detail="Decision must be 'keep', 'cut', 'swap', or 'manual_add'")
 
     entry = feedback_service.record_decision(
         project_id=req.project_id,
@@ -47,7 +48,8 @@ async def log_editor_decision(req: DecisionLogRequest):
         selected_asset=req.selected_asset,
         swap_details=req.swap_details,
         final_decision=req.final_decision,
-        editor_notes=req.editor_notes
+        editor_notes=req.editor_notes,
+        edits=req.edits,
     )
     return {"success": True, "decision": entry}
 

@@ -1641,7 +1641,7 @@ export const api = {
   async logDecision(data: {
     project_id: string;
     cue_id: string;
-    decision: 'keep' | 'cut' | 'swap';
+    decision: 'keep' | 'cut' | 'swap' | 'manual_add';
     reasoning?: string;
     strength?: number;
     graphic_type?: string;
@@ -1653,6 +1653,7 @@ export const api = {
     swap_details?: any;
     final_decision?: any;
     editor_notes?: string;
+    edits?: unknown[];
   }): Promise<{ success: boolean; decision: EditorialDecision }> {
     try {
       const res = await fetch(`${API_BASE}/feedback/decisions`, {

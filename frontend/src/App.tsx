@@ -1168,6 +1168,7 @@ export const App: React.FC = () => {
             pushHistory(updated);
             api.saveProject(updated.id, updated).catch(() => {});
           }}
+          selectedGraphicId={selectedGraphicId}
           onUpdateGraphic={(updatedGraphic) => {
             const updated = {
               ...project,

@@ -986,6 +986,7 @@ def execute_plan(state,rows,run_dir):
     from app.core.models import MotionGraphicItem
     graphics=[];assets=[];logs=[]
     from app.services.feedback_service import feedback_service
+    from app.services.editorial_placement import place_decision
     fb_data = feedback_service.planning_feedback(state.id)
     fb_rows = fb_data.get('decisions', []) if isinstance(fb_data, dict) else fb_data
     used = {f['selected_asset'].get('url') for f in fb_rows if isinstance(f, dict) and f.get('decision') in ('cut','swap') and f.get('selected_asset')}
@@ -1068,6 +1069,7 @@ def execute_plan(state,rows,run_dir):
                 row.update(status='rejected_assets',decision_reason='No matching graphic found; no text substitute inserted.');continue
         else:
             row.update(status='needs_source_or_renderer',decision_reason=f'{strategy} requires a verified source or supported renderer. No invented substitute was inserted.');continue
+        place_decision(row, g, state)
         row['status']='inserted';row['graphic_id']=g.id;graphics.append(g)
         logs.append(dict(cue_index=i+1,graphic_id=g.id,template_id=g.template_id,template_name=g.title,timestamp_start=g.start,timestamp_end=g.end,timestamp_formatted=f'{int(g.start//60):02d}:{g.start%60:05.2f}',duration_sec=g.end-g.start,trigger_term=row['anchor_phrase'],cue_category=row['intent'],timestamp_logic=row['timing_method'],image_logic=row['rationale'],layout_logic=json.dumps(row['realized_composition']),pacing_logic=row['decision_reason'],search_query=row['asset']['retrieval_query'],source_provider=selected.get('provider','') if selected else '',media_url=g.media_url or '',media_type=g.media_type,strength=row['utility'],reasoning=row['rationale']))
     write_json(run_dir/'05_placement.json',rows)
