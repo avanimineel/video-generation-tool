@@ -166,6 +166,9 @@ def configured_key(name):
 
 
 def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=None):
+    from app.services.local_editorial import note_provider_failure, provider_degraded
+    if provider_degraded('gemini'):
+        raise ValueError('Gemini is degraded after an authentication failure.')
     key=configured_key('GEMINI_API_KEY')
     if not key:raise ValueError('GEMINI_API_KEY is missing or is a test placeholder.')
     config={'responseMimeType':'application/json','temperature':.2}
@@ -188,6 +191,9 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]+(image_parts or [])}],'generationConfig':config},timeout=(10,timeout))
                 if response.status_code!=200:
                     err_msg = f'{model} HTTP {response.status_code}: {safe_error(response.text)}'
+                    if response.status_code in (401, 403):
+                        note_provider_failure('gemini', response.status_code)
+                        raise ValueError(err_msg)
                     if response.status_code in (429, 503, 504) and attempt == 0:
                         time.sleep(1.5)
                         continue
@@ -458,7 +464,19 @@ Spoken Text & Query Precision:
 
     prompt += "\nTitle quality rules: emphasize a substantive revelation, named subject, condition, contrast, consequence or meaningful quantity. Never highlight generic references/transitions such as This actor, later he himself, in this video, or today we discuss. Transcription gibberish and unexplained technical terms require review, not typographic emphasis. Choose a complete meaningful spoken clause, preserving pronouns, negation and relationships. Never remove stopwords or assemble keywords. Short complete headings and spoken numbers are allowed; the three-word rule applies only to subtitles. No incomplete relationship such as 'is negative' without its subject. Avoid overlapping titles. Consecutive spoken list items can have consecutive synchronized titles without an artificial gap. A visual must show the actual action/object clearly, not a metaphor guessed from one shared word. Preserve explicitly stated country, patient context and recovery-versus-illness distinction. Generic stock must not impersonate a real patient. More relevant opportunities are welcome; arbitrary coverage percentages are not a reason to add anything.\n"
     prompt += '\nAllowed strategies: ' + ', '.join(PLANNABLE) + '\nSemantic timeline with dialogue beats:\n' + json.dumps([s.model_dump() for s in segments], ensure_ascii=False)
-    decisions=PlanResponse.model_validate(gemini_json(prompt,PlanResponse.model_json_schema())).decisions
+    try:
+        decisions=PlanResponse.model_validate(gemini_json(prompt,PlanResponse.model_json_schema())).decisions
+    except ValueError as exc:
+        from app.services.local_editorial import auth_failure, deterministic_decisions, local_llm_json
+        if not auth_failure(str(exc)):
+            raise
+        local = local_llm_json(prompt, PlanResponse.model_json_schema())
+        if local:
+            try:
+                return PlanResponse.model_validate(local).decisions
+            except (ValueError, TypeError):
+                pass
+        return deterministic_decisions(segments)
     expected={s.id for s in segments}
     decisions=[d for d in decisions if d.segment_id in expected]
     missing=expected-{d.segment_id for d in decisions}
@@ -1181,14 +1199,25 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                 if raw is not None: break
         if raw is None:
             try:
+                from app.services.local_editorial import provider_degraded
+                if provider_degraded('twelve_labs'):
+                    raise ValueError('Twelve Labs is degraded after an authentication failure.')
                 result=tl.analyze_video(media_file,state.duration_seconds)
                 asset_id=result.get('asset_id')
                 if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
                 if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
                 raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
             except Exception as exc:
-                report['errors'].append('Picture index unavailable ('+safe_error(exc)+'). Planning from the spoken transcript.')
+                from app.services.editorial_features import detect_shot_cuts
+                from app.services.local_editorial import note_provider_failure
+                message = safe_error(exc)
+                if '401' in message or '403' in message or 'api_key_invalid' in message:
+                    note_provider_failure('twelve_labs', 401)
+                cuts = detect_shot_cuts(str(media_file), threshold=0.3) if source.is_file() else []
+                state.ai_ingestion = {**(state.ai_ingestion or {}), 'shot_cuts': cuts, 'picture_index': 'ffmpeg_scene'}
+                report['errors'].append('Picture index unavailable ('+message+'). Planning from the spoken transcript and '+str(len(cuts))+' shot cuts.')
                 report['understanding_source']='transcript'
+                report['shot_cuts']=cuts
                 raw=speech_only_understanding(state.captions,state.duration_seconds)
                 if not raw:raise ValueError('No spoken captions were available after the picture index failed.') from exc
         # Keep provider output for diagnosing rejected analysis, never as an accepted cache.

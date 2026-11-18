@@ -193,6 +193,30 @@ def test_offline_import_skips_the_source_clip_and_keeps_unmapped_titles():
     assert not is_live_feedback(imported["feedback"][0])
 
 
+def test_deterministic_planner_places_a_spoken_phrase_without_gemini():
+    from app.services.editorial_planner import Segment
+    from app.services.local_editorial import deterministic_decisions, note_provider_failure, provider_degraded
+    segment = Segment(
+        id="segment-1",
+        start_sec=0,
+        end_sec=6,
+        transcript="We are starting a discussion of lung cancer",
+        semantic_summary="We are starting a discussion of lung cancer",
+        dialogue_beats=[{"start_sec": 0.3, "end_sec": 2.4, "text": "discussion of lung cancer"}],
+        audio_cues=[{"id": 4, "word": "कैंसर", "start": 1.1, "usable": True}],
+    )
+    decisions = deterministic_decisions([segment])
+    placed = [item for item in decisions if item.intervene]
+    assert placed
+    assert placed[0].display_text == "discussion of lung cancer"
+    assert placed[0].audio_anchor_word == "कैंसर"
+    assert placed[0].strategy == "KINETIC_TYPOGRAPHY"
+    note_provider_failure("gemini", 401)
+    assert provider_degraded("gemini")
+    note_provider_failure("gemini", 500)
+    assert provider_degraded("gemini")
+
+
 def test_speech_only_understanding_groups_captions():
     from types import SimpleNamespace
     from app.services.editorial_planner import normalize_segments, speech_only_understanding

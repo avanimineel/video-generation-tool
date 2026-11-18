@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 from app.services.editorial_placement import annotate_emphasis
@@ -21,14 +22,15 @@ def scene_cuts_from_showinfo(log_text: str) -> list[float]:
     return times
 
 
-def detect_shot_cuts(path: str, threshold: float = 0.4) -> list[float]:
-    ffmpeg = shutil.which("ffmpeg")
+def detect_shot_cuts(path: str, threshold: float = 0.3, timeout: float = 240) -> list[float]:
+    from app.core.config import settings
+    ffmpeg = settings.ffmpeg_bin if settings.ffmpeg_bin and Path(settings.ffmpeg_bin).is_file() else shutil.which("ffmpeg")
     if not ffmpeg or not path:
         return []
     try:
         completed = subprocess.run(
             [ffmpeg, "-hide_banner", "-i", path, "-filter:v", f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
