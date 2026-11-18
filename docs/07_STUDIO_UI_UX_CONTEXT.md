@@ -1,5 +1,7 @@
 # Studio UI and UX context
 
+To bring this back up in a later chat, say: **use the studio UI context**. That means this file, `docs/07_STUDIO_UI_UX_CONTEXT.md`, and the suggestion list below. Agents are also pointed here from `AGENTS.md`.
+
 Context for anyone changing the editor interface. This describes the shell that is actually mounted in `frontend/src/App.tsx` on `main` as of 18 November 2026. `docs/02_FRONTEND_ARCHITECTURE_AND_COMPONENTS.md` still describes an older left-rail layout, port `8002`, and a purple feedback pill. Follow this file for UI work until that older spec is rewritten.
 
 The product goal for the shell is a light-theme documentary editor where the 9:16 preview is the largest surface, speech defines the cut, and chrome stays quiet until the editor asks for it.
