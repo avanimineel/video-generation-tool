@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
+from app.services.domain_knowledge import for_planner, normalize_domain
 from app.services.feedback_service import feedback_service
 
 router = APIRouter(prefix="/api/feedback", tags=["Editor Feedback & AI Training"])
@@ -75,6 +76,10 @@ async def get_editor_decisions(
         limit=limit,
         offset=offset
     )
+
+@router.get("/domains/{domain}")
+async def get_domain_knowledge(domain: str):
+    return for_planner(normalize_domain(domain))
 
 @router.get("/stats")
 async def get_feedback_statistics(

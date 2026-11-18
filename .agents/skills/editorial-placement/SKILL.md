@@ -45,4 +45,6 @@ Place graphics with measured picture and audio features, then a deterministic sn
 | Preview clamp and avoid outlines | `frontend/src/components/viewer/CanvasOverlay.tsx` |
 | Next slot and accept-clear | `frontend/src/services/safePlacement.ts`, `EditorialPlanPanel.tsx` |
 
-Domain classes are `general` (face, hand), `medical` (plus instrument), and `sports` (plus ball). Template families are `text_title`, `callout`, `split_broll`, and `article_card`. Family match and exact match are both reported.
+Domain classes are `general` (face, hand), `medical` (plus instrument), and `sports` (plus ball). A project's `settings.domain_profile` selects the class. Each live keep, cut, or swap is filed in `domain_knowledge/<domain>.json`. The next video in that field receives those counts and notes. Other fields do not. Rows with no domain stay in `general`. This is editing memory, not a fine-tune.
+
+Template families are `text_title`, `callout`, `split_broll`, and `article_card`. Family match and exact match are both reported.

@@ -402,8 +402,11 @@ Spoken Text & Query Precision:
             guidance = feedback.get('guidance', '').strip()
             decisions_list = feedback.get('decisions', [])
             examples = feedback.get('cross_project_examples', [])
+            domain_profile = feedback.get('domain') or {}
+            if domain_profile:
+                prompt += '\nDomain profile for this field only. Keep graphics off its avoid classes. Treat keep and cut counts as style, never as facts about this speaker or patient.\n' + json.dumps(domain_profile, ensure_ascii=False)
             if examples:
-                prompt += '\nEditing examples from OTHER videos: learn clarity, relevance and pacing preferences only. Do not transfer their patient identities, diagnoses, exact words, geography or factual corrections to this video.\n' + json.dumps(examples, ensure_ascii=False)
+                prompt += '\nEditing examples from OTHER videos in the same field: learn clarity, relevance and pacing preferences only. Do not transfer their patient identities, diagnoses, exact words, geography or factual corrections to this video.\n' + json.dumps(examples, ensure_ascii=False)
 
             if guidance:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"

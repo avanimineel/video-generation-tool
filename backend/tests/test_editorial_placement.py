@@ -193,6 +193,18 @@ def test_offline_import_skips_the_source_clip_and_keeps_unmapped_titles():
     assert not is_live_feedback(imported["feedback"][0])
 
 
+def test_domain_memory_stays_inside_its_field():
+    from app.services.domain_knowledge import for_planner, remember, same_domain
+    remember({"domain_profile": "medical", "decision": "cut", "graphic_type": "stat_counter", "editor_notes": "do not cover the incision", "project_id": "lung"})
+    remember({"domain_profile": "sports", "decision": "keep", "graphic_type": "youtube_insert", "editor_notes": "show the ball", "project_id": "match"})
+    medical = for_planner("medical")
+    assert "instrument" in medical["avoid_classes"]
+    assert medical["notes"][0]["note"] == "do not cover the incision"
+    assert all("ball" not in note["note"] for note in medical["notes"])
+    assert same_domain({}, "general")
+    assert not same_domain({}, "medical")
+
+
 def test_offline_bundle_does_not_write_live_feedback(tmp_path):
     imported = import_fcpxml(_FCPXML)
     written = write_offline_bundle(imported, tmp_path)
