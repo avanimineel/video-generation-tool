@@ -15,7 +15,8 @@ from app.services.editorial_placement import (
     snap_interval,
     visible_preview_rect,
 )
-from app.services.timeline_import import fcpxml_to_eval_records
+from app.services.feedback_service import is_live_feedback
+from app.services.timeline_import import fcpxml_to_eval_records, fcp_transform_to_center_rect, import_fcpxml, write_offline_bundle
 
 
 def test_preview_transform_drops_mostly_offscreen_face():
@@ -110,9 +111,12 @@ def test_place_decision_writes_center_rect_and_snaps_off_the_cut():
 
 
 def test_fcpxml_import_is_eval_records_only():
-    xml = '<fcpxml><asset-clip ref="kinetic_typography" name="Title" offset="30/30s" duration="15/30s"/></fcpxml>'
+    xml = '<fcpxml><title ref="kinetic_typography" name="Title" offset="30/30s" duration="15/30s"/></fcpxml>'
     records = fcpxml_to_eval_records(xml, fps=30)
-    assert records == [{"template_id": "kinetic_typography", "start_sec": 1.0, "end_sec": 1.5, "name": "Title"}]
+    assert records[0]["template_id"] == "kinetic_typography"
+    assert records[0]["start_sec"] == 1.0
+    assert records[0]["end_sec"] == 1.5
+    assert records[0]["template_family"] == "text_title"
 
 
 def test_showinfo_parser_reads_pts_time():
@@ -122,7 +126,77 @@ def test_showinfo_parser_reads_pts_time():
 def test_live_planner_does_not_import_the_timeline_parser():
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    source = (root / "backend/app/services/auto_production_service.py").read_text()
-    planner = (root / "backend/app/services/editorial_planner.py").read_text()
-    assert "timeline_import" not in source
-    assert "timeline_import" not in planner
+    watched = [
+        "backend/app/services/auto_production_service.py",
+        "backend/app/services/editorial_planner.py",
+        "backend/app/main.py",
+        "backend/app/api/feedback.py",
+        "backend/app/api/media.py",
+    ]
+    for relative in watched:
+        assert "timeline_import" not in (root / relative).read_text()
+
+
+_FCPXML = """<?xml version="1.0" encoding="UTF-8"?>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" frameDuration="1001/30000s" width="1920" height="1080"/>
+    <effect id="e1" name="Lower Third"/>
+    <effect id="e2" name="Fancy Wipe"/>
+  </resources>
+  <library><event><project><sequence format="r1">
+    <spine>
+      <asset-clip name="Interview" offset="0s" duration="10s">
+        <title ref="e1" name="Lower Third" offset="30/30s" duration="60/30s" lane="1">
+          <adjust-transform position="10 12" scale="100 100"/>
+          <text><text-style>Hello</text-style></text>
+        </title>
+        <generator ref="e2" name="Fancy Wipe" offset="4s" duration="1s" lane="1"/>
+      </asset-clip>
+    </spine>
+  </sequence></project></event></library>
+</fcpxml>
+"""
+
+
+def test_fcp_position_uses_frame_height_and_flips_y():
+    center_x, center_y, width, height = fcp_transform_to_center_rect(10, 12, 100, 100, 1920, 1080, 0.72 * 1920, 0.16 * 1080)
+    assert abs(center_x - (0.5 + 0.1 * (1080 / 1920))) < 1e-6
+    assert abs(center_y - 0.38) < 1e-6
+    assert abs(width - 0.72) < 1e-6
+    assert abs(height - 0.16) < 1e-6
+
+
+def test_offline_import_skips_the_source_clip_and_keeps_unmapped_titles():
+    imported = import_fcpxml(_FCPXML, project_id="p1", features={
+        "shot_cuts": [1.2],
+        "detection_frames": [{"time_sec": 1.2, "detections": [{"label": "face", "preview_rect": (0.5, 0.4, 0.2, 0.2)}]}],
+        "words": [
+            {"word": "hello", "start_sec": 1.0, "end_sec": 1.3, "emphasis": "high"},
+            {"word": "gap", "start_sec": 8.0, "end_sec": 8.2, "emphasis": "high"},
+        ],
+    }, shadow_suggestions=[{"start_sec": 1.0, "end_sec": 2.8, "template_id": "kinetic_typography", "screen_rect": (0.5, 0.4, 0.2, 0.2), "avoid_rects": []}])
+    names = [row["name"] for row in imported["placements"]]
+    assert "Interview" not in names
+    assert imported["unmapped"] == ["Fancy Wipe"]
+    lower = imported["placements"][0]
+    assert lower["template_family"] == "text_title"
+    assert lower["crosses_cut"] is True
+    assert lower["avoid_rects"]
+    assert lower["text"] == "Hello"
+    assert imported["feedback"][0]["source"] == "fcpxml_import"
+    assert imported["feedback"][0]["final_decision"] == "keep"
+    assert imported["feedback"][0]["edits"] == []
+    assert imported["fps"] == round(30000 / 1001, 6)
+    assert imported["scorecard"]["intervention_recall"] == 1.0
+    assert any(row.get("reason") == "emphasis_without_overlay" for row in imported["training_rows"])
+    assert not is_live_feedback(imported["feedback"][0])
+
+
+def test_offline_bundle_does_not_write_live_feedback(tmp_path):
+    imported = import_fcpxml(_FCPXML)
+    written = write_offline_bundle(imported, tmp_path)
+    assert "editorial_feedback.json" not in " ".join(written.values())
+    assert (tmp_path / "fcpxml_feedback.json").is_file()
+    assert (tmp_path / "training_export.json").is_file()
+    assert not (tmp_path / "scorecard_baseline.json").exists()

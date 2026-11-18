@@ -23,18 +23,47 @@ export const DEAD_ZONES: Record<AspectPreset, { rects: CenterRect[]; safe_bounds
   none: { rects: [], safe_bounds: [0, 0, 1, 1] },
 };
 
-export interface EditEvent {
-  type: "move" | "retime" | "swap_template" | "cut";
-  timestamp: string;
-  delta_center?: [number, number, number, number];
-  old_rect?: CenterRect;
-  new_rect?: CenterRect;
-  old_rect_hit_avoid?: boolean;
-  delta_start?: number;
-  delta_end?: number;
-  from_template?: string;
-  to_template?: string;
-  same_family?: boolean;
-  refused_rect?: CenterRect;
-  geometric_hint?: "overlapping_cue" | "too_dense" | "false_positive" | "none";
+export type RectDelta = [dx: number, dy: number, dw: number, dh: number];
+export type BoundarySnapType = "shot_cut_next_frame" | "whisper_gap" | "word_start" | "none";
+
+export interface CameraTransform {
+  crop: [x_min: number, y_min: number, x_max: number, y_max: number];
+  zoom: number;
+  pan_x: number;
+  pan_y: number;
+}
+
+export interface PlacementRecord {
+  segment_id: string;
+  raw_start_sec: number;
+  raw_end_sec: number;
+  start_sec: number;
+  end_sec: number;
+  start_snap: BoundarySnapType;
+  end_snap: BoundarySnapType;
+  crosses_cut: boolean;
+  intervene: boolean;
+  template_id: string;
+  template_family: TemplateFamily | null;
+  screen_rect: CenterRect;
+  pos_x: number;
+  pos_y: number;
+  user_scale: number;
+  effective_scale: number;
+  avoid_rects: CenterRect[];
+}
+
+export type EditEvent =
+  | { type: "move"; timestamp: string; delta: RectDelta; old_rect: CenterRect; new_rect: CenterRect; old_rect_hit_avoid: boolean }
+  | { type: "retime"; timestamp: string; delta_start: number; delta_end: number }
+  | { type: "swap_template"; timestamp: string; from_template: string; to_template: string; same_family: boolean }
+  | { type: "cut"; timestamp: string; refused_rect: CenterRect; geometric_hint: "overlapping_cue" | "too_dense" | "false_positive" | "none" };
+
+export interface DecisionFeedbackRow {
+  cue_id: string;
+  project_id: string;
+  source: "live_editor" | "fcpxml_import";
+  final_decision: "keep" | "cut" | "swap" | "manual_add";
+  edits: EditEvent[];
+  editor_notes?: string;
 }

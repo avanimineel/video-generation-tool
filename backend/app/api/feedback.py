@@ -28,11 +28,14 @@ class DecisionLogRequest(BaseModel):
     final_decision: Optional[Dict[str, Any]] = None
     editor_notes: str = ""
     edits: Optional[List[Dict[str, Any]]] = None
+    source: Optional[str] = None
 
 @router.post("/decisions")
 async def log_editor_decision(req: DecisionLogRequest):
     if req.decision.lower() not in ["keep", "cut", "swap", "manual_add"]:
         raise HTTPException(status_code=400, detail="Decision must be 'keep', 'cut', 'swap', or 'manual_add'")
+    if (req.source or "") == "fcpxml_import":
+        raise HTTPException(status_code=400, detail="FCPXML imports are written by the offline importer, not the live editor.")
 
     entry = feedback_service.record_decision(
         project_id=req.project_id,

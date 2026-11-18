@@ -393,8 +393,11 @@ def place_decision(row: dict, graphic, state) -> dict:
     preset = preset_for_aspect(aspect)
     domain = getattr(settings, "domain_profile", None) or ("medical" if getattr(settings, "brand_preset", "") == "medical_evidence" else "general")
     fps = float(getattr(state, "fps", 30) or 30)
+    raw_start = float(row["start_sec"])
+    raw_end = float(row["end_sec"])
     layout = (row.get("composition") or {}).get("layout") or "overlay"
     position = (row.get("composition") or {}).get("position") or [0.5, 0.5]
+    user_scale = float((row.get("composition") or {}).get("scale") or 1)
     width, height = default_size(layout)
     current: CenterRect = (float(position[0]), float(position[1]), width, height)
     words = _words(state)
@@ -412,15 +415,24 @@ def place_decision(row: dict, graphic, state) -> dict:
         if slot is not None:
             chosen = slot
     hits = rect_hits(chosen, avoid) or rect_hits(chosen, dead_zones(preset))
+    template_id = getattr(graphic, "template_id", "") or ""
+    painted = effective_scale(user_scale, chosen, (1.0, 1.0), (chosen[2], chosen[3]))
     placement = {
+        "segment_id": row.get("segment_id") or getattr(graphic, "id", ""),
+        "raw_start_sec": raw_start,
+        "raw_end_sec": raw_end,
         **snapped,
+        "intervene": True,
+        "template_id": template_id,
+        "template_family": family_of(template_id),
         "screen_rect": [round(value, 4) for value in chosen],
         "pos_x": round(chosen[0], 4),
         "pos_y": round(chosen[1], 4),
+        "user_scale": user_scale,
+        "effective_scale": round(painted, 4),
         "avoid_rects": [[round(value, 4) for value in rect] for rect in avoid],
         "preset": preset,
         "domain": domain,
-        "template_family": family_of(getattr(graphic, "template_id", "") or ""),
         "hits_avoid": hits,
         "clear": (not hits) and (not snapped["crosses_cut"]),
     }

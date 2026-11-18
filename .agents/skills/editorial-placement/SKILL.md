@@ -17,7 +17,9 @@ Place graphics with measured picture and audio features, then a deterministic sn
 3. Four-metric scorecard on finished edits.
 4. A fine-tune only after that scorecard exists. It is not part of this module.
 
-`timeline_import.py` writes evaluation records only. `auto_production_service.py` and `editorial_planner.py` must not import it.
+`timeline_import.py` is an offline CLI. It parses FCPXML, converts center-origin positions into `screen_rect`, maps generator names onto the four families, and attaches shot cuts and avoid boxes supplied from the feature probes. It writes `fcpxml_placements.json`, `fcpxml_feedback.json`, `training_export.json`, and, when a separate shadow plan is passed, `scorecard_baseline.json`. Those rows use `source: fcpxml_import`. The live feedback endpoint rejects that source, and `planning_feedback` ignores it.
+
+`auto_production_service.py`, `editorial_planner.py`, and the API routers must not import `timeline_import`. Run it as `python -m app.services.timeline_import timeline.fcpxml --out <dir>`. Unmapped generator names stay in the export with `unmapped: true`.
 
 ## Contracts
 
@@ -39,7 +41,7 @@ Place graphics with measured picture and audio features, then a deterministic sn
 | Shot-cut and RMS probes | `backend/app/services/editorial_features.py` |
 | Live stamp onto a graphic | `editorial_planner.execute_plan` → `place_decision` |
 | Append-only edits | `feedback_service.record_decision` |
-| Offline FCPXML records | `backend/app/services/timeline_import.py` |
+| Offline FCPXML import | `python -m app.services.timeline_import` |
 | Preview clamp and avoid outlines | `frontend/src/components/viewer/CanvasOverlay.tsx` |
 | Next slot and accept-clear | `frontend/src/services/safePlacement.ts`, `EditorialPlanPanel.tsx` |
 

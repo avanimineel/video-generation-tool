@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.core.config import settings
 
+def is_live_feedback(row: Dict[str, Any]) -> bool:
+    """Imported timelines are ground truth for the scorecard, not planner context."""
+    return row.get("source") != "fcpxml_import"
+
 def _append_edits(existing: Optional[Dict[str, Any]], incoming: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Keep earlier drags and retimes when a later decision is saved for the same cue."""
     history = list((existing or {}).get("edits") or [])
@@ -83,11 +87,11 @@ class FeedbackService:
         return content
 
     def planning_feedback(self, project_id):
-        rows = self.query_decisions(project_id=project_id, limit=500)['decisions']
+        rows = [row for row in self.query_decisions(project_id=project_id, limit=500)['decisions'] if is_live_feedback(row)]
         rows.sort(key=lambda r:r.get('updated_at',''), reverse=True)
         decisions_summary = [{k:r.get(k) for k in ('id','cue_id','decision','start_sec','end_sec','transcript_context','graphic_type','selected_asset','editor_notes','reasoning','swap_details')} for r in rows[:100]]
         # Other projects teach editing preferences, not facts about this speaker.
-        others = [r for r in self._load_all() if r.get('project_id') != project_id and r.get('editor_notes')]
+        others = [r for r in self._load_all() if r.get('project_id') != project_id and r.get('editor_notes') and is_live_feedback(r)]
         others.sort(key=lambda r:r.get('updated_at',''), reverse=True)
         examples = [{k:r.get(k) for k in ('project_id','decision','transcript_context','editor_notes','graphic_type')} for r in others[:30]]
         guidance = self.get_guidance(project_id)
@@ -147,6 +151,7 @@ class FeedbackService:
             "swap_details": swap_details or {},
             "final_decision": final_decision or {},
             "editor_notes": editor_notes,
+            "source": "live_editor",
             "edits": _append_edits(all_decisions[existing_idx] if existing_idx >= 0 else None, edits),
             "created_at": all_decisions[existing_idx]["created_at"] if existing_idx >= 0 else now_iso,
             "updated_at": now_iso
