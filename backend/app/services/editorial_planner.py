@@ -409,6 +409,9 @@ Spoken Text & Query Precision:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"
             if decisions_list:
                 prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\nMaintain patterns from approved (keep) items and avoid rejected (cut) concepts:\n{json.dumps(decisions_list, ensure_ascii=False)}\n"
+            mappings = feedback.get('caption_mappings') or []
+            if mappings:
+                prompt += "\nEditor caption timeline. Keep these spoken lines at these times instead of a shorter or repeated fragment:\n" + json.dumps(mappings, ensure_ascii=False) + "\n"
         else:
             prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\n{json.dumps(feedback, ensure_ascii=False)}\n"
 

@@ -290,7 +290,10 @@ class TranscriptionService:
 
         # Default to 'translate' for high-accuracy English subtitles from Hindi/Hinglish speech
         whisper_task = task if task in ['transcribe', 'translate'] else 'translate'
-        prompt = "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms."
+        from app.services.caption_mappings import transcription_prompt
+        prompt = transcription_prompt(
+            "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms."
+        )
 
         # Fast 16kHz mono audio extraction: avoids slow video container demuxing in Python
         audio_target = media_path

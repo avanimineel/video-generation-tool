@@ -84,10 +84,12 @@ class FeedbackService:
         others.sort(key=lambda r:r.get('updated_at',''), reverse=True)
         examples = [{k:r.get(k) for k in ('project_id','decision','transcript_context','editor_notes','graphic_type')} for r in others[:30]]
         guidance = self.get_guidance(project_id)
+        from app.services.caption_mappings import list_mappings
         return {
             'decisions': decisions_summary,
             'guidance': guidance,
-            'cross_project_examples': examples
+            'cross_project_examples': examples,
+            'caption_mappings': list_mappings(project_id)[:20],
         }
 
     @serialized_feedback_write

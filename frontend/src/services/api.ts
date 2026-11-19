@@ -1746,6 +1746,27 @@ export const api = {
     return [];
   },
 
+  async saveCaptionMapping(data: {
+    project_id: string;
+    caption_id?: string;
+    start_sec: number;
+    end_sec: number;
+    source_text?: string;
+    spoken_text: string;
+    note?: string;
+  }): Promise<{ success: boolean; detail?: string }> {
+    const res = await fetch(`${API_BASE}/feedback/caption-mappings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, detail: body.detail || 'Could not save this caption mapping.' };
+    }
+    return { success: true };
+  },
+
   async saveProjectGuidance(projectId: string, guidance: string): Promise<{ success: boolean; guidance: string }> {
     try {
       const res = await fetch(`${API_BASE}/feedback/guidance`, {

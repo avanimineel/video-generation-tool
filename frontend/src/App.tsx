@@ -1087,6 +1087,7 @@ export const App: React.FC = () => {
       <EditorialPlanPanel
         onBusy={setIsAutoProducing}
         projectId={project.id}
+        project={project}
         onSeek={setCurrentTime}
         onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
         open={editorialPlanOpen}
@@ -1097,10 +1098,13 @@ export const App: React.FC = () => {
         const englishLines = project.captions.filter(c => /[A-Za-z0-9]/.test(c.translated_text || "")).length;
         const addedVisuals = project.graphics.filter(g => !g.parameters?.retention_camera && !['caption_cover','authored_title'].includes(g.template_id)).length;
         const cameraBeats = project.graphics.filter(g => g.parameters?.retention_camera).length;
-        const needsAttention = Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
+        const captionsOnly = project.ai_ingestion?.summary?.outcome === 'captions_only' || project.ai_ingestion?.auto_produce_mode === 'captions_only';
+        const needsAttention = !captionsOnly && Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
         const hasGaps = project.ai_ingestion?.status === 'completed_with_gaps';
         const statusFacts = `Video prepared · ${project.captions.length} captions · ${englishLines} English subtitle lines · ${addedVisuals} added visuals${cameraBeats ? ` · ${cameraBeats} camera beats` : ''}`;
-        const actionCopy = needsAttention
+        const actionCopy = captionsOnly
+          ? 'Captions are ready. Open them to read, edit, and save a timeline mapping.'
+          : needsAttention
           ? 'Automatic editing needs attention.'
           : hasGaps
             ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')}`
@@ -1123,12 +1127,12 @@ export const App: React.FC = () => {
               type="button"
               onClick={() => setEditorialPlanOpen(true)}
               className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition shadow-2xs ${
-                needsAttention || hasGaps
+                needsAttention || hasGaps || captionsOnly
                   ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
                   : 'bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100'
               }`}
             >
-              Review
+              {captionsOnly ? 'View captions' : 'Review'}
             </button>
           </div>
         );
