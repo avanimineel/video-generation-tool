@@ -753,16 +753,24 @@ def ground(d,seg,captions):
                 matches.append(c_start)
                 break
     audio_match = next((w for w in seg.audio_cues if w['id']==d.audio_anchor_id and tokens(w['word'])==tokens(d.audio_anchor_word) and w.get('usable')),None)
+    phrase_start = min(matches, key=lambda t: abs(t - d.start_sec)) if matches else None
     if seg.audio_cues and d.intervene and d.strategy in ('BROLL_VIDEO','STOCK_IMAGE','KINETIC_TYPOGRAPHY','MIXED_TYPOGRAPHY_TITLE','STAT_COUNTER','DATA_VISUALIZATION','CHART'):
-        if not audio_match:
+        if d.audio_anchor_id is not None and not audio_match:
             return None, 'Original-language speech anchor missing or invalid; needs alignment review'
         function_words={'अगर','और','या','तो','कि','के','की','का','में','से','है','हैं','यह','वह','आप','हम','if','and','or','the','a','an','is','are','of','in','to'}
-        if d.cue_kind in ('noun','place','person','object') and audio_match['word'].strip('.,!?।').casefold() in function_words:
-            return None, 'Noun cue was linked to a grammatical word rather than the named subject; needs alignment review'
-        start=audio_match['start']
-        method='original-language ASR word anchor (tolerance unverified)'
+        distant = audio_match is not None and phrase_start is not None and abs(audio_match['start'] - phrase_start) > 1.0
+        if audio_match and not distant:
+            if d.cue_kind in ('noun','place','person','object') and audio_match['word'].strip('.,!?।').casefold() in function_words:
+                return None, 'Noun cue was linked to a grammatical word rather than the named subject; needs alignment review'
+            start=audio_match['start']
+            method='original-language ASR word anchor (tolerance unverified)'
+        elif phrase_start is not None:
+            start = phrase_start
+            method = 'exact word timestamps'
+        else:
+            return None, 'Original-language speech anchor missing or invalid; needs alignment review'
     elif matches:
-        start = min(matches, key=lambda t: abs(t - d.start_sec))
+        start = phrase_start
         method = 'exact word timestamps'
     elif want and d.cue_kind != 'phrase':
         return None, 'Cue needs usable word timestamps; sentence-level fallback would mistime this visual'
@@ -784,6 +792,10 @@ def ground(d,seg,captions):
     if micro:lo=.3
     lo=max(lo,d.comprehension_seconds or 0)
     hi=max(hi,lo)
+    if d.cue_kind == 'phrase' and d.strategy in ('KINETIC_TYPOGRAPHY', 'MIXED_TYPOGRAPHY_TITLE'):
+        # A planning beat is shorter than the sentence. Keep the title through the spoken clause.
+        end = max(end, min(d.end_sec, start + hi))
+        limit = max(limit, end)
     end=min(limit,start+max(lo,min(hi,end-start)))
     if end-start<lo:
         return None,'Insufficient duration remaining in segment'
@@ -1331,8 +1343,9 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
         domain_name = ""
         if isinstance(feedback, dict):
             domain_name = str((feedback.get("domain") or {}).get("domain") or "")
-        from app.services.local_editorial import lengthen_spoken_titles
+        from app.services.local_editorial import lengthen_spoken_titles, promote_sentence_titles
         decisions=lengthen_spoken_titles(decisions, segments, domain_name)
+        decisions=promote_sentence_titles(decisions, segments, state.captions, domain_name)
         from app.services.local_models import planner_skip_reason
         skipped = planner_skip_reason()
         if skipped:

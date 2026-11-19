@@ -286,6 +286,109 @@ def lengthen_spoken_titles(decisions, segments, domain: str = ""):
     return decisions
 
 
+def spoken_sentences(captions) -> list[dict]:
+    """Join caption boxes into the sentences that were spoken."""
+    words = []
+    for caption in captions or []:
+        items = caption.get("words") if isinstance(caption, dict) else getattr(caption, "words", None)
+        if not items:
+            text = caption.get("text") if isinstance(caption, dict) else getattr(caption, "text", "")
+            start = caption.get("start") if isinstance(caption, dict) else getattr(caption, "start", 0)
+            end = caption.get("end") if isinstance(caption, dict) else getattr(caption, "end", start)
+            if text:
+                words.append({"word": str(text), "start": float(start or 0), "end": float(end or start or 0)})
+            continue
+        for item in items:
+            token = item.get("word") if isinstance(item, dict) else getattr(item, "word", "")
+            if not token:
+                continue
+            start = item.get("start") if isinstance(item, dict) else getattr(item, "start", 0)
+            end = item.get("end") if isinstance(item, dict) else getattr(item, "end", start)
+            words.append({"word": str(token), "start": float(start or 0), "end": float(end or start or 0)})
+    sentences = []
+    current = []
+    for word in words:
+        current.append(word)
+        if word["word"].rstrip().endswith((".", "?", "!", "।")):
+            sentences.append(current)
+            current = []
+    if current:
+        sentences.append(current)
+    return [{
+        "text": " ".join(word["word"] for word in group),
+        "start": group[0]["start"],
+        "end": group[-1]["end"],
+    } for group in sentences if group]
+
+
+def claim_phrase(text: str, domain: str = "") -> str:
+    """Use the whole sentence when it opens on the subject. A greeting stays off the title."""
+    words = [word for word in str(text or "").split() if word]
+    terms = _domain_terms(domain)
+    if 4 <= len(words) <= 12:
+        first = next((index for index, word in enumerate(words) if _norm(word) in terms), None)
+        if terms and first is not None and first <= 2:
+            return " ".join(words)
+        if not terms and _norm(words[0]) not in _ABSTRACT:
+            return " ".join(words)
+    return focus_phrase(text, domain)
+
+
+def promote_sentence_titles(decisions, segments, captions, domain: str = ""):
+    """Put a full spoken sentence on screen. A one-second window cannot hold it."""
+    titles = []
+    for sentence in spoken_sentences(captions):
+        phrase = claim_phrase(sentence["text"], domain)
+        if len(phrase.split()) < 4 or not verbatim_text(phrase, sentence["text"]):
+            continue
+        if _domain_terms(domain) and not any(_norm(word) in _domain_terms(domain) for word in phrase.split()):
+            continue
+        segment = next((item for item in segments if item.start_sec <= sentence["start"] < item.end_sec), None)
+        if segment is None:
+            continue
+        anchor_id, anchor_word = None, ""
+        cues = [word for word in (getattr(segment, "audio_cues", None) or []) if word.get("usable") and word.get("word")]
+        if cues:
+            nearest = min(cues, key=lambda word: abs(float(word.get("start") or 0) - sentence["start"]))
+            if abs(float(nearest.get("start") or 0) - sentence["start"]) <= 0.8:
+                anchor_id, anchor_word = nearest.get("id"), str(nearest.get("word") or "")
+        end = min(sentence["end"], sentence["start"] + 4.0)
+        if end < sentence["start"] + 1.5:
+            end = sentence["start"] + 1.6
+        titles.append(Decision(
+            segment_id=segment.id,
+            intervene=True,
+            rationale="The spoken sentence is placed in full. A short caption box was not used as the title.",
+            intent="EMPHASIZE",
+            strategy="KINETIC_TYPOGRAPHY",
+            anchor_phrase=phrase,
+            audio_anchor_id=anchor_id,
+            audio_anchor_word=anchor_word,
+            display_text=phrase,
+            cue_kind="phrase",
+            start_sec=round(sentence["start"], 3),
+            end_sec=round(end, 3),
+            visual_role="emphasis",
+            scores=_scores(),
+            composition={"layout": "text_overlay", "position": [0.5, 0.32]},
+        ))
+    if not titles:
+        return decisions
+    for decision in decisions:
+        if not decision.intervene:
+            continue
+        for title in titles:
+            if decision.display_text.strip() == title.display_text.strip():
+                continue
+            if decision.start_sec < title.start_sec < decision.end_sec and title.start_sec - decision.start_sec >= 1.5:
+                decision.end_sec = round(title.start_sec, 3)
+            elif title.start_sec <= decision.start_sec < title.end_sec and decision.strategy in ("STOCK_IMAGE", "KINETIC_TYPOGRAPHY", "MIXED_TYPOGRAPHY_TITLE"):
+                decision.intervene = False
+                decision.strategy = "NO_INTERVENTION"
+                decision.rationale = "This fragment is part of a sentence that is already placed as a title."
+    return list(decisions) + titles
+
+
 def _query_names_subject(query: str, domain: str) -> bool:
     tokens = [_norm(word) for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", query or "")]
     content = [token for token in tokens if token not in _ABSTRACT]

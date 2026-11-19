@@ -203,6 +203,54 @@ def test_local_box_math_and_sample_times():
     assert sample_times([], 10, limit=4)[0] == 0.0
 
 
+def test_a_split_sentence_is_placed_as_one_title():
+    from types import SimpleNamespace
+    from app.services.editorial_planner import Segment
+    from app.services.local_editorial import promote_sentence_titles
+    words = [
+        ("Lung", 4.94), ("cancer", 5.32), ("is", 5.8),
+        ("commonest", 6.02), ("cancer", 6.7), ("in", 7.04),
+        ("the", 7.24), ("world.", 7.4),
+    ]
+    captions = []
+    for index in range(0, len(words), 3):
+        group = words[index:index + 3]
+        captions.append(SimpleNamespace(
+            text=" ".join(word for word, _start in group),
+            start=group[0][1],
+            end=group[-1][1] + 0.3,
+            words=[SimpleNamespace(word=word, start=start, end=start + 0.2) for word, start in group],
+        ))
+    segment = Segment(
+        id="segment-1-beat-4",
+        start_sec=4.78,
+        end_sec=6.02,
+        transcript="Lung cancer is",
+        semantic_summary="Lung cancer is",
+    )
+    fragment = deterministic_fragment()
+    decisions = promote_sentence_titles([fragment], [segment], captions, "medical")
+    titles = [item for item in decisions if item.intervene and item.strategy == "KINETIC_TYPOGRAPHY"]
+    assert [item.display_text for item in titles] == ["Lung cancer is commonest cancer in the world."]
+    assert fragment.strategy == "NO_INTERVENTION"
+
+
+def deterministic_fragment():
+    from app.services.editorial_planner import Decision
+    from app.services.local_editorial import _scores
+    return Decision(
+        segment_id="segment-1-beat-5",
+        intervene=True,
+        rationale="fragment",
+        strategy="STOCK_IMAGE",
+        display_text="commonest cancer in",
+        anchor_phrase="commonest cancer in",
+        start_sec=6.02,
+        end_sec=7.2,
+        scores=_scores(),
+    )
+
+
 def test_kinetic_titles_use_the_medical_clause_instead_of_a_three_word_fragment():
     from app.services.editorial_planner import Segment
     from app.services.local_editorial import deterministic_decisions, focus_phrase, visual_query
