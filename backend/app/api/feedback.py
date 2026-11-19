@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
-from app.services.domain_knowledge import for_planner, normalize_domain
+from app.services.domain_knowledge import for_planner, normalize_domain, remember_transcript
 from app.services.feedback_service import feedback_service
 
 router = APIRouter(prefix="/api/feedback", tags=["Editor Feedback & AI Training"])
@@ -76,6 +76,25 @@ async def get_editor_decisions(
         limit=limit,
         offset=offset
     )
+
+class TranscriptNoteRequest(BaseModel):
+    project_id: str
+    heard: str
+    correction: str = ""
+    issue: str = "wrong_words"
+    note: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+
+
+@router.post("/transcription")
+async def save_transcript_note(req: TranscriptNoteRequest):
+    try:
+        example = remember_transcript(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "example": example}
+
 
 @router.get("/domains/{domain}")
 async def get_domain_knowledge(domain: str):

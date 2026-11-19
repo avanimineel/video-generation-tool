@@ -86,8 +86,14 @@ def deterministic_decisions(segments, feedback=None) -> list:
             decisions.append(_quiet(segment, "No number or substantive spoken phrase in this stretch."))
             continue
         for cue in choices:
-            query, alternates = visual_query(cue["text"])
-            saved = _saved_example(domain, cue["text"])
+            search_text = cue["text"]
+            fixed = _saved_transcript(domain, cue["text"])
+            if fixed and fixed.get("correction"):
+                search_text = str(fixed["correction"])
+            query, alternates = visual_query(search_text)
+            if fixed and fixed.get("note") and str(fixed["note"]) not in alternates:
+                alternates = [str(fixed["note"]), *alternates][:2]
+            saved = _saved_example(domain, search_text)
             if saved and saved.get("query"):
                 query = str(saved["query"])
                 note = str(saved.get("note") or "")
@@ -109,6 +115,13 @@ def _saved_example(domain: str, text: str):
         return None
     from app.services.domain_knowledge import match_example
     return match_example(domain, text)
+
+
+def _saved_transcript(domain: str, text: str):
+    if not domain:
+        return None
+    from app.services.domain_knowledge import match_transcript
+    return match_transcript(domain, text)
 
 
 def auth_failure(message: str) -> bool:

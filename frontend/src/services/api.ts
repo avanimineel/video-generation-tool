@@ -1659,6 +1659,27 @@ export const api = {
   },
 
   // 7. Editor Feedback & AI Training Endpoints
+  async saveTranscriptNote(data: {
+    project_id: string;
+    heard: string;
+    correction?: string;
+    issue?: 'wrong_words' | 'unreadable' | 'bad_timing';
+    note?: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ success: boolean; example?: unknown; detail?: string }> {
+    const res = await fetch(`${API_BASE}/feedback/transcription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, detail: body.detail || 'Could not save this transcription note.' };
+    }
+    return body;
+  },
+
   async logDecision(data: {
     project_id: string;
     cue_id: string;

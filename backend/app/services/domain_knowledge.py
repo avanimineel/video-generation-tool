@@ -96,6 +96,7 @@ def for_planner(domain: str) -> Dict[str, Any]:
         "preferred_families": [name for name, counts in ranked if counts.get("keep", 0) > counts.get("cut", 0)][:4],
         "notes": profile["notes"][:8],
         "examples": profile.get("examples", [])[:12],
+        "transcripts": profile.get("transcripts", [])[:12],
     }
 
 
@@ -122,6 +123,57 @@ def section_words(text: str) -> list[str]:
     return found[:8]
 
 
+def remember_transcript(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """A heard line and the editor's correction. Stored for the next similar section."""
+    domain = normalize_domain(entry.get("domain_profile") or project_domain(str(entry.get("project_id") or "")))
+    heard = str(entry.get("heard") or "").strip()
+    correction = str(entry.get("correction") or "").strip()
+    note = str(entry.get("note") or "").strip()
+    if not heard or not (correction or note):
+        raise ValueError("A transcription note needs the heard line and a correction or a note.")
+    issue = str(entry.get("issue") or "wrong_words")
+    if issue not in {"wrong_words", "unreadable", "bad_timing"}:
+        issue = "wrong_words"
+    example = {
+        "project_id": entry.get("project_id"),
+        "heard": heard[:240],
+        "correction": correction[:240],
+        "issue": issue,
+        "note": note[:240],
+        "start_sec": entry.get("start_sec"),
+        "end_sec": entry.get("end_sec"),
+        "words": section_words(heard),
+        "at": datetime.utcnow().isoformat(),
+    }
+    path = _path(domain)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    profile = _load(path)
+    profile.setdefault("transcripts", [])
+    profile["transcripts"].insert(0, example)
+    profile["transcripts"] = profile["transcripts"][:80]
+    profile["updated_at"] = datetime.utcnow().isoformat()
+    _save(path, profile)
+    _append_transcript(domain, example)
+    return example
+
+
+def match_transcript(domain: str, text: str) -> Optional[Dict[str, Any]]:
+    """The saved hearing that matches this line. An exact phrase wins, then two shared words."""
+    folded = " ".join((text or "").casefold().split())
+    wanted = set(section_words(text))
+    best = None
+    score = 1
+    for example in _load(_path(normalize_domain(domain))).get("transcripts") or []:
+        heard = " ".join(str(example.get("heard") or "").casefold().split())
+        if heard and folded and (heard == folded or heard in folded or folded in heard):
+            return example
+        shared = wanted & set(example.get("words") or [])
+        if len(shared) > score:
+            best = example
+            score = len(shared)
+    return best
+
+
 def match_example(domain: str, text: str) -> Optional[Dict[str, Any]]:
     """The saved section whose words overlap this line. Two shared words is the minimum."""
     wanted = set(section_words(text))
@@ -135,6 +187,13 @@ def match_example(domain: str, text: str) -> Optional[Dict[str, Any]]:
     return best
 
 
+def _append_transcript(domain: str, example: Dict[str, Any]) -> None:
+    path = settings.projects_dir / "domain_knowledge" / f"{normalize_domain(domain)}_transcription.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"domain": normalize_domain(domain), "kind": "transcription", **example}, ensure_ascii=False) + "\n")
+
+
 def _append_training(domain: str, example: Dict[str, Any]) -> None:
     path = settings.projects_dir / "domain_knowledge" / f"{normalize_domain(domain)}_training.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +202,7 @@ def _append_training(domain: str, example: Dict[str, Any]) -> None:
 
 
 def _empty() -> Dict[str, Any]:
-    return {"counts": {}, "families": {}, "notes": [], "examples": [], "updated_at": None}
+    return {"counts": {}, "families": {}, "notes": [], "examples": [], "transcripts": [], "updated_at": None}
 
 
 def _load(path) -> Dict[str, Any]:
@@ -157,6 +216,7 @@ def _load(path) -> Dict[str, Any]:
     loaded.setdefault("families", {})
     loaded.setdefault("notes", [])
     loaded.setdefault("examples", [])
+    loaded.setdefault("transcripts", [])
     return loaded
 
 

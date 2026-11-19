@@ -1172,15 +1172,17 @@ def _ensure_local_index(state, source, run_dir, report):
     if ingestion.get('detection_frames') or not source.is_file():
         return
     from app.core.config import settings
+    from app.services.local_models import usable_picture_index
     cache = settings.projects_dir / state.id / 'semantic_cache' / 'local_picture_index.json'
     if cache.is_file():
         try:
             saved = json.loads(cache.read_text())
-            state.ai_ingestion = {**ingestion, **{key: saved[key] for key in ('shot_cuts', 'detection_frames', 'picture_index') if key in saved}}
-            report['picture_index'] = saved.get('picture_index')
-            report['shot_cuts'] = saved.get('shot_cuts') or []
-            report['shot_captions'] = saved.get('shot_captions') or []
-            return
+            if usable_picture_index(saved):
+                state.ai_ingestion = {**ingestion, **{key: saved[key] for key in ('shot_cuts', 'detection_frames', 'picture_index') if key in saved}}
+                report['picture_index'] = saved.get('picture_index')
+                report['shot_cuts'] = saved.get('shot_cuts') or []
+                report['shot_captions'] = saved.get('shot_captions') or []
+                return
         except (ValueError, TypeError, OSError):
             pass
     from app.services.editorial_features import detect_shot_cuts
@@ -1193,8 +1195,11 @@ def _ensure_local_index(state, source, run_dir, report):
         report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(exc))
         return
     saved = {'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'shot_captions': indexed['captions'], 'picture_index': 'local_yolo_florence_siglip'}
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    write_json(cache, saved)
+    if usable_picture_index(saved):
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        write_json(cache, saved)
+    elif indexed.get('error'):
+        report.setdefault('errors', []).append(str(indexed['error']))
     state.ai_ingestion = {**ingestion, 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': saved['picture_index']}
     report['shot_cuts'] = cuts
     report['shot_captions'] = indexed['captions']
@@ -1276,7 +1281,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     except Exception as vision_exc:
                         report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(vision_exc))
                 state.ai_ingestion = {**(state.ai_ingestion or {}), 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': 'local_yolo_florence_siglip'}
-                report['errors'].append('Picture index unavailable ('+message+'). Local shot captions: '+str(len(indexed['captions']))+'. Shot cuts: '+str(len(cuts))+'.')
+                detail = (' ' + indexed['error']) if indexed.get('error') else ''
+                report['errors'].append('Picture index unavailable ('+message+'). Local shot captions: '+str(len(indexed['captions']))+'. Shot cuts: '+str(len(cuts))+'.'+detail)
                 report['understanding_source']='local_models'
                 report['shot_cuts']=cuts
                 report['shot_captions']=indexed['captions']

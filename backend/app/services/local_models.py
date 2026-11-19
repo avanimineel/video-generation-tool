@@ -82,16 +82,25 @@ def extract_frame(video: str, time_sec: float, dest: Path) -> bool:
     return completed.returncode == 0 and dest.is_file()
 
 
+def usable_picture_index(saved) -> bool:
+    """An empty cache is a failed extract, not a finished picture index."""
+    if not isinstance(saved, dict):
+        return False
+    return bool(saved.get("shot_captions") or saved.get("detection_frames"))
+
+
 def index_picture(video: str, cuts: list[float], duration: float, domain: str, out_dir: Path) -> dict:
     """Shot keyframes, YOLO avoid boxes, Florence captions, and SigLIP vectors."""
     from PIL import Image
     frames = []
     captions = []
     embeddings = []
+    failed = 0
     times = sample_times(cuts, duration)
     for index, time_sec in enumerate(times):
         image_path = out_dir / f"frame_{index:02d}.jpg"
         if not extract_frame(video, time_sec, image_path):
+            failed += 1
             continue
         image = Image.open(image_path).convert("RGB")
         width, height = image.size
@@ -110,7 +119,15 @@ def index_picture(video: str, cuts: list[float], duration: float, domain: str, o
     release_vision()
     if embeddings:
         (out_dir / "siglip_index.json").write_text(json.dumps(embeddings), encoding="utf-8")
-    return {"frames": frames, "captions": captions}
+    result = {"frames": frames, "captions": captions, "frames_failed": failed}
+    if not captions:
+        from app.core.config import settings
+        binary = settings.ffmpeg_bin
+        if not binary or not Path(binary).is_file():
+            result["error"] = "ffmpeg was not found, so no local shot frame was written."
+        elif failed:
+            result["error"] = f"ffmpeg could not write {failed} keyframe(s), so there are no local shot captions."
+    return result
 
 
 def detect_frame(image, width: int, height: int, domain: str) -> list[dict]:

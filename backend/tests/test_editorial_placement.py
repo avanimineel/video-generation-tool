@@ -269,6 +269,51 @@ def test_a_section_note_is_reused_for_a_similar_line():
     assert match_example("sports", "The commonest cancer in men is lung cancer") is None
 
 
+def test_a_missing_ffmpeg_path_falls_back_to_a_real_binary(monkeypatch):
+    from pathlib import Path
+    from app.core.config import resolve_ffmpeg_bin
+    monkeypatch.setenv("FFMPEG_BIN", "/home/developer/oonex/missing-ffmpeg")
+    found = resolve_ffmpeg_bin()
+    assert Path(found).is_file()
+    assert found != "/home/developer/oonex/missing-ffmpeg"
+
+
+def test_a_transcription_correction_is_reused_for_the_picture_search():
+    from app.services.domain_knowledge import match_transcript, remember_transcript
+    from app.services.editorial_planner import Segment
+    from app.services.local_editorial import deterministic_decisions
+    from app.services.local_models import usable_picture_index
+    remember_transcript({
+        "domain_profile": "medical",
+        "project_id": "lung",
+        "heard": "you fuck all",
+        "correction": "chest xray scan",
+        "issue": "wrong_words",
+        "note": "misheard diagnosis",
+        "start_sec": 30.38,
+        "end_sec": 31.98,
+    })
+    hit = match_transcript("medical", "you fuck all the cases")
+    assert hit is not None
+    assert hit["correction"] == "chest xray scan"
+    assert match_transcript("sports", "you fuck all the cases") is None
+    segment = Segment(
+        id="segment-1",
+        start_sec=30,
+        end_sec=36,
+        transcript="you fuck all",
+        semantic_summary="you fuck all",
+        dialogue_beats=[{"start_sec": 30.2, "end_sec": 32.0, "text": "you fuck all", "emphasis": "high"}],
+        audio_cues=[{"id": 9, "word": "all", "start": 31.0, "usable": True}],
+    )
+    placed = [item for item in deterministic_decisions([segment], {"domain": {"domain": "medical"}}) if item.intervene]
+    assert placed
+    assert placed[0].anchor_phrase == "you fuck all"
+    assert "chest" in placed[0].asset.retrieval_query and "xray" in placed[0].asset.retrieval_query
+    assert usable_picture_index({"shot_captions": [], "detection_frames": []}) is False
+    assert usable_picture_index({"shot_captions": [{"time_sec": 0, "caption": "a doctor"}]})
+
+
 def test_domain_memory_stays_inside_its_field():
     from app.services.domain_knowledge import for_planner, remember, same_domain
     remember({"domain_profile": "medical", "decision": "cut", "graphic_type": "stat_counter", "editor_notes": "do not cover the incision", "project_id": "lung"})

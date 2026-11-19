@@ -117,6 +117,15 @@ except ImportError:
     bundled=list((Path(__file__).resolve().parents[2]/'vendor_runtime'/'imageio_ffmpeg'/'binaries').glob('ffmpeg-*'))
     DEFAULT_FFMPEG=str(bundled[0]) if bundled else (shutil.which('ffmpeg') or '/Applications/Free Download Manager.app/Contents/MacOS/ffmpeg')
 
+def resolve_ffmpeg_bin() -> str:
+    """Use a binary that exists. A saved path from another machine must not win."""
+    candidates = [os.getenv("FFMPEG_BIN", ""), DEFAULT_FFMPEG, shutil.which("ffmpeg") or ""]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return next((candidate for candidate in candidates if candidate), "ffmpeg")
+
+
 RESOLVE_SCRIPT_MODULES = "/Applications/DaVinci Resolve.app/Contents/Resources/Developer/Scripting/Modules"
 RESOLVE_FUSION_LIB = "/Applications/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so"
 RESOLVE_SCRIPT_API = "/Applications/DaVinci Resolve.app/Contents/Resources/Developer/Scripting"
@@ -128,7 +137,7 @@ class Settings(BaseModel):
     database_url: str = Field(
         default_factory=lambda: os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/resolve_companion.db")
     )
-    ffmpeg_bin: str = Field(default_factory=lambda: os.getenv("FFMPEG_BIN", DEFAULT_FFMPEG))
+    ffmpeg_bin: str = Field(default_factory=lambda: resolve_ffmpeg_bin())
     resolve_modules_dir: str = RESOLVE_SCRIPT_MODULES
     resolve_fusion_lib: str = RESOLVE_FUSION_LIB
     resolve_script_api: str = RESOLVE_SCRIPT_API
