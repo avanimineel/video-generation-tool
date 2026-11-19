@@ -285,8 +285,9 @@ def qwen_json(prompt: str) -> Optional[dict]:
     global _SKIP
     release_for_planner()
     if not _qwen_fits():
+        need_gb = max(1, round(qwen_minimum_mib() / 1024))
         _SKIP = (
-            "Qwen needs about 7 GB free on the GPU after the picture and translation models are released. "
+            f"Qwen needs about {need_gb} GB free on the GPU after the picture and translation models are released. "
             "That room was not available, so planning continued from the spoken lines."
         )
         return None
@@ -355,8 +356,25 @@ def _memory_error(exc: BaseException) -> bool:
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
 
 
-def _qwen_fits(minimum_mib: int = 7000) -> bool:
-    """4-bit 7B weights plus a short reply need about 7 GB free. CPU offload is refused."""
+def qwen_model_name() -> str:
+    """3B fits the 16 GB T4 after the picture models are released. Set QWEN_MODEL to use another size."""
+    return os.getenv("QWEN_MODEL", "Qwen/Qwen2.5-3B-Instruct")
+
+
+def qwen_minimum_mib() -> int:
+    """4-bit 3B weights plus a short reply need about 4 GB. A 7B model needs about 7 GB."""
+    name = qwen_model_name().lower()
+    if any(size in name for size in ("7b", "14b", "32b", "72b")):
+        return 7000
+    if any(size in name for size in ("0.5b", "1.5b")):
+        return 2500
+    return 4000
+
+
+def _qwen_fits(minimum_mib: Optional[int] = None) -> bool:
+    """Refuse the load when the GPU cannot hold the 4-bit weights. CPU offload is refused."""
+    if minimum_mib is None:
+        minimum_mib = qwen_minimum_mib()
     try:
         import torch
         if not torch.cuda.is_available():
@@ -475,7 +493,7 @@ def _qwen():
     if _QWEN is None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-        name = os.getenv("QWEN_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+        name = qwen_model_name()
         quant = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, bnb_4bit_quant_type="nf4")
         tokenizer = AutoTokenizer.from_pretrained(name)
         model = AutoModelForCausalLM.from_pretrained(

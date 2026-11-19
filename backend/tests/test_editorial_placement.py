@@ -297,6 +297,15 @@ def test_a_new_project_keeps_its_field_and_captions_keep_the_phrase():
     assert "goal" in caption_prompt("sports").lower()
 
 
+def test_the_local_planner_defaults_to_qwen_3b(monkeypatch):
+    from app.services.local_models import qwen_minimum_mib, qwen_model_name
+    monkeypatch.delenv("QWEN_MODEL", raising=False)
+    assert qwen_model_name() == "Qwen/Qwen2.5-3B-Instruct"
+    assert qwen_minimum_mib() == 4000
+    monkeypatch.setenv("QWEN_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    assert qwen_minimum_mib() == 7000
+
+
 def test_qwen_skips_when_the_gpu_has_no_room_and_the_edit_continues(monkeypatch):
     from app.services.local_models import clear_planner_skip, planner_skip_reason, qwen_json
     loaded = {}
