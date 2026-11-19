@@ -263,7 +263,7 @@ def qwen_plan(segments) -> Optional[dict]:
         "id": segment.id,
         "start_sec": segment.start_sec,
         "end_sec": segment.end_sec,
-        "transcript": (segment.transcript or "")[:180],
+        "transcript": (segment.transcript or "")[:480],
     } for segment in segments]
     prompt = (
         "Return JSON {\"decisions\": [...]} for these spoken segments. "
@@ -273,8 +273,10 @@ def qwen_plan(segments) -> Optional[dict]:
         "strategy is STOCK_IMAGE, BROLL_VIDEO, KINETIC_TYPOGRAPHY, STAT_COUNTER, or NO_INTERVENTION. "
         "Use STOCK_IMAGE when the transcript names a concrete visible subject. "
         "Put that subject's words in asset.retrieval_query and two shorter asset.alternate_queries taken from the same transcript. "
-        "Use KINETIC_TYPOGRAPHY or STAT_COUNTER for a number or an abstract phrase. "
-        "display_text must be an exact contiguous phrase from transcript. No extra prose.\n"
+        "Use KINETIC_TYPOGRAPHY or STAT_COUNTER for a number or a spoken claim. "
+        "display_text is an exact contiguous spoken clause of 4 to 8 words that names the subject. "
+        "A greeting or a fragment such as 'we are starting' or 'today where we' is not a title. "
+        "No extra prose.\n"
         + json.dumps(brief, ensure_ascii=False)
     )
     return qwen_json(prompt)

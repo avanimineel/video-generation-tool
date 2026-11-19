@@ -1328,6 +1328,11 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
         write_json(run_dir/'01_planning_windows.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         decisions=editorial_decisions(segments,feedback,finish_brief)
+        domain_name = ""
+        if isinstance(feedback, dict):
+            domain_name = str((feedback.get("domain") or {}).get("domain") or "")
+        from app.services.local_editorial import lengthen_spoken_titles
+        decisions=lengthen_spoken_titles(decisions, segments, domain_name)
         from app.services.local_models import planner_skip_reason
         skipped = planner_skip_reason()
         if skipped:

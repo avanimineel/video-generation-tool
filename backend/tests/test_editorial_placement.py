@@ -203,6 +203,46 @@ def test_local_box_math_and_sample_times():
     assert sample_times([], 10, limit=4)[0] == 0.0
 
 
+def test_kinetic_titles_use_the_medical_clause_instead_of_a_three_word_fragment():
+    from app.services.editorial_planner import Segment
+    from app.services.local_editorial import deterministic_decisions, focus_phrase, visual_query
+    beats = [
+        {"start_sec": 0.34, "end_sec": 1.1, "text": "We are starting"},
+        {"start_sec": 1.1, "end_sec": 1.7, "text": "a new series"},
+        {"start_sec": 1.72, "end_sec": 2.3, "text": "today where we"},
+        {"start_sec": 2.3, "end_sec": 2.8, "text": "are going to"},
+        {"start_sec": 2.8, "end_sec": 3.4, "text": "talk about one"},
+        {"start_sec": 3.4, "end_sec": 4.2, "text": "cancer in particular."},
+        {"start_sec": 4.5, "end_sec": 5.1, "text": "Lung cancer is"},
+        {"start_sec": 5.1, "end_sec": 5.8, "text": "commonest cancer in"},
+        {"start_sec": 5.8, "end_sec": 6.4, "text": "the world."},
+    ]
+    transcript = " ".join(beat["text"] for beat in beats)
+    segment = Segment(
+        id="segment-open",
+        start_sec=0,
+        end_sec=7,
+        transcript=transcript,
+        semantic_summary=transcript,
+        dialogue_beats=beats,
+    )
+    decisions = deterministic_decisions([segment], {"domain": {"domain": "medical"}})
+    placed = [item for item in decisions if item.intervene]
+    assert placed
+    shown = " ".join(item.display_text.lower() for item in placed)
+    assert "lung cancer" in shown
+    assert "we are starting" not in shown
+    assert "today where we" not in shown
+    assert "cancer" in shown
+    assert all(len(item.display_text.split()) >= 4 or "cancer" in item.display_text.lower() for item in placed)
+    assert visual_query("talk about one") == ("", [])
+    assert "cancer" in focus_phrase(transcript, "medical")
+    for item in placed:
+        if item.strategy == "STOCK_IMAGE":
+            assert "talk one" not in item.asset.retrieval_query
+            assert "cancer" in item.asset.retrieval_query
+
+
 def test_visual_query_comes_from_the_spoken_line():
     from app.services.local_editorial import visual_query
     query, alternates = visual_query("Lung cancer is the commonest cancer in men")

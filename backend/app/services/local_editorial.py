@@ -81,7 +81,7 @@ def deterministic_decisions(segments, feedback=None) -> list:
     seen = set()
     domain = str(((feedback or {}).get("domain") or {}).get("domain") or "")
     for segment in segments:
-        choices = _cues(segment)
+        choices = _cues(segment, domain)
         if not choices:
             decisions.append(_quiet(segment, "No number or substantive spoken phrase in this stretch."))
             continue
@@ -90,7 +90,7 @@ def deterministic_decisions(segments, feedback=None) -> list:
             fixed = _saved_transcript(domain, cue["text"])
             if fixed and fixed.get("correction"):
                 search_text = str(fixed["correction"])
-            query, alternates = visual_query(search_text)
+            query, alternates = visual_query(search_text, domain)
             if fixed and fixed.get("note") and str(fixed["note"]) not in alternates:
                 alternates = [str(fixed["note"]), *alternates][:2]
             saved = _saved_example(domain, search_text)
@@ -129,30 +129,25 @@ def auth_failure(message: str) -> bool:
     return "401" in text or "403" in text or "degraded" in text.lower() or "API key not valid" in text or "api_key_invalid" in text
 
 
-def _cues(segment) -> list[dict]:
+def _cues(segment, domain: str = "") -> list[dict]:
     beats = list(getattr(segment, "dialogue_beats", None) or [])
     if not beats and getattr(segment, "transcript", ""):
         beats = [{"start_sec": segment.start_sec, "end_sec": segment.end_sec, "text": segment.transcript}]
     spoken = getattr(segment, "transcript", "") or ""
     chosen = []
     last_end = segment.start_sec
-    for beat in beats:
-        text = str(beat.get("text") or "").strip()
+    for clause in _clauses(beats):
+        text = focus_phrase(clause["text"], domain)
         if not text or weak_title(text) or not verbatim_text(text, spoken):
             continue
-        start = max(float(beat.get("start_sec") or segment.start_sec), last_end)
-        end = min(float(beat.get("end_sec") or start + 1.6), segment.end_sec)
+        start = max(_phrase_start(clause, text), last_end)
+        end = min(float(clause["end_sec"]), segment.end_sec)
         if end < start + 1.0:
-            end = min(segment.end_sec, start + 1.2)
+            end = min(segment.end_sec, start + 1.6)
         if end <= start or start >= segment.end_sec:
             continue
-        if chosen and start < last_end:
-            continue
         number = bool(re.search(r"\d", text))
-        emphasized = str(beat.get("emphasis") or "") == "high"
-        if not number and not emphasized and len(text.split()) < 3:
-            continue
-        if chosen and start - chosen[-1]["start_sec"] < 4.0 and not number:
+        if chosen and start - chosen[-1]["start_sec"] < 1.5 and not number:
             continue
         anchor_id, anchor_word = _anchor(segment, start)
         chosen.append({
@@ -169,6 +164,134 @@ def _cues(segment) -> list[dict]:
         if len(chosen) >= 2:
             break
     return chosen
+
+
+def _clauses(beats) -> list[dict]:
+    """Join adjacent three-word captions into the spoken sentence they came from."""
+    clauses = []
+    current = None
+    for beat in beats:
+        text = str(beat.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(beat.get("start_sec") or 0)
+        end = float(beat.get("end_sec") or start)
+        if current is None:
+            current = {"text": text, "start_sec": start, "end_sec": end}
+            continue
+        ended = current["text"].rstrip().endswith((".", "?", "!", "।"))
+        gap = start - current["end_sec"]
+        if ended or gap > 0.75 or len(current["text"].split()) + len(text.split()) > 18:
+            clauses.append(current)
+            current = {"text": text, "start_sec": start, "end_sec": end}
+            continue
+        current["text"] = f"{current['text']} {text}"
+        current["end_sec"] = end
+    if current:
+        clauses.append(current)
+    return clauses
+
+
+def focus_phrase(text: str, domain: str = "") -> str:
+    """A 4 to 8 word spoken clause. A field term keeps a greeting from becoming the title."""
+    words = [word for word in str(text or "").split() if word]
+    if not words:
+        return ""
+    terms = _domain_terms(domain)
+    best = ""
+    best_score = -1
+    shortest = min(8, len(words))
+    for size in range(shortest, 2, -1):
+        for index in range(0, len(words) - size + 1):
+            window = words[index:index + size]
+            score = _window_score(window, terms)
+            if score > best_score:
+                best_score = score
+                best = " ".join(window)
+    if best_score < 0:
+        return ""
+    return _trim_leading_filler(best)
+
+
+def _window_score(window, terms: set[str]) -> int:
+    tokens = [_norm(word) for word in window]
+    content = [token for token in tokens if token not in _ABSTRACT and len(token) > 2]
+    hits = [token for token in tokens if token in terms]
+    if terms and (_norm(window[0]) in _ABSTRACT or not hits):
+        return -1
+    if not terms and len(content) < 2 and not any(char.isdigit() for char in " ".join(window)):
+        return -1
+    return 12 * len(hits) + 2 * len(content) + len(window)
+
+
+def _trim_leading_filler(text: str) -> str:
+    words = text.split()
+    while len(words) > 4 and _norm(words[0]) in _ABSTRACT:
+        words = words[1:]
+    return " ".join(words)
+
+
+def _phrase_start(clause: dict, phrase: str) -> float:
+    words = clause["text"].split()
+    wanted = [_norm(word) for word in phrase.split()]
+    span = max(0.0, float(clause["end_sec"]) - float(clause["start_sec"]))
+    for index in range(0, len(words) - len(wanted) + 1):
+        if [_norm(word) for word in words[index:index + len(wanted)]] == wanted:
+            return float(clause["start_sec"]) + span * (index / max(1, len(words)))
+    return float(clause["start_sec"])
+
+
+def useful_title(text: str, domain: str = "") -> bool:
+    words = str(text or "").split()
+    if any(char.isdigit() for char in text or ""):
+        return True
+    tokens = [_norm(word) for word in words]
+    if any(token in _domain_terms(domain) for token in tokens):
+        return len(words) >= 3
+    return len(words) >= 4 and any(token not in _ABSTRACT and len(token) > 2 for token in tokens)
+
+
+def lengthen_spoken_titles(decisions, segments, domain: str = ""):
+    """Replace a three-word fragment with the medical or concrete clause around it."""
+    by_id = {segment.id: segment for segment in segments}
+    for decision in decisions:
+        segment = by_id.get(decision.segment_id)
+        if segment is None or not decision.intervene:
+            continue
+        transcript = getattr(segment, "transcript", "") or ""
+        if decision.strategy in ("KINETIC_TYPOGRAPHY", "MIXED_TYPOGRAPHY_TITLE"):
+            if useful_title(decision.display_text, domain):
+                continue
+            phrase = focus_phrase(transcript, domain)
+            if phrase and verbatim_text(phrase, transcript):
+                decision.display_text = phrase
+                decision.anchor_phrase = phrase
+            else:
+                decision.intervene = False
+                decision.strategy = "NO_INTERVENTION"
+                decision.rationale = "This stretch has no concrete spoken phrase to put on screen."
+        elif decision.strategy == "STOCK_IMAGE":
+            query = (decision.asset.retrieval_query if decision.asset else "") or ""
+            if _query_names_subject(query, domain):
+                continue
+            phrase = focus_phrase(transcript, domain) or transcript
+            replacement, alternates = visual_query(phrase, domain)
+            if replacement and decision.asset is not None:
+                decision.asset.retrieval_query = replacement
+                decision.asset.semantic_target = replacement
+                decision.asset.alternate_queries = alternates
+                if phrase and verbatim_text(phrase, transcript):
+                    decision.display_text = phrase
+                    decision.anchor_phrase = phrase
+    return decisions
+
+
+def _query_names_subject(query: str, domain: str) -> bool:
+    tokens = [_norm(word) for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", query or "")]
+    content = [token for token in tokens if token not in _ABSTRACT]
+    if any(token in _domain_terms(domain) for token in content):
+        return True
+    return len(content) >= 2
 
 
 def _anchor(segment, start: float):
@@ -203,10 +326,31 @@ _ABSTRACT = {
     "very", "just", "also", "than", "then", "over", "under", "starting", "start",
     "discuss", "discussion", "talking", "video", "people", "something", "anything",
     "really", "most", "more", "such", "will", "can", "may", "into",
+    "about", "talk", "one", "series", "going", "know", "particular", "new",
+    "surprised", "here", "you", "are", "the", "for", "maximum",
+    "we", "to", "of", "in", "is", "on", "at", "by", "or",
 }
 
 
-def visual_query(text: str) -> tuple[str, list[str]]:
+_DOMAIN_WORDS = {
+    "medical": {
+        "cancer", "tumour", "tumor", "lung", "biopsy", "chemotherapy", "patient",
+        "scan", "x-ray", "xray", "tb", "surgery", "blood", "cough", "symptom",
+        "diagnosis", "treatment", "smoker", "death", "deaths",
+    },
+    "sports": {"goal", "ball", "coach", "tournament", "injury", "team", "match", "score"},
+}
+
+
+def _norm(word: str) -> str:
+    return re.sub(r"[^a-z0-9-]", "", word.lower())
+
+
+def _domain_terms(domain: str) -> set[str]:
+    return set(_DOMAIN_WORDS.get((domain or "").strip().lower(), ()))
+
+
+def visual_query(text: str, domain: str = "") -> tuple[str, list[str]]:
     """Stock search words taken from the spoken line, in the order they were said."""
     words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", text or "")
     content: list[str] = []
@@ -215,7 +359,10 @@ def visual_query(text: str) -> tuple[str, list[str]]:
         if token in _ABSTRACT or token in content:
             continue
         content.append(token)
-    if len(content) < 2:
+    terms = [token for token in content if token in _domain_terms(domain)]
+    if terms:
+        content = terms + [token for token in content if token not in terms]
+    elif len(content) < 2:
         return "", []
     query = " ".join(content[:5])
     alternates = []
