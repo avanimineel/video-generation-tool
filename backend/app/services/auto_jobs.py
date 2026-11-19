@@ -23,6 +23,10 @@ def status(pid):
         job=json.loads(_path(pid).read_text())
         if job.get('status') in ('queued','running'):
             job.update(status='interrupted',error='The backend restarted during processing. Resume automatic editing to continue; saved captions are retained.')
+            try:
+                write_json(_path(pid), job)
+            except OSError:
+                pass
     report=settings.projects_dir/pid/'editorial'/'latest.json'
     if job.get('status')=='running' and report.exists() and report.stat().st_mtime>=job.get('started_epoch',0):
         current=json.loads(report.read_text())

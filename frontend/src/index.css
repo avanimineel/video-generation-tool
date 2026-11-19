@@ -2,6 +2,17 @@
   body {
     user-select: none;
   }
+  [role="dialog"],
+  [role="dialog"] *,
+  [role="alert"],
+  pre,
+  input,
+  textarea {
+    user-select: text;
+  }
+  [role="dialog"] button {
+    user-select: none;
+  }
 }
 
 /* Custom Scrollbars */

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
+from app.services.domain_knowledge import for_planner, normalize_domain, remember_transcript
 from app.services.feedback_service import feedback_service
 
 router = APIRouter(prefix="/api/feedback", tags=["Editor Feedback & AI Training"])
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/feedback", tags=["Editor Feedback & AI Training"
 class DecisionLogRequest(BaseModel):
     project_id: str
     cue_id: str
-    decision: str = Field(..., description="'keep' | 'cut' | 'swap'")
+    decision: str = Field(..., description="'keep' | 'cut' | 'swap' | 'manual_add'")
     reasoning: str = ""
     strength: float = 0.75
     graphic_type: str = "split_screen_vertical"
@@ -27,11 +28,15 @@ class DecisionLogRequest(BaseModel):
     swap_details: Optional[Dict[str, Any]] = None
     final_decision: Optional[Dict[str, Any]] = None
     editor_notes: str = ""
+    edits: Optional[List[Dict[str, Any]]] = None
+    source: Optional[str] = None
 
 @router.post("/decisions")
 async def log_editor_decision(req: DecisionLogRequest):
-    if req.decision.lower() not in ["keep", "cut", "swap"]:
-        raise HTTPException(status_code=400, detail="Decision must be 'keep', 'cut', or 'swap'")
+    if req.decision.lower() not in ["keep", "cut", "swap", "manual_add"]:
+        raise HTTPException(status_code=400, detail="Decision must be 'keep', 'cut', 'swap', or 'manual_add'")
+    if (req.source or "") == "fcpxml_import":
+        raise HTTPException(status_code=400, detail="FCPXML imports are written by the offline importer, not the live editor.")
 
     entry = feedback_service.record_decision(
         project_id=req.project_id,
@@ -47,7 +52,8 @@ async def log_editor_decision(req: DecisionLogRequest):
         selected_asset=req.selected_asset,
         swap_details=req.swap_details,
         final_decision=req.final_decision,
-        editor_notes=req.editor_notes
+        editor_notes=req.editor_notes,
+        edits=req.edits,
     )
     return {"success": True, "decision": entry}
 
@@ -70,6 +76,29 @@ async def get_editor_decisions(
         limit=limit,
         offset=offset
     )
+
+class TranscriptNoteRequest(BaseModel):
+    project_id: str
+    heard: str
+    correction: str = ""
+    issue: str = "wrong_words"
+    note: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+
+
+@router.post("/transcription")
+async def save_transcript_note(req: TranscriptNoteRequest):
+    try:
+        example = remember_transcript(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "example": example}
+
+
+@router.get("/domains/{domain}")
+async def get_domain_knowledge(domain: str):
+    return for_planner(normalize_domain(domain))
 
 @router.get("/stats")
 async def get_feedback_statistics(

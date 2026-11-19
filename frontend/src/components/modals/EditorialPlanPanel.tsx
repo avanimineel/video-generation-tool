@@ -2,12 +2,114 @@ import React, { useEffect, useState } from 'react';
 import { UnderstandingReview } from './UnderstandingReview';
 import { QualityPreview } from './QualityPreview';
 import { api } from '../../services/api';
+import { findNextFreeSlot } from '../../services/safePlacement';
+import { AspectPreset, CenterRect } from '../../types/editorial';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
+import { SegmentPicture } from './SegmentPicture';
+
+function CopyText({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="shrink-0 rounded border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-800 hover:bg-neutral-100"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const area = document.createElement('textarea');
+          area.value = text;
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand('copy');
+          area.remove();
+        }
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+function TranscriptNote({ projectId, heard, startSec, endSec }: { projectId: string; heard: string; startSec: number; endSec: number }) {
+  const [issue, setIssue] = useState<'wrong_words' | 'unreadable' | 'bad_timing'>('wrong_words');
+  const [correction, setCorrection] = useState('');
+  const [note, setNote] = useState('');
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setStatus('');
+    try {
+      const result = await api.saveTranscriptNote({
+        project_id: projectId,
+        heard,
+        correction,
+        issue,
+        note,
+        start_sec: startSec,
+        end_sec: endSec,
+      });
+      setStatus(result.success
+        ? 'Saved for similar sections and the transcription training file.'
+        : (result.detail || 'Could not save this transcription note.'));
+    } catch (err) {
+      setStatus(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5 rounded border border-neutral-200 bg-white p-2 text-neutral-800">
+      <p className="font-semibold text-neutral-900">Transcription correction</p>
+      <p className="text-neutral-600">Heard: {heard || 'This beat has no spoken line.'}</p>
+      <div className="flex flex-wrap gap-1.5">
+        <select
+          value={issue}
+          onChange={(event) => setIssue(event.target.value as 'wrong_words' | 'unreadable' | 'bad_timing')}
+          className="rounded border border-neutral-300 bg-white px-2 py-1 text-[11px]"
+        >
+          <option value="wrong_words">Wrong words</option>
+          <option value="unreadable">Unreadable</option>
+          <option value="bad_timing">Bad timing</option>
+        </select>
+        <input
+          value={correction}
+          onChange={(event) => setCorrection(event.target.value)}
+          placeholder="What was actually said"
+          className="min-w-[12rem] flex-1 rounded border border-neutral-300 px-2 py-1 text-[11px]"
+        />
+      </div>
+      <input
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder="Note for the next similar section"
+        className="w-full rounded border border-neutral-300 px-2 py-1 text-[11px]"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-neutral-500">{status}</span>
+        <button
+          type="button"
+          disabled={busy || !heard || (!correction.trim() && !note.trim())}
+          onClick={() => { void save(); }}
+          className="rounded border border-neutral-300 bg-white px-2 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100 disabled:opacity-50"
+        >
+          {busy ? 'Saving…' : 'Save transcription note'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 interface EditorialPlanPanelProps {
   projectId: string;
   onSeek: (t: number) => void;
   onUpdated: (p: any) => void;
+  graphics?: Array<{ id: string; media_url?: string | null; title?: string }>;
   onBusy: (b: boolean) => void;
   /** Controlled open — lets the status banner CTA open Review without a second entry point. */
   open?: boolean;
@@ -18,6 +120,7 @@ export function EditorialPlanPanel({
   projectId,
   onSeek,
   onUpdated,
+  graphics = [],
   onBusy,
   open: controlledOpen,
   onOpenChange
@@ -70,24 +173,34 @@ export function EditorialPlanPanel({
     }
   }
 
+  const clearDecisions = (report?.decisions || []).filter((d: any) => d.placement?.clear);
+
+  async function logEdits(d: any, decision: 'keep' | 'cut' | 'swap' | 'manual_add', edits?: any[]) {
+    const cueKey = d.graphic_id || `${d.segment_id}_${d.start_sec}`;
+    await api.logDecision({
+      project_id: projectId,
+      cue_id: cueKey,
+      decision,
+      reasoning: d.rationale || d.decision_reason || '',
+      strength: d.utility || 0.85,
+      graphic_type: d.strategy || 'split_screen_vertical',
+      start_sec: d.placement?.start_sec ?? d.start_sec,
+      end_sec: d.placement?.end_sec ?? d.end_sec,
+      search_query: d.asset?.retrieval_query || d.asset?.semantic_target || d.display_text || '',
+      transcript_context: d.anchor_phrase || d.display_text || '',
+      selected_asset: d.asset || {},
+      edits
+    });
+    return cueKey;
+  }
+
   async function handleFeedbackAction(d: any, decision: 'keep' | 'cut') {
     const cueKey = d.graphic_id || `${d.segment_id}_${d.start_sec}`;
     setLoggingDecision(prev => ({ ...prev, [cueKey]: true }));
     setDecisionFeedback(prev => ({ ...prev, [cueKey]: decision }));
     try {
-      await api.logDecision({
-        project_id: projectId,
-        cue_id: cueKey,
-        decision: decision,
-        reasoning: d.rationale || d.decision_reason || '',
-        strength: d.utility || 0.85,
-        graphic_type: d.strategy || 'split_screen_vertical',
-        start_sec: d.start_sec,
-        end_sec: d.end_sec,
-        search_query: d.asset?.retrieval_query || d.asset?.semantic_target || d.display_text || '',
-        transcript_context: d.anchor_phrase || d.display_text || '',
-        selected_asset: d.asset || {}
-      });
+      const hint = decision === 'cut' ? (d.placement?.hits_avoid ? 'overlapping_cue' : 'false_positive') : 'none';
+      await logEdits(d, decision, decision === 'cut' ? [{ type: 'cut', timestamp: new Date().toISOString(), refused_rect: d.placement?.screen_rect, geometric_hint: hint }] : undefined);
     } catch (e) {
       console.error('Failed to log feedback decision:', e);
     } finally {
@@ -103,7 +216,7 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly);
+      const r = await api.runAutoProduction(projectId, planOnly, 'small', undefined, 'full');
       if (!r.success) throw new Error(r.error);
       if (r.project) onUpdated(r.project);
       await refresh();
@@ -223,9 +336,10 @@ export function EditorialPlanPanel({
             </div>
 
             {error && (
-              <p role="alert" className="p-3 my-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
-                {error}
-              </p>
+              <div role="alert" className="p-3 my-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg flex items-start gap-3 select-text">
+                <p className="flex-1 whitespace-pre-wrap break-words">{error}</p>
+                <CopyText text={error} />
+              </div>
             )}
 
             {report && (
@@ -241,8 +355,13 @@ export function EditorialPlanPanel({
                     )}
                   </div>
                   {report.decisions && (
-                    <span className="text-neutral-500 font-mono text-[11px]">
-                      {report.decisions.length} interventions planned
+                    <span className="flex items-center gap-2 text-neutral-500 font-mono text-[11px]">
+                      <span>{report.decisions.length} interventions planned</span>
+                      {clearDecisions.length > 0 && (
+                        <button type="button" className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-sans font-semibold text-neutral-800 hover:bg-neutral-100" onClick={() => { clearDecisions.forEach((d: any) => void handleFeedbackAction(d, 'keep')); }}>
+                          Accept {clearDecisions.length} clear cues
+                        </button>
+                      )}
                     </span>
                   )}
                 </div>
@@ -254,9 +373,10 @@ export function EditorialPlanPanel({
                 )}
 
                 {report.errors?.map((e: string, i: number) => (
-                  <p key={i} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
-                    {e}
-                  </p>
+                  <div key={i} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg flex items-start gap-3 select-text">
+                    <p className="flex-1 whitespace-pre-wrap break-words">{e}</p>
+                    <CopyText text={e} />
+                  </div>
                 ))}
 
                 {/* DECISION CARDS */}
@@ -331,15 +451,47 @@ export function EditorialPlanPanel({
                           {d.decision_reason || d.rationale}
                         </p>
 
+                        <SegmentPicture
+                          projectId={projectId}
+                          graphicId={d.graphic_id}
+                          startSec={d.placement?.start_sec ?? d.start_sec}
+                          endSec={d.placement?.end_sec ?? d.end_sec}
+                          transcript={d.anchor_phrase || d.display_text || ''}
+                          initialQuery={d.asset?.retrieval_query || d.display_text || ''}
+                          currentUrl={d.placed_media?.media_url || graphics.find((item) => item.id === d.graphic_id)?.media_url}
+                          onReplaced={(project) => { if (project) onUpdated(project); }}
+                        />
+
+                        {Array.isArray(d.placement?.screen_rect) && (
+                          <div className="flex items-center justify-between text-[11px] text-neutral-600">
+                            <span>{d.placement.clear ? 'Clear of faces and cuts' : d.placement.hits_avoid ? 'Overlaps a protected region' : 'Crosses a camera cut'}</span>
+                            <button type="button" className="rounded border border-neutral-300 px-2 py-0.5 hover:bg-neutral-100" onClick={async () => {
+                              const preset = (d.placement.preset || 'reels') as AspectPreset;
+                              const slot = findNextFreeSlot(d.placement.screen_rect as CenterRect, (d.placement.avoid_rects || []) as CenterRect[], preset);
+                              if (!slot) return;
+                              await logEdits(d, 'swap', [{ type: 'move', timestamp: new Date().toISOString(), old_rect: d.placement.screen_rect, new_rect: slot, old_rect_hit_avoid: Boolean(d.placement.hits_avoid) }]);
+                            }}>Next free slot</button>
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between text-[11px] text-neutral-500 pt-1 border-t border-neutral-100">
                           <span>Timing: {d.timing_method}</span>
                           <span>Utility Score: {typeof d.utility === 'number' ? d.utility.toFixed(2) : d.utility}</span>
                           <span>Layout: {d.composition?.layout || 'overlay'}</span>
                         </div>
 
-                        <details className="mt-1 text-[11px] text-neutral-500">
+                        <details className="mt-1 text-[11px] text-neutral-500 select-text">
                           <summary className="cursor-pointer hover:text-neutral-800">Technical Details</summary>
-                          <pre className="whitespace-pre-wrap break-words mt-1 p-2 bg-neutral-50 rounded border text-[10px] font-mono">
+                          <TranscriptNote
+                            projectId={projectId}
+                            heard={d.anchor_phrase || d.display_text || ''}
+                            startSec={d.placement?.start_sec ?? d.start_sec}
+                            endSec={d.placement?.end_sec ?? d.end_sec}
+                          />
+                          <div className="mt-2 flex justify-end">
+                            <CopyText text={JSON.stringify(d, null, 2)} />
+                          </div>
+                          <pre className="whitespace-pre-wrap break-words mt-1 p-2 bg-neutral-50 rounded border text-[10px] font-mono select-text">
                             {JSON.stringify(d, null, 2)}
                           </pre>
                         </details>

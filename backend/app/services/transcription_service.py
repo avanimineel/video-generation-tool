@@ -15,6 +15,17 @@ from app.services.whisper_device import (
 
 logger = get_logger(__name__)
 
+CAPTION_PROMPTS = {
+    "general": "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms.",
+    "medical": "Clinical discussion. Transcribe the diagnosis, symptoms, treatment and anatomy faithfully. Keep terms such as cancer, tumour, biopsy, chemotherapy, patient, lung, scan and x-ray.",
+    "sports": "Sports commentary. Transcribe the match, players, score and action faithfully. Keep terms such as goal, ball, coach, tournament, injury and team.",
+}
+
+
+def caption_prompt(domain: Optional[str]) -> str:
+    from app.services.domain_knowledge import normalize_domain
+    return CAPTION_PROMPTS[normalize_domain(domain)]
+
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
     # number is never split across subtitle boxes; no spoken text is changed.
@@ -276,12 +287,33 @@ class TranscriptionService:
         size = max(1, min(20, words_per_caption))
         return [words[i:i + size] for i in range(0, len(words), size)]
 
+    def chunk_spoken_phrases(self, words: List[Dict[str, Any]], max_words: int = 10, pause: float = 0.45) -> List[List[Dict[str, Any]]]:
+        """Keep a spoken clause together. A fixed three-word box is only for an explicit size."""
+        if not words:
+            return []
+        chunks: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        limit = max(4, min(16, max_words))
+        for word in words:
+            if current:
+                gap = float(word.get("start") or 0) - float(current[-1].get("end") or 0)
+                ended = str(current[-1].get("word") or "").rstrip().endswith((".", "?", "!", "।"))
+                if gap >= pause or ended or len(current) >= limit:
+                    chunks.append(current)
+                    current = []
+            current.append(word)
+        if current:
+            chunks.append(current)
+        return chunks
+
     def transcribe_with_whisper(
         self,
         media_path: str,
         words_per_caption: int = 3,
         task: str = 'translate',
-        model_size: Optional[str] = None
+        model_size: Optional[str] = None,
+        domain: Optional[str] = None,
+        phrase_captions: bool = False,
     ) -> Tuple[str, List[CaptionItem]]:
         target_model = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
         model = self.get_whisper_model(target_model)
@@ -290,7 +322,7 @@ class TranscriptionService:
 
         # Default to 'translate' for high-accuracy English subtitles from Hindi/Hinglish speech
         whisper_task = task if task in ['transcribe', 'translate'] else 'translate'
-        prompt = "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms."
+        prompt = caption_prompt(domain)
 
         # Fast 16kHz mono audio extraction: avoids slow video container demuxing in Python
         audio_target = media_path
@@ -391,8 +423,7 @@ class TranscriptionService:
             if not seg_words:
                 continue
 
-            # Break segment into sentence-aware 3-5 word subtitle chunks
-            chunks = self.chunk_segment_words(seg_words, words_per_caption)
+            chunks = self.chunk_spoken_phrases(seg_words) if phrase_captions else self.chunk_segment_words(seg_words, words_per_caption)
 
             for chunk in chunks:
                 if not chunk:

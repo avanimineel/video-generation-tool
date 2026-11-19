@@ -12,6 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.core.config import settings
+from app.services.domain_knowledge import project_domain, remember, same_domain, for_planner
+
+def is_live_feedback(row: Dict[str, Any]) -> bool:
+    """Imported timelines are ground truth for the scorecard, not planner context."""
+    return row.get("source") != "fcpxml_import"
+
+def _append_edits(existing: Optional[Dict[str, Any]], incoming: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Keep earlier drags and retimes when a later decision is saved for the same cue."""
+    history = list((existing or {}).get("edits") or [])
+    for edit in incoming or []:
+        history.append(edit)
+    return history
 
 def serialized_feedback_write(fn):
     """Keep simultaneous feedback submissions from overwriting each other."""
@@ -76,18 +88,20 @@ class FeedbackService:
         return content
 
     def planning_feedback(self, project_id):
-        rows = self.query_decisions(project_id=project_id, limit=500)['decisions']
+        domain = project_domain(project_id)
+        rows = [row for row in self.query_decisions(project_id=project_id, limit=500)['decisions'] if is_live_feedback(row)]
         rows.sort(key=lambda r:r.get('updated_at',''), reverse=True)
         decisions_summary = [{k:r.get(k) for k in ('id','cue_id','decision','start_sec','end_sec','transcript_context','graphic_type','selected_asset','editor_notes','reasoning','swap_details')} for r in rows[:100]]
-        # Other projects teach editing preferences, not facts about this speaker.
-        others = [r for r in self._load_all() if r.get('project_id') != project_id and r.get('editor_notes')]
+        # Other videos in this field teach editing preferences, not facts about this speaker.
+        others = [r for r in self._load_all() if r.get('project_id') != project_id and r.get('editor_notes') and is_live_feedback(r) and same_domain(r, domain)]
         others.sort(key=lambda r:r.get('updated_at',''), reverse=True)
         examples = [{k:r.get(k) for k in ('project_id','decision','transcript_context','editor_notes','graphic_type')} for r in others[:30]]
         guidance = self.get_guidance(project_id)
         return {
             'decisions': decisions_summary,
             'guidance': guidance,
-            'cross_project_examples': examples
+            'cross_project_examples': examples,
+            'domain': for_planner(domain),
         }
 
     @serialized_feedback_write
@@ -106,7 +120,8 @@ class FeedbackService:
         selected_asset: Optional[Dict[str, Any]] = None,
         swap_details: Optional[Dict[str, Any]] = None,
         final_decision: Optional[Dict[str, Any]] = None,
-        editor_notes: str = ""
+        editor_notes: str = "",
+        edits: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Records or updates an editor's Keep, Cut, or Swap judgment.
@@ -139,6 +154,9 @@ class FeedbackService:
             "swap_details": swap_details or {},
             "final_decision": final_decision or {},
             "editor_notes": editor_notes,
+            "source": "live_editor",
+            "domain_profile": project_domain(project_id),
+            "edits": _append_edits(all_decisions[existing_idx] if existing_idx >= 0 else None, edits),
             "created_at": all_decisions[existing_idx]["created_at"] if existing_idx >= 0 else now_iso,
             "updated_at": now_iso
         }
@@ -149,6 +167,7 @@ class FeedbackService:
             all_decisions.insert(0, entry)
 
         self._save_all(all_decisions)
+        remember(entry)
 
         # Also write to project-level directory
         try:

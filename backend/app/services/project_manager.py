@@ -9,6 +9,10 @@ from uuid import uuid4
 class ProjectConflict(ValueError):
     pass
 
+def _project_domain(value: str) -> str:
+    from app.services.domain_knowledge import normalize_domain
+    return normalize_domain(value)
+
 def same_project_content(left, right):
     return left.model_dump(exclude={"updated_at"}) == right.model_dump(exclude={"updated_at"})
 
@@ -59,7 +63,7 @@ class ProjectManager:
         (pdir / 'thumbnails').mkdir(parents=True, exist_ok=True)
         return pdir
 
-    def create_project(self, name: str, aspect_ratio: str = '9:16', source_media_path: Optional[str] = None) -> ProjectState:
+    def create_project(self, name: str, aspect_ratio: str = '9:16', source_media_path: Optional[str] = None, domain_profile: str = 'general') -> ProjectState:
         now_str = datetime.now().isoformat()
         project_id = f"{sanitize_folder_name(name)}_{int(datetime.now().timestamp())}_{uuid4().hex[:8]}"
         pdir = self._get_project_dir(project_id)
@@ -71,7 +75,7 @@ class ProjectManager:
             updated_at=now_str,
             source_media_path=source_media_path,
             duration_seconds=0.0,
-            settings=ProjectSettings(aspect_ratio=aspect_ratio),
+            settings=ProjectSettings(aspect_ratio=aspect_ratio, domain_profile=_project_domain(domain_profile)),
             captions=[],
             graphics=[],
             detected_language='en'

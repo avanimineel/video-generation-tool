@@ -576,8 +576,8 @@ export const api = {
     return getInitialProjectsList();
   },
 
-  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string): Promise<ProjectState> {
-    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath})});
+  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string, domain: 'general' | 'medical' | 'sports' = 'general'): Promise<ProjectState> {
+    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath,domain_profile:domain})});
     if(!res.ok)throw new Error(`Could not create project (${res.status}).`);
     const data=await res.json();saveLocalProject(data);return data;
   },
@@ -707,12 +707,12 @@ export const api = {
     }
   },
 
-  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void): Promise<any> {
+  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/media/${projectId}/auto-produce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force, model_size: modelSize })
+        body: JSON.stringify({ force, model_size: modelSize, ...(mode ? { mode } : {}) })
       });
       if (res.ok) {
         const response = await res.json();
@@ -1239,6 +1239,27 @@ export const api = {
     return await res.json();
   },
 
+  async replaceVisual(projectId: string, body: {
+    graphic_id?: string;
+    start_sec: number;
+    end_sec: number;
+    transcript: string;
+    editor_note: string;
+    search_query: string;
+    asset: any;
+  }): Promise<{ success: boolean; graphic_id: string; media_url: string; project: any }> {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/replace-visual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Could not replace this image' }));
+      throw new Error(err.detail || 'Could not replace this image');
+    }
+    return await res.json();
+  },
+
   async generateAIImage(
     projectId: string,
     prompt: string,
@@ -1638,10 +1659,31 @@ export const api = {
   },
 
   // 7. Editor Feedback & AI Training Endpoints
+  async saveTranscriptNote(data: {
+    project_id: string;
+    heard: string;
+    correction?: string;
+    issue?: 'wrong_words' | 'unreadable' | 'bad_timing';
+    note?: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ success: boolean; example?: unknown; detail?: string }> {
+    const res = await fetch(`${API_BASE}/feedback/transcription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, detail: body.detail || 'Could not save this transcription note.' };
+    }
+    return body;
+  },
+
   async logDecision(data: {
     project_id: string;
     cue_id: string;
-    decision: 'keep' | 'cut' | 'swap';
+    decision: 'keep' | 'cut' | 'swap' | 'manual_add';
     reasoning?: string;
     strength?: number;
     graphic_type?: string;
@@ -1653,6 +1695,7 @@ export const api = {
     swap_details?: any;
     final_decision?: any;
     editor_notes?: string;
+    edits?: unknown[];
   }): Promise<{ success: boolean; decision: EditorialDecision }> {
     try {
       const res = await fetch(`${API_BASE}/feedback/decisions`, {

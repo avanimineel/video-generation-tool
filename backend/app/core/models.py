@@ -121,6 +121,7 @@ class ProjectSettings(BaseModel):
     davinci_project_name: Optional[str] = None
     davinci_timeline_name: Optional[str] = None
     sub_lines_mode: int = 1
+    domain_profile: str = "general"
 
 # --- Full Project State (Saved to project.json & SQLite) ---
 

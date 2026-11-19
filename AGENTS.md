@@ -7,6 +7,7 @@ Welcome to the **DaVinci Resolve AI Editing Companion** project directory.
 1. **Light Theme Design System**:
    * Maintain the clean, modern light-theme UI tokens across all React components (`bg-white`, `border-neutral-200`, `text-neutral-900`, neutral hover states).
    * Ensure sidebar columns retain their collapsible behavior and toggle state.
+   * Graphic timing and placement follow `.agents/skills/editorial-placement/SKILL.md`. Safe zones and snapping stay deterministic. Timeline import stays out of the live planner.
 
 2. **Media Search Priority Order**:
    * Media provider orchestration strictly follows:

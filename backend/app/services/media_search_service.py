@@ -597,6 +597,9 @@ class MediaSearchService:
         from typing import Tuple
         if not candidates:
             return {}, "No candidates provided"
+        from app.services.local_editorial import provider_degraded
+        if provider_degraded("gemini"):
+            return self._review_with_siglip(candidates, search_query)
         if not strict and (len(candidates) == 1 or not visual_reasoning):
             return candidates[0], "Direct single candidate match"
 
@@ -681,6 +684,41 @@ class MediaSearchService:
                     pass
 
         return ({}, "Visual review failed; no unverified asset inserted") if strict else (candidates[0], "Candidate #1 (Default top relevance hit)")
+
+    def _review_with_siglip(self, candidates: List[Dict[str, Any]], search_query: str) -> Tuple[Dict[str, Any], str]:
+        """Pick a fresh internet image against the spoken query when Gemini cannot review."""
+        from io import BytesIO
+        import requests
+        from PIL import Image
+        from app.services.local_models import siglip_choose
+        images = []
+        indexed = []
+        for candidate in candidates[:8]:
+            url = candidate.get("thumb_url") or candidate.get("url")
+            if not url or not str(url).startswith("http"):
+                continue
+            try:
+                response = requests.get(url, timeout=4.0, headers={"User-Agent": "Resolve-Companion/1.0"})
+            except requests.RequestException:
+                continue
+            if response.status_code != 200 or len(response.content) < 100:
+                continue
+            try:
+                images.append(Image.open(BytesIO(response.content)).convert("RGB"))
+            except Exception:
+                continue
+            indexed.append(candidate)
+        if not images:
+            return {}, "No decodable thumbnails available for visual review"
+        try:
+            choice, score = siglip_choose(images, search_query)
+        except Exception as exc:
+            from app.services.editorial_planner import safe_error
+            return {}, "SigLIP review failed: " + safe_error(exc)
+        if choice < 0:
+            return {}, f"SigLIP rejected the stock pool (best {score:.3f})"
+        chosen = indexed[choice]
+        return chosen, f"SigLIP match {score:.3f} for {search_query}"
 
     def auto_match_for_caption(
         self,

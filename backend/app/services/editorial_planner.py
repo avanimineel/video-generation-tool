@@ -166,6 +166,9 @@ def configured_key(name):
 
 
 def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=None):
+    from app.services.local_editorial import note_provider_failure, provider_degraded
+    if provider_degraded('gemini'):
+        raise ValueError('Gemini is degraded after an authentication failure.')
     key=configured_key('GEMINI_API_KEY')
     if not key:raise ValueError('GEMINI_API_KEY is missing or is a test placeholder.')
     config={'responseMimeType':'application/json','temperature':.2}
@@ -188,6 +191,9 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]+(image_parts or [])}],'generationConfig':config},timeout=(10,timeout))
                 if response.status_code!=200:
                     err_msg = f'{model} HTTP {response.status_code}: {safe_error(response.text)}'
+                    if response.status_code in (401, 403):
+                        note_provider_failure('gemini', response.status_code)
+                        raise ValueError(err_msg)
                     if response.status_code in (429, 503, 504) and attempt == 0:
                         time.sleep(1.5)
                         continue
@@ -209,6 +215,47 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
 
 def transcript_rows(captions):
     return [dict(start_sec=c.start,end_sec=c.end,text=c.translated_text or c.text,words=[w.model_dump() for w in c.words]) for c in captions]
+
+
+def speech_only_understanding(captions, duration, window=8.0):
+    """Segments from speech when the picture index is unavailable.
+
+    Observations stay empty so the planner knows it has not seen the frame.
+    """
+    rows = []
+    bucket = []
+    start = None
+    end = None
+    def flush():
+        if start is None or not bucket:
+            return
+        stop = min(float(duration), max(end, start + 0.4))
+        if stop <= start:
+            return
+        text = ' '.join(bucket)
+        rows.append({
+            'start_sec': float(start),
+            'end_sec': stop,
+            'transcript': text,
+            'semantic_summary': text[:240],
+            'observations': [],
+            'understanding_warnings': ['Picture index unavailable; this segment is speech only.'],
+        })
+    for caption in captions:
+        text = (getattr(caption, 'translated_text', None) or getattr(caption, 'text', '') or '').strip()
+        if not text:
+            continue
+        if start is None:
+            start = float(caption.start)
+        bucket.append(text)
+        end = float(caption.end)
+        if end - start >= window:
+            flush()
+            bucket = []
+            start = None
+            end = None
+    flush()
+    return rows
 
 
 def normalize_segments(raw,captions,duration):
@@ -402,8 +449,11 @@ Spoken Text & Query Precision:
             guidance = feedback.get('guidance', '').strip()
             decisions_list = feedback.get('decisions', [])
             examples = feedback.get('cross_project_examples', [])
+            domain_profile = feedback.get('domain') or {}
+            if domain_profile:
+                prompt += '\nDomain profile for this field only. Keep graphics off its avoid classes. Treat keep and cut counts as style, never as facts about this speaker or patient.\n' + json.dumps(domain_profile, ensure_ascii=False)
             if examples:
-                prompt += '\nEditing examples from OTHER videos: learn clarity, relevance and pacing preferences only. Do not transfer their patient identities, diagnoses, exact words, geography or factual corrections to this video.\n' + json.dumps(examples, ensure_ascii=False)
+                prompt += '\nEditing examples from OTHER videos in the same field: learn clarity, relevance and pacing preferences only. Do not transfer their patient identities, diagnoses, exact words, geography or factual corrections to this video.\n' + json.dumps(examples, ensure_ascii=False)
 
             if guidance:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"
@@ -414,7 +464,33 @@ Spoken Text & Query Precision:
 
     prompt += "\nTitle quality rules: emphasize a substantive revelation, named subject, condition, contrast, consequence or meaningful quantity. Never highlight generic references/transitions such as This actor, later he himself, in this video, or today we discuss. Transcription gibberish and unexplained technical terms require review, not typographic emphasis. Choose a complete meaningful spoken clause, preserving pronouns, negation and relationships. Never remove stopwords or assemble keywords. Short complete headings and spoken numbers are allowed; the three-word rule applies only to subtitles. No incomplete relationship such as 'is negative' without its subject. Avoid overlapping titles. Consecutive spoken list items can have consecutive synchronized titles without an artificial gap. A visual must show the actual action/object clearly, not a metaphor guessed from one shared word. Preserve explicitly stated country, patient context and recovery-versus-illness distinction. Generic stock must not impersonate a real patient. More relevant opportunities are welcome; arbitrary coverage percentages are not a reason to add anything.\n"
     prompt += '\nAllowed strategies: ' + ', '.join(PLANNABLE) + '\nSemantic timeline with dialogue beats:\n' + json.dumps([s.model_dump() for s in segments], ensure_ascii=False)
-    decisions=PlanResponse.model_validate(gemini_json(prompt,PlanResponse.model_json_schema())).decisions
+    try:
+        from app.services.local_models import clear_planner_skip
+        clear_planner_skip()
+        decisions=PlanResponse.model_validate(gemini_json(prompt,PlanResponse.model_json_schema())).decisions
+    except ValueError as exc:
+        from app.services.local_editorial import auth_failure, deterministic_decisions, local_llm_json
+        if not auth_failure(str(exc)):
+            raise
+        from app.services.local_models import qwen_plan
+        try:
+            planned = qwen_plan(segments)
+        except Exception:
+            planned = None
+        if planned:
+            try:
+                chosen = PlanResponse.model_validate(planned).decisions
+                if any(item.strategy in ("STOCK_IMAGE", "BROLL_VIDEO") and (item.asset.retrieval_query or "").strip() for item in chosen):
+                    return chosen
+            except (ValueError, TypeError):
+                pass
+        local = local_llm_json(prompt, PlanResponse.model_json_schema())
+        if local:
+            try:
+                return PlanResponse.model_validate(local).decisions
+            except (ValueError, TypeError):
+                pass
+        return deterministic_decisions(segments, feedback)
     expected={s.id for s in segments}
     decisions=[d for d in decisions if d.segment_id in expected]
     missing=expected-{d.segment_id for d in decisions}
@@ -677,16 +753,24 @@ def ground(d,seg,captions):
                 matches.append(c_start)
                 break
     audio_match = next((w for w in seg.audio_cues if w['id']==d.audio_anchor_id and tokens(w['word'])==tokens(d.audio_anchor_word) and w.get('usable')),None)
+    phrase_start = min(matches, key=lambda t: abs(t - d.start_sec)) if matches else None
     if seg.audio_cues and d.intervene and d.strategy in ('BROLL_VIDEO','STOCK_IMAGE','KINETIC_TYPOGRAPHY','MIXED_TYPOGRAPHY_TITLE','STAT_COUNTER','DATA_VISUALIZATION','CHART'):
-        if not audio_match:
+        if d.audio_anchor_id is not None and not audio_match:
             return None, 'Original-language speech anchor missing or invalid; needs alignment review'
         function_words={'अगर','और','या','तो','कि','के','की','का','में','से','है','हैं','यह','वह','आप','हम','if','and','or','the','a','an','is','are','of','in','to'}
-        if d.cue_kind in ('noun','place','person','object') and audio_match['word'].strip('.,!?।').casefold() in function_words:
-            return None, 'Noun cue was linked to a grammatical word rather than the named subject; needs alignment review'
-        start=audio_match['start']
-        method='original-language ASR word anchor (tolerance unverified)'
+        distant = audio_match is not None and phrase_start is not None and abs(audio_match['start'] - phrase_start) > 1.0
+        if audio_match and not distant:
+            if d.cue_kind in ('noun','place','person','object') and audio_match['word'].strip('.,!?।').casefold() in function_words:
+                return None, 'Noun cue was linked to a grammatical word rather than the named subject; needs alignment review'
+            start=audio_match['start']
+            method='original-language ASR word anchor (tolerance unverified)'
+        elif phrase_start is not None:
+            start = phrase_start
+            method = 'exact word timestamps'
+        else:
+            return None, 'Original-language speech anchor missing or invalid; needs alignment review'
     elif matches:
-        start = min(matches, key=lambda t: abs(t - d.start_sec))
+        start = phrase_start
         method = 'exact word timestamps'
     elif want and d.cue_kind != 'phrase':
         return None, 'Cue needs usable word timestamps; sentence-level fallback would mistime this visual'
@@ -708,6 +792,10 @@ def ground(d,seg,captions):
     if micro:lo=.3
     lo=max(lo,d.comprehension_seconds or 0)
     hi=max(hi,lo)
+    if d.cue_kind == 'phrase' and d.strategy in ('KINETIC_TYPOGRAPHY', 'MIXED_TYPOGRAPHY_TITLE'):
+        # A planning beat is shorter than the sentence. Keep the title through the spoken clause.
+        end = max(end, min(d.end_sec, start + hi))
+        limit = max(limit, end)
     end=min(limit,start+max(lo,min(hi,end-start)))
     if end-start<lo:
         return None,'Insufficient duration remaining in segment'
@@ -986,6 +1074,7 @@ def execute_plan(state,rows,run_dir):
     from app.core.models import MotionGraphicItem
     graphics=[];assets=[];logs=[]
     from app.services.feedback_service import feedback_service
+    from app.services.editorial_placement import place_decision
     fb_data = feedback_service.planning_feedback(state.id)
     fb_rows = fb_data.get('decisions', []) if isinstance(fb_data, dict) else fb_data
     used = {f['selected_asset'].get('url') for f in fb_rows if isinstance(f, dict) and f.get('decision') in ('cut','swap') and f.get('selected_asset')}
@@ -1068,7 +1157,10 @@ def execute_plan(state,rows,run_dir):
                 row.update(status='rejected_assets',decision_reason='No matching graphic found; no text substitute inserted.');continue
         else:
             row.update(status='needs_source_or_renderer',decision_reason=f'{strategy} requires a verified source or supported renderer. No invented substitute was inserted.');continue
-        row['status']='inserted';row['graphic_id']=g.id;graphics.append(g)
+        place_decision(row, g, state)
+        row['status']='inserted';row['graphic_id']=g.id
+        row['placed_media']={'media_url': g.media_url, 'media_type': g.media_type, 'title': g.title, 'provider': g.source_name}
+        graphics.append(g)
         logs.append(dict(cue_index=i+1,graphic_id=g.id,template_id=g.template_id,template_name=g.title,timestamp_start=g.start,timestamp_end=g.end,timestamp_formatted=f'{int(g.start//60):02d}:{g.start%60:05.2f}',duration_sec=g.end-g.start,trigger_term=row['anchor_phrase'],cue_category=row['intent'],timestamp_logic=row['timing_method'],image_logic=row['rationale'],layout_logic=json.dumps(row['realized_composition']),pacing_logic=row['decision_reason'],search_query=row['asset']['retrieval_query'],source_provider=selected.get('provider','') if selected else '',media_url=g.media_url or '',media_type=g.media_type,strength=row['utility'],reasoning=row['rationale']))
     write_json(run_dir/'05_placement.json',rows)
     write_json(run_dir/'06_timeline.json',[g.model_dump() for g in graphics])
@@ -1080,7 +1172,52 @@ def execute_plan(state,rows,run_dir):
     from app.services.subject_layers import prepare_subject_layers,place_titles_face_safe
     place_titles_face_safe(state,titles)
     prepare_subject_layers(state,graphics)
+    try:
+        from app.services.local_models import release_vision
+        release_vision()
+    except Exception:
+        pass
     return graphics,logs
+
+
+def _ensure_local_index(state, source, run_dir, report):
+    """YOLO, Florence, and SigLIP still run when a cached transcript understanding is reused."""
+    ingestion = dict(state.ai_ingestion or {})
+    if ingestion.get('detection_frames') or not source.is_file():
+        return
+    from app.core.config import settings
+    from app.services.local_models import usable_picture_index
+    cache = settings.projects_dir / state.id / 'semantic_cache' / 'local_picture_index.json'
+    if cache.is_file():
+        try:
+            saved = json.loads(cache.read_text())
+            if usable_picture_index(saved):
+                state.ai_ingestion = {**ingestion, **{key: saved[key] for key in ('shot_cuts', 'detection_frames', 'picture_index') if key in saved}}
+                report['picture_index'] = saved.get('picture_index')
+                report['shot_cuts'] = saved.get('shot_cuts') or []
+                report['shot_captions'] = saved.get('shot_captions') or []
+                return
+        except (ValueError, TypeError, OSError):
+            pass
+    from app.services.editorial_features import detect_shot_cuts
+    from app.services.local_models import index_picture
+    cuts = list(ingestion.get('shot_cuts') or []) or detect_shot_cuts(str(source), threshold=0.3)
+    domain = getattr(getattr(state, 'settings', None), 'domain_profile', None) or 'general'
+    try:
+        indexed = index_picture(str(source), cuts, float(state.duration_seconds or 0), domain, run_dir / 'local_frames')
+    except Exception as exc:
+        report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(exc))
+        return
+    saved = {'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'shot_captions': indexed['captions'], 'picture_index': 'local_yolo_florence_siglip'}
+    if usable_picture_index(saved):
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        write_json(cache, saved)
+    elif indexed.get('error'):
+        report.setdefault('errors', []).append(str(indexed['error']))
+    state.ai_ingestion = {**ingestion, 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': saved['picture_index']}
+    report['shot_cuts'] = cuts
+    report['shot_captions'] = indexed['captions']
+    report['picture_index'] = saved['picture_index']
 
 
 def run_editorial(state,media_file,protected=(),plan_only=False):
@@ -1134,11 +1271,38 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     except (ValueError,TypeError):continue
                 if raw is not None: break
         if raw is None:
-            result=tl.analyze_video(media_file,state.duration_seconds)
-            asset_id=result.get('asset_id')
-            if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
-            if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
-            raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
+            try:
+                from app.services.local_editorial import provider_degraded
+                if provider_degraded('twelve_labs'):
+                    raise ValueError('Twelve Labs is degraded after an authentication failure.')
+                result=tl.analyze_video(media_file,state.duration_seconds)
+                asset_id=result.get('asset_id')
+                if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
+                if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
+                raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
+            except Exception as exc:
+                from app.services.editorial_features import detect_shot_cuts
+                from app.services.local_editorial import note_provider_failure
+                message = safe_error(exc)
+                if '401' in message or '403' in message or 'api_key_invalid' in message:
+                    note_provider_failure('twelve_labs', 401)
+                cuts = detect_shot_cuts(str(media_file), threshold=0.3) if source.is_file() else []
+                indexed = {'frames': [], 'captions': []}
+                if source.is_file():
+                    try:
+                        from app.services.local_models import index_picture
+                        indexed = index_picture(str(media_file), cuts, float(state.duration_seconds or 0), getattr(getattr(state, 'settings', None), 'domain_profile', None) or 'general', run_dir / 'local_frames')
+                    except Exception as vision_exc:
+                        report.setdefault('errors', []).append('Local vision skipped: ' + safe_error(vision_exc))
+                state.ai_ingestion = {**(state.ai_ingestion or {}), 'shot_cuts': cuts, 'detection_frames': indexed['frames'], 'picture_index': 'local_yolo_florence_siglip'}
+                detail = (' ' + indexed['error']) if indexed.get('error') else ''
+                report['errors'].append('Picture index unavailable ('+message+'). Local shot captions: '+str(len(indexed['captions']))+'. Shot cuts: '+str(len(cuts))+'.'+detail)
+                report['understanding_source']='local_models'
+                report['shot_cuts']=cuts
+                report['shot_captions']=indexed['captions']
+                raw=speech_only_understanding(state.captions,state.duration_seconds)
+                if not raw:raise ValueError('No spoken captions were available after the picture index failed.') from exc
+        _ensure_local_index(state, source, run_dir, report)
         # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
         write_json(run_dir/'01_understanding_raw.json',raw)
         normalize_segments(raw,state.captions,state.duration_seconds)
@@ -1176,6 +1340,16 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
         write_json(run_dir/'01_planning_windows.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         decisions=editorial_decisions(segments,feedback,finish_brief)
+        domain_name = ""
+        if isinstance(feedback, dict):
+            domain_name = str((feedback.get("domain") or {}).get("domain") or "")
+        from app.services.local_editorial import lengthen_spoken_titles, promote_sentence_titles
+        decisions=lengthen_spoken_titles(decisions, segments, domain_name)
+        decisions=promote_sentence_titles(decisions, segments, state.captions, domain_name)
+        from app.services.local_models import planner_skip_reason
+        skipped = planner_skip_reason()
+        if skipped:
+            report.setdefault('errors', []).append(skipped)
         decisions=preserve_number_enumerations(segments,decisions)
         decisions=add_spoken_figures(segments,decisions,state.captions)
         decisions=repair_sparse_schedule(segments,decisions,state.captions,protected_list)

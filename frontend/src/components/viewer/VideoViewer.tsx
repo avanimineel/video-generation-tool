@@ -16,6 +16,7 @@ interface VideoViewerProps {
   activeLanguageView?: 'english' | 'hindi';
   onUpdateSettings?: (settings: ProjectSettings) => void;
   onUpdateGraphic?: (graphic: MotionGraphicItem) => void;
+  selectedGraphicId?: string | null;
 }
 
 // The project's licensed music bed, kept in step with the playhead. While a caption is on screen the
@@ -46,7 +47,8 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   onUpdateCaptionPosition,
   activeLanguageView = 'english',
   onUpdateSettings,
-  onUpdateGraphic
+  onUpdateGraphic,
+  selectedGraphicId = null
 }) => {
   const [playbackError,setPlaybackError]=useState('');
   const playbackUrl=project.source_media_path ? `${api.getProxyUrl(project.id)}?preview=2&source=${encodeURIComponent(project.source_media_path)}` : project.video_url;
@@ -379,6 +381,7 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
           onSelectCaption={onSelectCaption}
           onUpdateCaptionPosition={onUpdateCaptionPosition}
           activeLanguageView={activeLanguageView}
+          selectedGraphicId={selectedGraphicId}
         />
       </div>
       </div>

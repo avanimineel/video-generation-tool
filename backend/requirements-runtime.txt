@@ -3,6 +3,12 @@ imageio-ffmpeg==0.6.0
 
 onnxruntime>=1.18,<2
 
+# Local picture index and planner on the T4. Weights stay in HF_HOME and
+# /data/developer/oonex/models/yolo11n.pt. One GPU model is loaded at a time.
+#   pip install ultralytics bitsandbytes einops timm accelerate
+# Models: yolo11n.pt, microsoft/Florence-2-large, google/siglip-so400m-patch14-384,
+# Qwen/Qwen2.5-7B-Instruct in 4-bit.
+
 # Optional local Hindi→English NMT (Phase B). Install on EC2/T4 hosts:
 #   pip install 'transformers>=4.40' 'torch' sentencepiece
 # Model (default): facebook/nllb-200-distilled-600M — set LOCAL_TRANSLATION_MODEL to override.

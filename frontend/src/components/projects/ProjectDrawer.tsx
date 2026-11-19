@@ -9,7 +9,7 @@ interface ProjectDrawerProps {
   activeProjectId: string;
   onClose: () => void;
   onSelectProject: (id: string) => void;
-  onCreateProject: (name: string, aspectRatio: '9:16' | '16:9') => void;
+  onCreateProject: (name: string, aspectRatio: '9:16' | '16:9', domain: 'general' | 'medical' | 'sports') => void;
   onRelinkMedia: (projectId: string, newPath: string) => void;
   onDeleteProject: (projectId: string) => Promise<void>;
   onBulkDeleteProjects?: (projectIds: string[]) => Promise<void>;
@@ -28,6 +28,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
 }) => {
   const [newProjectName, setNewProjectName] = useState('');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [domain, setDomain] = useState<'general' | 'medical' | 'sports'>('general');
   const [relinkId, setRelinkId] = useState<string | null>(null);
   const [relinkPath, setRelinkPath] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -54,7 +55,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (newProjectName.trim()) {
-      onCreateProject(newProjectName.trim(), aspectRatio);
+      onCreateProject(newProjectName.trim(), aspectRatio, domain);
       setNewProjectName('');
       onClose();
     }
@@ -128,7 +129,8 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
         </div>
 
         {/* Create Project Bar */}
-        <form onSubmit={handleCreate} className="p-3 bg-white border-b border-neutral-200 flex items-center gap-2">
+        <form onSubmit={handleCreate} className="p-3 bg-white border-b border-neutral-200 space-y-2">
+          <div className="flex items-center gap-2">
           <input
             type="text"
             placeholder="New Project Name"
@@ -158,6 +160,23 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           >
             Create
           </button>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-neutral-500 shrink-0">Field</span>
+            <div className="flex bg-neutral-100 rounded-lg p-0.5 border border-neutral-200 font-medium">
+              {(['general', 'medical', 'sports'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setDomain(item)}
+                  className={`px-2.5 py-1 rounded capitalize transition ${domain === item ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-500'}`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+            <span className="text-neutral-400">Captions follow this field.</span>
+          </div>
         </form>
 
         {/* Toolbar: Select All & Bulk Actions */}

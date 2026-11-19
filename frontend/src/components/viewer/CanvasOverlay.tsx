@@ -57,6 +57,7 @@ interface CanvasOverlayProps {
   onSelectCaption: (id: string) => void;
   onUpdateCaptionPosition: (id: string, posX: number, posY: number, duringGraphic?: boolean) => void;
   activeLanguageView?: 'english' | 'hindi';
+  selectedGraphicId?: string | null;
 }
 
 function localMediaUrl(src:string) {
@@ -120,7 +121,8 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
   selectedCaptionId,
   onSelectCaption,
   onUpdateCaptionPosition,
-  activeLanguageView = 'english'
+  activeLanguageView = 'english',
+  selectedGraphicId = null
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasScale,setCanvasScale]=useState(1);
@@ -199,6 +201,20 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
       {settings.safe_area_guide === true && settings.aspect_ratio === "9:16" && (
         <div className="absolute inset-x-8 top-16 bottom-24 border border-dashed border-white/15 rounded-xl pointer-events-none z-10" />
       )}
+      {!isPlaying && selectedGraphicId && (() => {
+        const selected = graphics.find(g => g.id === selectedGraphicId);
+        const screen = selected?.parameters?.screen_rect as number[] | undefined;
+        const avoid = selected?.parameters?.avoid_rects as number[][] | undefined;
+        if (!selected || !screen || !avoid) return null;
+        return avoid.filter(rect => {
+          const near = Math.hypot(rect[0] - screen[0], rect[1] - screen[1]) <= 0.15;
+          const hit = Math.abs(rect[0] - screen[0]) < (rect[2] + screen[2]) / 2 && Math.abs(rect[1] - screen[1]) < (rect[3] + screen[3]) / 2;
+          return near || hit;
+        }).map((rect, index) => {
+          const hit = Math.abs(rect[0] - screen[0]) < (rect[2] + screen[2]) / 2 && Math.abs(rect[1] - screen[1]) < (rect[3] + screen[3]) / 2;
+          return <div key={index} className="absolute pointer-events-none z-20 border" style={{ left: (rect[0] - rect[2] / 2) * referenceWidth, top: (rect[1] - rect[3] / 2) * referenceHeight, width: rect[2] * referenceWidth, height: rect[3] * referenceHeight, opacity: hit ? 1 : 0.15, borderColor: hit ? '#b45309' : '#a3a3a3' }} />;
+        });
+      })()}
 
       {/* Ken Burns static image animation calculation */}
       {(() => null)()}
@@ -589,21 +605,31 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
 
         // Draggable / Scalable overlay block for all graphics and title styles
         const tStyle = graphic.parameters?.title_style;
-        const scale = graphic.scale ?? graphic.parameters?.scale ?? 1.0;
-        const posX = (graphic.pos_x ?? 0.5) * 100;
+        const userScale = graphic.scale ?? graphic.parameters?.scale ?? 1.0;
+        const screenRect = graphic.parameters?.screen_rect;
+        const hasRect = Array.isArray(screenRect) && screenRect.length === 4;
         const defaultPosY = tStyle === 'behind_subject' ? 0.24 : (tStyle === 'flame_subject' ? 0.45 : 0.5);
-        const posY = (graphic.pos_y ?? defaultPosY) * 100;
+        const centerX = hasRect ? Number(screenRect[0]) : (graphic.pos_x ?? 0.5);
+        const centerY = hasRect ? Number(screenRect[1]) : (graphic.pos_y ?? defaultPosY);
+        const rectW = hasRect ? Number(screenRect[2]) : 1;
+        const rectH = hasRect ? Number(screenRect[3]) : 1;
+        const naturalW = hasRect ? rectW * referenceWidth : referenceWidth;
+        const naturalH = hasRect ? rectH * referenceHeight : referenceHeight;
+        const autoFit = Math.min((rectW * referenceWidth) / naturalW, (rectH * referenceHeight) / naturalH);
+        const effectiveScale = hasRect ? Math.min(userScale, autoFit) : userScale;
 
         return (
           <div
             key={graphic.id}
             style={{
-              left: `${posX}%`,
-              top: `${posY}%`,
-              transform: `translate(-50%, -50%) scale(${scale})`,
+              left: `${centerX * 100}%`,
+              top: `${centerY * 100}%`,
+              transform: `translate(-50%, -50%) scale(${effectiveScale})`,
               transformOrigin: "center center",
-              width: "100%",
+              width: hasRect ? `${rectW * 100}%` : "100%",
+              height: hasRect ? `${rectH * 100}%` : undefined,
               maxWidth: referenceWidth,
+              overflow: hasRect ? "hidden" : undefined,
               display: "flex",
               alignItems: "center",
               justifyContent: "center"

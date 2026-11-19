@@ -14,6 +14,17 @@ def test_corrupt_marks_replacement_and_reversed_timing_detected():
     assert 'invalid time interval' in issues[-1]
 
 
+def test_a_few_bad_lines_are_dropped_and_the_transcript_continues():
+    from app.services.transcript_quality import salvage_captions, salvage_is_enough
+    captions = [cap('hello', 0, 1), cap('ू़ी। , ु', 1, 2), cap('syn', 4, 3), cap('world', 5, 6)]
+    kept, dropped = salvage_captions(captions)
+    assert [item.text for item in kept] == ['hello', 'world']
+    assert any('unreadable' in item for item in dropped)
+    assert any('invalid time interval' in item for item in dropped)
+    assert salvage_is_enough(captions, kept, dropped)
+    assert salvage_is_enough(captions, [], dropped) is False
+
+
 def test_valid_hindi_and_numbers_are_not_corruption():
     assert transcript_issues([cap('७'),cap('कैंसर का इलाज',1,2),cap('CAR T-cell therapy',2,3)])==[]
 

@@ -897,8 +897,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9') => {
-    const newProj = await api.createProject(name, ratio);
+  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9', domain: 'general' | 'medical' | 'sports' = 'general') => {
+    const newProj = await api.createProject(name, ratio, undefined, domain);
     setBackendReady(true); setSaveError('');
     const url=new URL(window.location.href);url.searchParams.set('project',newProj.id);url.searchParams.delete('time');window.history.replaceState({},'',url);
     setProject(newProj);
@@ -1087,6 +1087,7 @@ export const App: React.FC = () => {
       <EditorialPlanPanel
         onBusy={setIsAutoProducing}
         projectId={project.id}
+        graphics={project.graphics}
         onSeek={setCurrentTime}
         onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
         open={editorialPlanOpen}
@@ -1168,6 +1169,7 @@ export const App: React.FC = () => {
             pushHistory(updated);
             api.saveProject(updated.id, updated).catch(() => {});
           }}
+          selectedGraphicId={selectedGraphicId}
           onUpdateGraphic={(updatedGraphic) => {
             const updated = {
               ...project,
