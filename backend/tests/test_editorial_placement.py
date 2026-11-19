@@ -269,6 +269,34 @@ def test_a_section_note_is_reused_for_a_similar_line():
     assert match_example("sports", "The commonest cancer in men is lung cancer") is None
 
 
+def test_a_new_project_keeps_its_field_and_captions_keep_the_phrase():
+    from app.core.database import init_db
+    from app.services.project_manager import project_manager
+    from app.services.transcription_service import TranscriptionService, caption_prompt
+    init_db()
+    medical = project_manager.create_project("Clinic", "9:16", domain_profile="medical")
+    assert medical.settings.domain_profile == "medical"
+    other = project_manager.create_project("Notes", domain_profile="cooking")
+    assert other.settings.domain_profile == "general"
+    words = [
+        {"word": "Lung", "start": 0.0, "end": 0.3},
+        {"word": "cancer", "start": 0.32, "end": 0.7},
+        {"word": "is", "start": 0.72, "end": 0.9},
+        {"word": "the", "start": 0.92, "end": 1.05},
+        {"word": "commonest", "start": 1.08, "end": 1.5},
+        {"word": "cancer", "start": 1.52, "end": 1.9},
+        {"word": "in", "start": 1.92, "end": 2.05},
+        {"word": "men.", "start": 2.08, "end": 2.4},
+    ]
+    phrases = TranscriptionService().chunk_spoken_phrases(words)
+    assert len(phrases) == 1
+    assert len(phrases[0]) == 8
+    paused = words + [{"word": "Treatment", "start": 3.2, "end": 3.6}, {"word": "starts", "start": 3.62, "end": 4.0}]
+    assert len(TranscriptionService().chunk_spoken_phrases(paused)) == 2
+    assert "cancer" in caption_prompt("medical").lower()
+    assert "goal" in caption_prompt("sports").lower()
+
+
 def test_a_missing_ffmpeg_path_falls_back_to_a_real_binary(monkeypatch):
     from pathlib import Path
     from app.core.config import resolve_ffmpeg_bin

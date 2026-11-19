@@ -180,9 +180,10 @@ class AutoProductionService:
             try:
                 detected_lang, captions = transcription_service.transcribe_with_whisper(
                     media_file,
-                    words_per_caption=3,
                     task="transcribe",
-                    model_size=model_size
+                    model_size=model_size,
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+                    phrase_captions=True,
                 )
             except Exception as e:
                 from app.services.editorial_planner import safe_error, write_json as _write_json
@@ -315,7 +316,9 @@ class AutoProductionService:
             else:
                 try:
                     repaired_lang, repaired = transcription_service.transcribe_with_whisper(
-                        media_file, words_per_caption=3, task='transcribe', model_size='medium')
+                        media_file, task='transcribe', model_size='medium',
+                        domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+                        phrase_captions=True)
                     kept, dropped = salvage_captions(repaired)
                     if not salvage_is_enough(repaired, kept, dropped):
                         raise ValueError('; '.join(dropped[:5]) or 'No speech recognized')
