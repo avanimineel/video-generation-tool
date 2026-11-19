@@ -465,6 +465,8 @@ Spoken Text & Query Precision:
     prompt += "\nTitle quality rules: emphasize a substantive revelation, named subject, condition, contrast, consequence or meaningful quantity. Never highlight generic references/transitions such as This actor, later he himself, in this video, or today we discuss. Transcription gibberish and unexplained technical terms require review, not typographic emphasis. Choose a complete meaningful spoken clause, preserving pronouns, negation and relationships. Never remove stopwords or assemble keywords. Short complete headings and spoken numbers are allowed; the three-word rule applies only to subtitles. No incomplete relationship such as 'is negative' without its subject. Avoid overlapping titles. Consecutive spoken list items can have consecutive synchronized titles without an artificial gap. A visual must show the actual action/object clearly, not a metaphor guessed from one shared word. Preserve explicitly stated country, patient context and recovery-versus-illness distinction. Generic stock must not impersonate a real patient. More relevant opportunities are welcome; arbitrary coverage percentages are not a reason to add anything.\n"
     prompt += '\nAllowed strategies: ' + ', '.join(PLANNABLE) + '\nSemantic timeline with dialogue beats:\n' + json.dumps([s.model_dump() for s in segments], ensure_ascii=False)
     try:
+        from app.services.local_models import clear_planner_skip
+        clear_planner_skip()
         decisions=PlanResponse.model_validate(gemini_json(prompt,PlanResponse.model_json_schema())).decisions
     except ValueError as exc:
         from app.services.local_editorial import auth_failure, deterministic_decisions, local_llm_json
@@ -1326,6 +1328,10 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
         write_json(run_dir/'01_planning_windows.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         decisions=editorial_decisions(segments,feedback,finish_brief)
+        from app.services.local_models import planner_skip_reason
+        skipped = planner_skip_reason()
+        if skipped:
+            report.setdefault('errors', []).append(skipped)
         decisions=preserve_number_enumerations(segments,decisions)
         decisions=add_spoken_figures(segments,decisions,state.captions)
         decisions=repair_sparse_schedule(segments,decisions,state.captions,protected_list)

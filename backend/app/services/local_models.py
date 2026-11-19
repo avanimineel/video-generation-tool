@@ -263,7 +263,7 @@ def qwen_plan(segments) -> Optional[dict]:
         "id": segment.id,
         "start_sec": segment.start_sec,
         "end_sec": segment.end_sec,
-        "transcript": (segment.transcript or "")[:400],
+        "transcript": (segment.transcript or "")[:180],
     } for segment in segments]
     prompt = (
         "Return JSON {\"decisions\": [...]} for these spoken segments. "
@@ -281,18 +281,31 @@ def qwen_plan(segments) -> Optional[dict]:
 
 
 def qwen_json(prompt: str) -> Optional[dict]:
-    release_vision()
-    global _YOLO
-    _YOLO = None
-    _empty_cache()
-    model, tokenizer = _qwen()
-    import torch
-    messages = [{"role": "user", "content": prompt}]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=900, do_sample=False)
-    reply = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
+    """Run Qwen on the GPU only. A full card continues the edit from the spoken lines."""
+    global _SKIP
+    release_for_planner()
+    if not _qwen_fits():
+        _SKIP = (
+            "Qwen needs about 7 GB free on the GPU after the picture and translation models are released. "
+            "That room was not available, so planning continued from the spoken lines."
+        )
+        return None
+    try:
+        model, tokenizer = _qwen()
+        import torch
+        messages = [{"role": "user", "content": prompt}]
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            output = model.generate(**inputs, max_new_tokens=640, do_sample=False)
+        reply = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
+    except Exception as exc:
+        if not _memory_error(exc):
+            raise
+        release_planner()
+        release_for_planner()
+        _SKIP = "Qwen ran out of GPU memory while planning. Planning continued from the spoken lines."
+        return None
     start = reply.find("{")
     end = reply.rfind("}")
     if start < 0 or end <= start:
@@ -307,18 +320,68 @@ def release_vision() -> None:
     global _FLORENCE, _SIGLIP
     _FLORENCE = None
     _SIGLIP = None
-    _empty_cache()
+    _reclaim()
 
 
 def release_planner() -> None:
     global _QWEN
     _QWEN = None
-    _empty_cache()
+    _reclaim()
+
+
+def release_for_planner() -> None:
+    """Drop picture and translation weights so 4-bit Qwen can use the same GPU."""
+    global _YOLO
+    release_vision()
+    _YOLO = None
+    try:
+        from app.services.local_translation import clear_local_translation_cache
+        clear_local_translation_cache()
+    except Exception:
+        pass
+    _reclaim()
+
+
+def planner_skip_reason() -> str:
+    return _SKIP
+
+
+def clear_planner_skip() -> None:
+    global _SKIP
+    _SKIP = ""
+
+
+def _memory_error(exc: BaseException) -> bool:
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def _qwen_fits(minimum_mib: int = 7000) -> bool:
+    """4-bit 7B weights plus a short reply need about 7 GB free. CPU offload is refused."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        return False
+    return free >= minimum_mib * 1024 * 1024
 
 
 def _device() -> str:
     import torch
     return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _reclaim() -> None:
+    import gc
+    gc.collect()
+    _empty_cache()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.ipc_collect()
+    except Exception:
+        return
 
 
 def _empty_cache() -> None:
@@ -334,6 +397,7 @@ _YOLO = None
 _FLORENCE = None
 _SIGLIP = None
 _QWEN = None
+_SKIP = ""
 
 
 def _yolo():
@@ -414,7 +478,9 @@ def _qwen():
         name = os.getenv("QWEN_MODEL", "Qwen/Qwen2.5-7B-Instruct")
         quant = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, bnb_4bit_quant_type="nf4")
         tokenizer = AutoTokenizer.from_pretrained(name)
-        model = AutoModelForCausalLM.from_pretrained(name, quantization_config=quant, device_map="auto")
+        model = AutoModelForCausalLM.from_pretrained(
+            name, quantization_config=quant, device_map={"": 0}, low_cpu_mem_usage=True,
+        )
         model.eval()
         _QWEN = (model, tokenizer)
     return _QWEN

@@ -297,6 +297,32 @@ def test_a_new_project_keeps_its_field_and_captions_keep_the_phrase():
     assert "goal" in caption_prompt("sports").lower()
 
 
+def test_qwen_skips_when_the_gpu_has_no_room_and_the_edit_continues(monkeypatch):
+    from app.services.local_models import clear_planner_skip, planner_skip_reason, qwen_json
+    loaded = {}
+
+    def refuse_load():
+        loaded["called"] = True
+        raise AssertionError("Qwen must not load when the GPU is already full")
+
+    monkeypatch.setattr("app.services.local_models.release_for_planner", lambda: None)
+    monkeypatch.setattr("app.services.local_models._qwen_fits", lambda: False)
+    monkeypatch.setattr("app.services.local_models._qwen", refuse_load)
+    clear_planner_skip()
+    assert qwen_json("plan this") is None
+    assert "called" not in loaded
+    assert "spoken lines" in planner_skip_reason()
+
+    def out_of_memory():
+        raise RuntimeError("CUDA out of memory. Tried to allocate 34.00 MiB.")
+
+    monkeypatch.setattr("app.services.local_models._qwen_fits", lambda: True)
+    monkeypatch.setattr("app.services.local_models._qwen", out_of_memory)
+    monkeypatch.setattr("app.services.local_models.release_planner", lambda: None)
+    assert qwen_json("plan this") is None
+    assert "out of GPU memory" in planner_skip_reason()
+
+
 def test_a_missing_ffmpeg_path_falls_back_to_a_real_binary(monkeypatch):
     from pathlib import Path
     from app.core.config import resolve_ffmpeg_bin
