@@ -1,6 +1,6 @@
 """Caption-to-timeline examples saved from the captions review."""
 from app.core.config import settings
-from app.services.caption_mappings import list_mappings, save_mapping, transcription_prompt
+from app.services.caption_mappings import list_mappings, save_mapping, save_section_note, section_note_guidance, transcription_prompt
 
 
 def test_a_mapping_replaces_the_same_caption_and_reaches_the_prompt(tmp_path, monkeypatch):
@@ -80,3 +80,38 @@ def test_a_mapping_needs_a_spoken_line_and_a_forward_time(tmp_path, monkeypatch)
     except ValueError:
         raised = True
     assert raised
+
+
+def test_a_section_note_is_kept_for_the_next_similar_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "projects_dir", tmp_path)
+    saved = save_section_note({
+        "project_id": "lung",
+        "caption_id": "cap-9",
+        "start_sec": 12.18,
+        "end_sec": 18.76,
+        "source_text": "लंग कांसर सबसे आम नहीं है",
+        "spoken_text": "The disease is lung cancer.",
+        "note": "Keep the negation: lung cancer is not the most common cancer.",
+    })
+    assert saved["note"].startswith("Keep the negation")
+    guidance = section_note_guidance()
+    assert "not the most common cancer" in guidance
+    rows = list_mappings("lung")
+    assert rows[0]["note"].startswith("Keep the negation")
+
+
+def test_a_cloud_note_can_be_corrected_before_it_is_kept(monkeypatch):
+    from app.services.translation_service import translation_service
+
+    def cloud(prompt, schema):
+        assert "not the most common" in prompt or "Spoken line" in prompt
+        assert schema["required"] == ["note"]
+        return {"note": "  Keep that lung cancer is not the most common cancer in this country.  "}
+
+    note = translation_service.suggest_section_note(
+        "हमारे देश में लंग कांसर सबसे आम नहीं है",
+        "The disease is lung cancer.",
+        domain="medical",
+        cloud_fn=cloud,
+    )
+    assert note == "Keep that lung cancer is not the most common cancer in this country."

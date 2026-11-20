@@ -101,6 +101,72 @@ def save_mapping(entry: Dict[str, Any]) -> Dict[str, Any]:
     return example
 
 
+def save_section_note(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep an editor note for the next similar section. This does not teach the English on the line."""
+    project_id = str(entry.get("project_id") or "").strip()
+    note = " ".join(str(entry.get("note") or "").split())[:240]
+    if not project_id:
+        raise ValueError("A section note needs a project.")
+    if not note:
+        raise ValueError("A section note needs some text.")
+    start = float(entry.get("start_sec") or 0)
+    end = float(entry.get("end_sec") or 0)
+    example = {
+        "project_id": project_id,
+        "caption_id": str(entry.get("caption_id") or ""),
+        "start_sec": round(start, 3),
+        "end_sec": round(end, 3),
+        "source_text": str(entry.get("source_text") or "").strip()[:500],
+        "spoken_text": str(entry.get("spoken_text") or "").strip()[:500],
+        "note": note,
+        "at": datetime.utcnow().isoformat(),
+    }
+    rows = _read(_project_path(project_id))
+    caption_id = example["caption_id"]
+    replaced = False
+    if caption_id:
+        for index, row in enumerate(rows):
+            if row.get("caption_id") == caption_id:
+                row = dict(row)
+                row["note"] = note
+                row["at"] = example["at"]
+                if example["source_text"]:
+                    row["source_text"] = example["source_text"]
+                rows[index] = row
+                example = row
+                replaced = True
+                break
+    if not replaced:
+        rows.insert(0, example)
+    _write(_project_path(project_id), rows[:_MAX_PROJECT])
+    shared = [row for row in _read(_global_path()) if row.get("note") != note or row.get("caption_id") != caption_id]
+    shared.insert(0, example)
+    _write(_global_path(), shared[:_MAX_GLOBAL])
+    return example
+
+
+def recent_section_notes(limit: int = 3) -> List[str]:
+    notes: List[str] = []
+    for row in _read(_global_path()):
+        note = " ".join(str(row.get("note") or "").split())
+        if note and note not in notes:
+            notes.append(note)
+        if len(notes) >= limit:
+            break
+    return notes
+
+
+def section_note_guidance(limit: int = 3) -> str:
+    notes = recent_section_notes(limit)
+    if not notes:
+        return ""
+    return (
+        "Editor notes for a similar section: "
+        + " | ".join(notes)
+        + ". Follow a note when the spoken line is the same kind of claim. "
+    )
+
+
 def transcription_prompt(base: str) -> str:
     """Append a few corrected lines so the next speech pass can prefer them."""
     rows = _read(_global_path())[:3]

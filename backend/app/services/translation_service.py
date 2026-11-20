@@ -438,6 +438,41 @@ class TranslationService:
         add("taught", "Same section already taught", promoted_english(source) or "")
         return options
 
+    def suggest_section_note(
+        self,
+        source: str,
+        english: str,
+        domain: Optional[str] = None,
+        earlier_lines: Optional[List[str]] = None,
+        cloud_fn=None,
+    ) -> str:
+        """Ask the cloud model for a note the editor can correct before it is kept."""
+        import json
+        spoken = " ".join((source or "").split())
+        current = " ".join((english or "").split())
+        if not spoken and not current:
+            raise ValueError("A note needs the spoken line or the English on this section.")
+        earlier = [" ".join(line.split()) for line in (earlier_lines or []) if " ".join(line.split())][-4:]
+        prompt = (
+            "Write one editor note for the next similar spoken section. "
+            "The note tells a later translation what to keep: the claim, the negation, names, and numbers. "
+            "Do not replace the line with a short label that drops the claim. "
+            "One sentence, under 200 characters. Return {note: string}. "
+            "Domain: " + (domain or "general") + ". "
+            "Spoken line: " + json.dumps(spoken, ensure_ascii=False) + ". "
+            "English currently on the video: " + json.dumps(current, ensure_ascii=False) + ". "
+            "Earlier lines: " + json.dumps(earlier, ensure_ascii=False) + "."
+        )
+        schema = {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}
+        if cloud_fn is None:
+            from app.services.editorial_planner import gemini_json
+            cloud_fn = gemini_json
+        data = cloud_fn(prompt, schema)
+        note = " ".join(str((data or {}).get("note") or "").split())
+        if not note:
+            raise ValueError("The cloud model did not return a note. Type one instead.")
+        return note[:240]
+
     def correct_stored_captions(self, captions: List[CaptionItem], domain: Optional[str] = None) -> bool:
         before = [caption.translated_text for caption in captions]
         self.correct_medical_lines(captions, domain=domain)
@@ -700,6 +735,8 @@ class TranslationService:
                         "Use those inferences when a word could be either TB or television, or breath or mother-in-law. "
                         "Write TB-like, not TV-like. Write breathing, not mother-in-law. "
                     )
+                from app.services.caption_mappings import section_note_guidance
+                medical += section_note_guidance()
                 prompt = (
                     "Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
                     "Do not spell Hindi sounds in Latin letters. "

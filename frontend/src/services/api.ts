@@ -1746,6 +1746,37 @@ export const api = {
     return [];
   },
 
+  async suggestSectionNote(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ note: string }> {
+    const res = await fetch(`${API_BASE}/training/section-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'The cloud model did not return a note.');
+    }
+    return res.json();
+  },
+
+  async keepSectionNote(data: {
+    project_id: string;
+    caption_id?: string;
+    source_text?: string;
+    spoken_text?: string;
+    note: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ success: boolean; note: string }> {
+    const res = await fetch(`${API_BASE}/training/section-note/keep`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('The note could not be saved for the next section.');
+    return res.json();
+  },
+
   async captionChoices(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ options: { kind: string; label: string; text: string }[] }> {
     const res = await fetch(`${API_BASE}/training/choices`, {
       method: 'POST',

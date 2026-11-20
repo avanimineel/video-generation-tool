@@ -75,7 +75,7 @@ Do not add a step that waits for a person to mark the line before this check run
 | View captions | List, seek, edit |
 | Join sentences | Join short chips into one clause, translate only lines that still need it, then run the medical check |
 | Save edit | Locks that line. A locked line that fails the medical check is still replaced |
-| Save mapping for training | Stores words and times in `caption_mappings.json` and up to 3 examples (80 chars) on the next Whisper prompt. **Does not train or change Whisper or NLLB weights** |
+| Suggest from AI | Asks the cloud model for a note on this section. The note box stays editable, so the editor can correct it before saving. A saved note is sent with the next similar translation. It does not by itself teach the English on the line. |
 | Redo captions | Same video, clears captions and translation checkpoints, transcribes again, restores saved lines that pass the medical check |
 
 Uploading the file again is not how captions are redone.

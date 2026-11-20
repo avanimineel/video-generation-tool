@@ -53,6 +53,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
   const [status, setStatus] = useState('');
   const [busyId, setBusyId] = useState('');
   const [joining, setJoining] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
 
   const counts = useMemo(() => {
@@ -129,6 +130,19 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
     try {
       await api.saveProject(project.id, next);
       onSaved(next);
+      let noteSaved = false;
+      if (nextDraft.note.trim()) {
+        await api.keepSectionNote({
+          project_id: project.id,
+          caption_id: caption.id,
+          source_text: source,
+          spoken_text: spoken || source,
+          note: nextDraft.note.trim(),
+          start_sec: start,
+          end_sec: end,
+        });
+        noteSaved = true;
+      }
       if (train) {
         const chosen = await api.chooseTranslationLine({
           source_text: source,
@@ -138,16 +152,41 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
           start_sec: start,
           end_sec: end,
         });
-        setStatus(chosen.taught
+        const taught = chosen.taught
           ? 'Updated on this video and taught for the same section on a new video.'
-          : 'Updated on this video. It was not taught, because this wording misses the medical meaning.');
+          : 'Updated on this video. It was not taught, because this wording misses the medical meaning.';
+        setStatus(noteSaved ? `${taught} The note is kept for the next similar section.` : taught);
       } else {
-        setStatus('Updated on this video only.');
+        setStatus(noteSaved ? 'Updated on this video. The note is kept for the next similar section.' : 'Updated on this video only.');
       }
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyId('');
+    }
+  }
+
+  async function suggestNote(caption: CaptionItem) {
+    if (!draft) return;
+    setSuggesting(true);
+    setStatus('');
+    try {
+      const earlier = project.captions
+        .filter((item) => item.start < caption.start)
+        .map((item) => item.text || '')
+        .filter(Boolean);
+      const result = await api.suggestSectionNote({
+        source_text: draft.source,
+        english: draft.spoken,
+        domain: project.settings?.domain_profile || 'general',
+        earlier_lines: earlier,
+      });
+      setDraft((current) => (current ? { ...current, note: result.note } : current));
+      setStatus('Cloud suggestion is in the note. Change any word before you save.');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSuggesting(false);
     }
   }
 
@@ -295,14 +334,26 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
                       />
                     </label>
                   </div>
-                  <label className="block text-[11px] text-neutral-600">
-                    Note for the next similar section
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-neutral-600">Note for the next similar section</span>
+                      <button
+                        type="button"
+                        disabled={suggesting}
+                        onClick={() => { void suggestNote(caption); }}
+                        className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100 disabled:opacity-50"
+                      >
+                        {suggesting ? 'Asking AI…' : 'Suggest from AI'}
+                      </button>
+                    </div>
                     <input
                       value={draft.note}
                       onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-                      className="mt-0.5 w-full rounded border border-neutral-300 px-2 py-1 text-xs"
+                      placeholder="Type a note, or edit the AI suggestion"
+                      className="mt-0.5 w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-900"
                     />
-                  </label>
+                    <p className="mt-0.5 text-[10px] text-neutral-500">Suggest from AI fills this box. Change any word, then save. The note is used the next time a similar section is translated.</p>
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
