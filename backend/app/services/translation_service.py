@@ -433,6 +433,15 @@ class TranslationService:
                 if repaired and not self.medical_english_is_unusable(caption.text, repaired, prior=prior, domain=domain):
                     caption.translated_text = repaired
                     caption.editor_locked = False
+                    from app.services.accepted_pairs import record_accepted_pair
+                    record_accepted_pair(
+                        caption.text,
+                        repaired,
+                        domain=domain,
+                        start_sec=caption.start,
+                        end_sec=caption.end,
+                        origin="repair",
+                    )
             state.note(self.normalize_medical_asr(caption.text, prior=prior, domain=domain))
         return captions
 

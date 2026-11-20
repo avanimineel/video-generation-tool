@@ -78,6 +78,23 @@ def save_mapping(entry: Dict[str, Any]) -> Dict[str, Any]:
         rows.insert(0, example)
     _write(_project_path(project_id), rows[:_MAX_PROJECT])
 
+    source = example["source_text"]
+    from app.services.translation_service import translation_service
+    if (
+        translation_service.is_devanagari(source)
+        and not translation_service.is_devanagari(example["spoken_text"])
+        and not translation_service.medical_english_is_unusable(source, example["spoken_text"])
+    ):
+        from app.services.accepted_pairs import record_accepted_pair
+        record_accepted_pair(
+            source,
+            example["spoken_text"],
+            project_id=project_id,
+            start_sec=example["start_sec"],
+            end_sec=example["end_sec"],
+            origin="editor",
+        )
+
     shared = _read(_global_path())
     shared.insert(0, example)
     _write(_global_path(), shared[:_MAX_GLOBAL])

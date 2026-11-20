@@ -19,7 +19,7 @@ Welcome to the **DaVinci Resolve AI Editing Companion** project directory.
    * All caption segments must be acoustically aligned with audio bursts.
    * Hindi-to-English translations must be coherent, context-aware, and natural. Avoid fragmented chops or literal non-idiomatic translations.
    * Karaoke word highlights require per-word timing arrays in `captions.json`.
-   * **Caption transcription (required context):** Read `.agents/skills/caption-transcription/SKILL.md` and the always-on rule `.cursor/rules/caption-transcription.mdc` before changing Whisper, translation, NLLB, Join sentences, Redo captions, or Save mapping. Hindi uses Gemini when a key exists; NLLB is the fallback. Medical mistranslations are replaced in code. Save mapping does not train model weights.
+   * **Caption transcription (required context):** Read `.agents/skills/caption-transcription/SKILL.md` and the always-on rule `.cursor/rules/caption-transcription.mdc` before changing Whisper, translation, NLLB, Join sentences, Redo captions, or Save mapping. Hindi uses Gemini when a key exists; NLLB is the fallback. The same video reuses its saved captions. An accepted line is also stored for a later training run. Model weights are not changed inside the caption pass.
 
 4. **Resilient AI Visuals & Quota Handling**:
    * Cloud image diffusion models (`gemini-3.1-flash-image`) may encounter `429 RESOURCE_EXHAUSTED` on Free Tier keys.

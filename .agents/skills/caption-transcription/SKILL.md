@@ -79,9 +79,15 @@ Do not add a step that waits for a person to mark the line before this check run
 
 Uploading the file again is not how captions are redone.
 
-## Weights
+## Two tracks, in parallel
 
-Do not write Gemini output, vision labels, or an editor line into NLLB or Whisper weights on a caption pass. A future local-model update may store an accepted pair only after the medical check passes, and only then consider a separate LoRA job. If that job makes held-out lines worse, discard the weights and keep the correction in `correct_medical_lines`. Vision confirms a pictured entity. It does not write the sentence.
+Use this skill for both. Do not pick one and leave the other for later.
+
+**Same video.** The corrected English is saved on that project’s captions. The next run of this video restores a saved line by its time range. A saved line that fails the medical check is not restored. Deleting the saved English does not remove the rule: the same Hindi is corrected again from code.
+
+**New video.** When a line is accepted, also append the Hindi and the accepted English to `accepted_translation_pairs.jsonl`. That write happens in the same pass as the save. It does not change Whisper or NLLB weights inside the caption request. A separate training run is the only place weights may change. It may read only pairs that already passed the medical check, must keep a held-out set, and must not replace the model if those held-out lines get worse. Until a trained model is promoted, a new video still uses `correct_medical_lines`, so “TV”, “mother-in-law”, and spelled names are still replaced.
+
+Do not write Gemini output, vision labels, or an editor line into the weights from the caption pass. Vision confirms a pictured entity. It does not write the sentence.
 
 ## Code map
 
@@ -91,7 +97,8 @@ Do not write Gemini output, vision labels, or an editor line into NLLB or Whispe
 | Normalize, medical check, repair, join, translate | `backend/app/services/translation_service.py` |
 | NLLB load and `hin_Deva` → `eng_Latn` | `backend/app/services/local_translation.py` |
 | Redo captions, skip 3-word layout | `backend/app/services/auto_production_service.py` |
-| Saved lines, prompt examples, no weight update | `backend/app/services/caption_mappings.py` |
+| Saved lines for this video, prompt examples | `backend/app/services/caption_mappings.py` |
+| Accepted pairs for a later training run | `backend/app/services/accepted_pairs.py` |
 | Legacy 3-word display | `backend/app/services/automatic_captions.py` |
 | Join sentences button | `frontend/src/components/modals/CaptionReview.tsx` |
 
