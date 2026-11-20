@@ -87,9 +87,51 @@ def test_a_bad_saved_line_is_replaced_by_the_medical_meaning():
 def test_lung_cancer_is_not_left_as_a_cough():
     source = "फेफड़े का कैंसर वाले मरीज़ बिना जांच के"
     assert service.medical_english_is_unusable(source, "patients without lung coughs")
-    repaired = service.repair_medical_english(source)
-    assert repaired == "The disease is lung cancer."
+    assert service.repair_medical_english(source) == ""
     assert not service.medical_english_is_unusable(source, "Lung cancer is the commonest cancer in the world.")
+
+
+DETECT = "और उसका सिमपल वजह यही है बिकौस हमारे यहाँ पे लंग कांसर डिटेक्ट ही नहीं होता है।"
+
+
+def test_a_negated_lung_cancer_line_keeps_the_translation():
+    assert service.repair_medical_english(DETECT, domain="medical") == ""
+    assert service.medical_english_is_unusable(DETECT, "The disease is lung cancer.", domain="medical")
+    kept = "And the simple reason is that here lung cancer is not detected."
+    assert not service.medical_english_is_unusable(DETECT, kept, domain="medical")
+    stored = CaptionItem(id="stored", start=18.76, end=24.4, text=DETECT, translated_text="The disease is lung cancer.")
+    assert not service.needs_new_translation(stored)
+
+
+def test_joining_sentences_does_not_write_english():
+    slices = [
+        CaptionItem(id="a", start=18.76, end=21.0, text=DETECT, translated_text="is not detected"),
+        CaptionItem(id="b", start=21.0, end=24.4, text=DETECT, translated_text="in our country."),
+    ]
+    joined = service.restore_sentences(slices, domain="medical")
+    shown = " ".join(caption.translated_text or "" for caption in joined)
+    assert "The disease is lung cancer." not in shown
+    assert "not detected" in shown
+
+
+def test_a_missed_negation_is_translated_again(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
+    calls = {"n": 0}
+
+    def translate(lines):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ["The disease is lung cancer." for _ in lines]
+        return ["Here lung cancer is not detected." for _ in lines]
+
+    result = service.translate_captions_list(
+        [CaptionItem(id="a", start=18.76, end=24.4, text=DETECT)],
+        local_fn=translate,
+        domain="medical",
+    )
+    assert calls["n"] == 2
+    assert result[0].translated_text == "Here lung cancer is not detected."
 
 
 def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():

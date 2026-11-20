@@ -338,7 +338,7 @@ class TranslationService:
             return True
         if (facts["lung_cancer"] or facts["cancer"]) and re.search(r"\bcough", rendered) and "cancer" not in rendered:
             return True
-        if facts["lung_cancer"] and "cancer" not in rendered:
+        if self._source_negates(source) and not self._english_keeps_negation(english):
             return True
         if facts["half"] and re.search(r"\badelog\b", rendered):
             return True
@@ -375,10 +375,6 @@ class TranslationService:
             sentences.append(
                 "It is not treated as a lung infection." if facts["lung_infection"] else "It is not treated as an infection."
             )
-        if facts["lung_cancer"]:
-            sentences.append("The disease is lung cancer.")
-        elif facts["cancer"] and not facts["tb_medicine"]:
-            sentences.append("The disease is cancer.")
         if facts["patients_without_pain"]:
             sentences.append("And most patients come without any pain.")
         if facts["no_breath_trouble"]:
@@ -386,6 +382,12 @@ class TranslationService:
         elif facts["breath_trouble"]:
             sentences.append("The patient has difficulty breathing.")
         return " ".join(sentences)
+
+    def _source_negates(self, source: str) -> bool:
+        return bool(re.search(r"नहीं|नही|मत\b|\bnot\b|\bno\b", source or "", re.IGNORECASE))
+
+    def _english_keeps_negation(self, english: str) -> bool:
+        return bool(re.search(r"\b(not|no|never|without|n't)\b", english or "", re.IGNORECASE))
 
     def repair_medical_english(
         self,
@@ -542,15 +544,6 @@ class TranslationService:
                 if repaired and not self.medical_english_is_unusable(caption.text, repaired, prior=prior, domain=domain):
                     caption.translated_text = repaired
                     caption.editor_locked = False
-                    from app.services.accepted_pairs import record_accepted_pair
-                    record_accepted_pair(
-                        caption.text,
-                        repaired,
-                        domain=domain,
-                        start_sec=caption.start,
-                        end_sec=caption.end,
-                        origin="repair",
-                    )
             state.note(self.normalize_medical_asr(caption.text, prior=prior, domain=domain))
         return captions
 
@@ -605,7 +598,7 @@ class TranslationService:
             return False
         if not english or self.is_devanagari(english):
             return bool(self.is_devanagari(source) or not english)
-        if self.medical_english_is_unusable(source, english):
+        if self.is_transliteration_fragment(source, english):
             return True
         source_words = re.findall(r"[\u0900-\u097F]+", source)
         return bool(source_words) and len(english.split()) <= 4 and len(source_words) >= 6
@@ -635,8 +628,7 @@ class TranslationService:
                 groups[-1].append(caption)
             else:
                 groups.append([caption])
-        merged = [self._merge_sentence(group) for group in groups]
-        return self.correct_medical_lines(merged, domain=domain)
+        return [self._merge_sentence(group) for group in groups]
 
     def _merge_sentence(self, group: List[CaptionItem]) -> CaptionItem:
         if len(group) == 1:
@@ -785,6 +777,8 @@ class TranslationService:
                     "Do not spell Hindi sounds in Latin letters. "
                     "When the speech is about TB, write TB, never thief or television. "
                     "When the speech is about cancer, write cancer, never cough as the name of the disease. "
+                    "Keep every negation. If the line says something is not detected, is not the most common, or that no medicine is started, the English must say not. "
+                    "Do not replace a full claim with 'The disease is lung cancer.' "
                     + medical
                     + "Keep all facts, names, numbers and negation. Do not invent or summarize. "
                     + "Each ID is one spoken sentence: return that full English sentence, not a three-word scrap. "
@@ -1082,6 +1076,55 @@ class TranslationService:
                 lines=len(chunk),
             )
 
+    def _retry_missed_claims(
+        self,
+        captions: List[CaptionItem],
+        indexes: List[int],
+        normalized: Dict[int, str],
+        findings_for_index: Dict[int, str],
+        domain: Optional[str] = None,
+        local_fn=None,
+    ) -> None:
+        """One more translation for a new line whose English dropped the claim. No checkpoint, so the rejected wording is not reused."""
+        state = RunningInferences(domain)
+        prior_for_id = {}
+        for caption in sorted(captions, key=lambda item: (item.start, item.end)):
+            prior_for_id[caption.id] = state.snapshot()
+            state.note(self.normalize_medical_asr(caption.text, prior=state.snapshot(), domain=domain))
+        missed = [
+            index for index in indexes
+            if self.medical_english_is_unusable(
+                captions[index].text,
+                captions[index].translated_text or "",
+                prior=prior_for_id.get(captions[index].id),
+                domain=domain,
+            )
+        ]
+        if not missed:
+            return
+        reminder = (
+            "The previous English dropped the claim or the negation. "
+            "Translate the source line again and keep both. "
+            "Do not answer with 'The disease is lung cancer.' unless that is the whole claim."
+        )
+        try:
+            retried = self._translate_chunk(
+                [normalized[index] for index in missed],
+                None,
+                local_fn=local_fn,
+                chunk_index=0,
+                chunk_count=1,
+                domain=domain,
+                prior_findings=(findings_for_index.get(missed[0], "") + " " + reminder).strip(),
+            )
+        except Exception:
+            return
+        if len(retried) != len(missed):
+            return
+        for index, text in zip(missed, retried):
+            if isinstance(text, str) and text.strip():
+                captions[index].translated_text = text.strip()
+
     def translate_captions_list(
         self,
         captions: List[CaptionItem],
@@ -1193,6 +1236,15 @@ class TranslationService:
                 break
             captions[idx].translated_text = translated_texts[offset]
             written.append(captions[idx].id)
+        if not translation_error:
+            self._retry_missed_claims(
+                captions,
+                pending_indexes[:len(translated_texts)],
+                normalized,
+                findings_for_index,
+                domain=domain,
+                local_fn=local_fn,
+            )
         self.correct_medical_lines(captions, domain=domain, only_ids=set(written))
         for offset, idx in enumerate(pending_indexes):
             if offset >= len(translated_texts):

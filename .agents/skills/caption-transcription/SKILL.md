@@ -21,8 +21,13 @@ Read this skill before editing `transcription_service.py`, `translation_service.
 3. `chunk_spoken_phrases` keeps a clause together (pause about 0.45s, break on `। . ? !`, max 18 words). Do not go back to 3-word boxes for the captions the editor reads.
 4. Drop a Whisper segment only for a repetition loop (`compression_ratio > 2.4`), silence decoded as speech, or a stock closing on low confidence. Ordinary quiet speech stays.
 5. Rejoin split numbers (`3` + `,000`). A few fixed sound-alikes run after the listen (`cuff` → `cough` in a medical line).
-6. Join adjacent Hindi clauses, then `restore_sentences`, then translate.
-7. Display path does **not** call `layout_automatic_captions`. That helper still slices English into 3-word groups for an old test. New caption work keeps the spoken sentence.
+6. Join adjacent clauses into one sentence. Joining only changes the grouping. It does not write English.
+7. Translate that source line. Hindi goes to Gemini, with the source line and the inference summary from earlier lines. The English keeps the claim, the negation, the comparison, and the names.
+8. Check the translation against the source line. A negation in the source (`नहीं`, “not detected”, “not the most common”) must still be a negation in the English. Inference is used here only for an ambiguous word: `टीवी` as TB, or `सास` as breathing, after an earlier line established that.
+9. If that check fails, ask the translator once more with the same source line and the same inference summary. Do not resume the rejected wording from a checkpoint. A fixed sentence is used only when the source line is exactly that pattern: half the people started on TB medicine, half the people treating it as a lung infection with no medicine, patients coming without pain, or difficulty breathing. A line that merely names lung cancer does not become “The disease is lung cancer.”
+10. On a new caption, save the translation from step 7 or 9. On a caption already on the video, leave the stored English. The editor sees it as a choice and it is written only when they pick **Update this video** or **Update this video and the model**.
+11. Teach the model only from **Update this video and the model**. An automatic repair is not stored as a taught line.
+12. Display path does **not** call `layout_automatic_captions`. That helper still slices English into 3-word groups for an old test. New caption work keeps the spoken sentence.
 
 ## Who translates
 
@@ -46,8 +51,8 @@ Decisions such as TB versus television use `RunningInferences`, walked in time o
 - If the line itself does not decide, earlier lines do. TB already established, or a lung disease already established in a medical project, makes a later `टीवी` into TB.
 - The Gemini prompt for that later line includes those inferences and is told to write TB-like, not TV-like.
 - English that still says “TV-like”, “TV”, or “television” for that decision is rejected. The replacement is “TB-like”.
-- Opening a project does not rewrite stored captions. A medical reading is offered on that caption, using earlier lines, and is written when the editor chooses it.
-- A new caption and a joined sentence do use those earlier lines. If the new English misses TB, pain, or breathing, it is replaced from the spoken line and the inferences so far. A sentence that already matches is left as it is.
+- Opening a project does not rewrite stored captions. A reading is offered on that caption, using earlier lines, and is written when the editor chooses it.
+- Joining sentences does not write English. A new caption uses the inference summary while it is translated. A fixed sentence replaces the translation only for an exact pattern (TB medicine, lung infection with no medicine, patients without pain, breathing). Naming lung cancer is not that pattern.
 - The spoken line about half the people, TB medicine, and half the people treating it as a lung infection with no medicine is two clauses. “कोई दवाई नहीं” means no medicine is started. It does not mean the illness is not an infection.
 - After a lung-disease line, or on a patient line: `जाथ पेशेन्द` / `ददॉन` is “most patients come without any pain,” not the spellings “Jath”, “Profesand”, or “Dadon.” `सास में` with `दिक्कत` is breathing. It is not mother-in-law, and `पेशेंट` is not “a professional.” A family line such as `मेरी सास ने` stays mother-in-law.
 - Saving a mapping still does not train Whisper or NLLB. A later weight update is a separate job and only uses lines that already passed this check.
@@ -56,15 +61,16 @@ Decisions such as TB versus television use `RunningInferences`, walked in time o
 
 - it is a Latin spelling of the Hindi (`is_transliteration_fragment`, including “Adelog” and “The Adelog considered”)
 - TB medicine came out as thief, theft, or television, or the word TB is missing
-- lung cancer or cancer came out as cough, or lung cancer is missing
+- lung cancer or cancer came out as cough
+- the source line negates the claim and the English dropped that negation
 
-`repair_medical_english` then writes the English that is used:
+`repair_medical_english` writes a fixed sentence only for an exact pattern:
 
 - TB medicine for half the people, when the spoken word was the TV homophone → “For half the people, it is taken as TB-like and TB medicine is started.”
 - The following clause, half the people treating it as a lung infection and starting no medicine → “For half the people, it is taken as a lung infection and no medicine is started.”
-- lung cancer named as cough → “The disease is lung cancer.”
+- patients without pain, or difficulty breathing, when those words are the claim
 
-`correct_medical_lines` applies that after translation and after saved edits. A saved line that fails the check is not put back. A saved line that passes stays, `editor_locked`. A correct sentence such as “Lung cancer is the commonest cancer in the world.” is left as it is.
+`correct_medical_lines` applies that fixed sentence only to a line translated in this pass, and only after the second translation still misses the pattern. It does not append the line to the taught pairs. A saved line that fails the check is not put back. A correct sentence such as “Lung cancer is the commonest cancer in the world.” is left as it is. “The disease is lung cancer.” is not a translation of a line that says lung cancer is not detected.
 
 Do not add a step that waits for a person to mark the line before this check runs.
 
@@ -73,7 +79,7 @@ Do not add a step that waits for a person to mark the line before this check run
 | Control | Effect |
 | --- | --- |
 | View captions | List, seek, edit |
-| Join sentences | Join short chips into one clause, translate only lines that still need it, then run the medical check |
+| Join sentences | Join short chips into one clause. Joining does not write English. Translation runs only for a line that still has no English sentence. |
 | Save edit | Locks that line. A locked line that fails the medical check is still replaced |
 | Suggest from AI | Asks the cloud model for a note built from the Source line and the inference summary of earlier lines. The note box stays editable. A saved note is sent with the next similar translation. It does not by itself teach the English on the line. |
 | Redo captions | Same video, clears captions and translation checkpoints, transcribes again, restores saved lines that pass the medical check |
@@ -115,4 +121,4 @@ Do not write Gemini output, vision labels, or an editor line into the weights fr
 .venv/bin/python -m pytest backend/tests/test_translation_mapping.py backend/tests/test_local_translation.py backend/tests/test_auto_produce_mode.py backend/tests/test_caption_mappings.py backend/tests/test_automatic_caption_policy.py backend/tests/test_project_domain.py -q
 ```
 
-Any change to Hindi→English must keep these true: “Adelog” and “thief” are not stored; the TB line repairs to the half-the-people sentence; “patients without lung coughs” repairs to lung cancer; an already-correct cancer sentence stays; an edited line that passes the check is not translated again.
+Any change to Hindi→English must keep these true: “Adelog” and “thief” are not stored; the TB line repairs to the half-the-people sentence; a line that says lung cancer is not detected is not replaced with “The disease is lung cancer.”; an already-correct cancer sentence stays; an edited line that passes the check is not translated again.
