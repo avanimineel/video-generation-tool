@@ -410,9 +410,23 @@ class TranslationService:
             return False
         if self.is_transliteration_fragment(caption.text, english):
             return False
-        if self.medical_english_is_unusable(caption.text, english):
-            return False
         return True
+
+    def caption_choices(self, source: str, english: str, domain: Optional[str] = None) -> List[Dict[str, str]]:
+        """Readings for this one section. Nothing is written until the editor picks one."""
+        options: List[Dict[str, str]] = []
+
+        def add(kind: str, label: str, text: str) -> None:
+            cleaned = " ".join((text or "").split())
+            if not cleaned or any(item["text"] == cleaned for item in options):
+                return
+            options.append({"kind": kind, "label": label, "text": cleaned})
+
+        add("video", "On this video now", english)
+        add("medical", "Medical reading of this section", self.repair_medical_english(source, domain=domain))
+        from app.services.translation_training import promoted_english
+        add("taught", "Same section already taught", promoted_english(source) or "")
+        return options
 
     def correct_stored_captions(self, captions: List[CaptionItem], domain: Optional[str] = None) -> bool:
         before = [caption.translated_text for caption in captions]
@@ -580,7 +594,7 @@ class TranslationService:
             if not self.medical_english_is_unusable(span["source"] or span["spoken"], span["spoken"])
         ]
         if not spans:
-            return self.correct_medical_lines(captions)
+            return captions
         kept: List[CaptionItem] = []
         for caption in captions:
             duration = max(0.05, caption.end - caption.start)
@@ -604,7 +618,7 @@ class TranslationService:
             item.words = []
             item.source_caption_ids = [item.id]
             kept.append(item)
-        return self.correct_medical_lines(sorted(kept, key=lambda caption: (caption.start, caption.end)))
+        return sorted(kept, key=lambda caption: (caption.start, caption.end))
 
     def translate_with_gemini(
         self,
@@ -819,11 +833,6 @@ class TranslationService:
                             f'Local translation produced unusable English for subtitle line {idx + 1}; '
                             'original speech is saved.'
                         )
-                    if self.medical_english_is_unusable(text_list[idx], text):
-                        raise ValueError(
-                            f'Local translation missed the medical meaning of subtitle line {idx + 1}; '
-                            'original speech is saved.'
-                        )
                     accepted[idx] = text.strip()
                 if checkpoint:
                     from app.services.editorial_planner import write_json
@@ -1021,7 +1030,7 @@ class TranslationService:
         # An edited line and an English sentence already in hand stay as written.
         pending_indexes = [i for i, caption in enumerate(captions) if self.needs_new_translation(caption)]
         if not pending_indexes:
-            return self.correct_medical_lines(captions, domain=domain)
+            return captions
         state = RunningInferences(domain)
         normalized: Dict[int, str] = {}
         findings_for_index: Dict[int, str] = {}
@@ -1126,7 +1135,6 @@ class TranslationService:
                     cur_t = w_end
                 cap.words = new_words
 
-        self.correct_medical_lines(captions, domain=domain)
         if translation_error:
             unresolved = [
                 index for index in pending_indexes

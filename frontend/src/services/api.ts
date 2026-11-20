@@ -1746,6 +1746,33 @@ export const api = {
     return [];
   },
 
+  async captionChoices(data: { source_text: string; english: string; domain?: string }): Promise<{ options: { kind: string; label: string; text: string }[] }> {
+    const res = await fetch(`${API_BASE}/training/choices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('The readings for this section could not be loaded.');
+    return res.json();
+  },
+
+  async chooseTranslationLine(data: {
+    source_text: string;
+    english: string;
+    domain?: string;
+    project_id?: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ taught: boolean; detail: string }> {
+    const res = await fetch(`${API_BASE}/training/choose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('This section could not be taught.');
+    return res.json();
+  },
+
   async getTranslationTraining(): Promise<{
     accepted_pairs: number;
     promoted: boolean;

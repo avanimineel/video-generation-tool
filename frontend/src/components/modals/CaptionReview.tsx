@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { CaptionItem, ProjectState, WordTiming } from '../../types';
 import { api } from '../../services/api';
 
@@ -7,6 +7,12 @@ interface CaptionReviewProps {
   onSeek: (time: number) => void;
   onSaved: (project: ProjectState) => void;
   onRedoCaptions?: () => void;
+}
+
+interface Reading {
+  kind: string;
+  label: string;
+  text: string;
 }
 
 interface Draft {
@@ -47,8 +53,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
   const [status, setStatus] = useState('');
   const [busyId, setBusyId] = useState('');
   const [joining, setJoining] = useState(false);
-  const [training, setTraining] = useState(false);
-  const [trainStatus, setTrainStatus] = useState('');
+  const [readings, setReadings] = useState<Reading[]>([]);
 
   const counts = useMemo(() => {
     const tally = new Map<string, number>();
@@ -69,44 +74,22 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
     );
   }, [project.captions, query]);
 
-  useEffect(() => {
-    let cancelled = false;
-    api.getTranslationTraining()
-      .then((status) => {
-        if (cancelled) return;
-        const taught = status.promoted
-          ? `New videos can reuse ${status.promoted_pairs} accepted lines.`
-          : 'New videos still use the medical fixes only.';
-        setTrainStatus(`${status.accepted_pairs} accepted lines. ${taught}`);
-      })
-      .catch(() => {
-        if (!cancelled) setTrainStatus('');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function teachNewVideos() {
-    setTraining(true);
-    try {
-      const report = await api.runTranslationTraining();
-      const held = report.holdout_count
-        ? ` ${report.holdout_count} lines were held back and ${report.candidate_errors} of them got worse.`
-        : '';
-      setTrainStatus(`${report.reason}${held}`);
-    } catch (err) {
-      setTrainStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTraining(false);
-    }
-  }
-
   function openEdit(caption: CaptionItem) {
     setEditingId(caption.id);
     setDraft(draftFrom(caption));
+    setReadings([]);
     setStatus('');
     onSeek(caption.start);
+    const domain = project.settings?.domain_profile || 'general';
+    api.captionChoices({
+      source_text: caption.text || '',
+      english: caption.translated_text || '',
+      domain,
+    }).then((result) => {
+      setReadings(result.options || []);
+    }).catch(() => {
+      setReadings([]);
+    });
   }
 
   async function persist(caption: CaptionItem, nextDraft: Draft, train: boolean) {
@@ -142,20 +125,19 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
       await api.saveProject(project.id, next);
       onSaved(next);
       if (train) {
-        const result = await api.saveCaptionMapping({
+        const chosen = await api.chooseTranslationLine({
+          source_text: source,
+          english: spoken || source,
+          domain: project.settings?.domain_profile || 'general',
           project_id: project.id,
-          caption_id: caption.id,
           start_sec: start,
           end_sec: end,
-          source_text: source,
-          spoken_text: spoken || source,
-          note: nextDraft.note,
         });
-        setStatus(result.success
-          ? 'Saved on the timeline and stored for the next transcription and edit.'
-          : (result.detail || 'The caption was saved. The training example was not.'));
+        setStatus(chosen.taught
+          ? 'Updated on this video and taught for the same section on a new video.'
+          : 'Updated on this video. It was not taught, because this wording misses the medical meaning.');
       } else {
-        setStatus('Caption saved on the timeline.');
+        setStatus('Updated on this video only.');
       }
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
@@ -209,25 +191,6 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
           )}
         </div>
       </div>
-      <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold text-neutral-900">Teach a new video</p>
-            <p className="text-[11px] text-neutral-600">
-              This video keeps its saved lines. Accepted lines are checked on a held-back set before a new video can reuse them.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={training}
-            onClick={() => { void teachNewVideos(); }}
-            className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100 disabled:opacity-50"
-          >
-            {training ? 'Checking…' : 'Check accepted lines'}
-          </button>
-        </div>
-        {trainStatus && <p className="mt-1 text-[11px] text-neutral-700">{trainStatus}</p>}
-      </div>
       <div className="flex justify-end">
         <input
           value={query}
@@ -271,8 +234,28 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
               </div>
               {open && draft && (
                 <div className="mt-2 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-neutral-800">Choose the reading for this section</p>
+                  <div className="space-y-1">
+                    {readings.map((reading) => {
+                      const selected = draft.spoken.trim() === reading.text;
+                      return (
+                        <button
+                          key={reading.kind}
+                          type="button"
+                          onClick={() => setDraft({ ...draft, spoken: reading.text })}
+                          className={`block w-full rounded-md border px-2 py-1.5 text-left text-xs ${selected ? 'border-neutral-900 bg-neutral-100 text-neutral-900' : 'border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50'}`}
+                        >
+                          <span className="block text-[10px] font-semibold uppercase tracking-wide text-neutral-500">{reading.label}</span>
+                          {reading.text}
+                        </button>
+                      );
+                    })}
+                    {readings.length === 0 && (
+                      <p className="text-[11px] text-neutral-500">No other reading for this section. You can type one below.</p>
+                    )}
+                  </div>
                   <label className="block text-[11px] text-neutral-600">
-                    Spoken line
+                    English for this section
                     <textarea
                       value={draft.spoken}
                       onChange={(event) => setDraft({ ...draft, spoken: event.target.value })}
@@ -322,7 +305,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
                       onClick={() => { void persist(caption, draft, false); }}
                       className="rounded border border-neutral-300 bg-white px-2 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100 disabled:opacity-50"
                     >
-                      Save edit
+                      Update this video
                     </button>
                     <button
                       type="button"
@@ -330,7 +313,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
                       onClick={() => { void persist(caption, draft, true); }}
                       className="rounded bg-neutral-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
                     >
-                      Save mapping for training
+                      Update this video and the model
                     </button>
                     <span className="text-[11px] text-neutral-500">{status}</span>
                   </div>

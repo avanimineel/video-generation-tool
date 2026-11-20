@@ -212,6 +212,47 @@ def training_status() -> dict:
     return status
 
 
+def promote_chosen_line(
+    source: str,
+    english: str,
+    *,
+    domain: str = "general",
+    project_id: str = "",
+    start_sec: Optional[float] = None,
+    end_sec: Optional[float] = None,
+) -> bool:
+    """The editor picked this reading. Teach that exact section, and only if it passes the medical check."""
+    from app.services.accepted_pairs import record_accepted_pair
+    from app.services.translation_service import translation_service
+    source_text = _key(source)
+    rendered = _key(english)
+    if not source_text or not rendered or translation_service.is_devanagari(rendered):
+        return False
+    if translation_service.medical_english_is_unusable(source_text, rendered, domain=domain):
+        return False
+    record_accepted_pair(
+        source_text,
+        rendered,
+        domain=domain,
+        project_id=project_id,
+        start_sec=start_sec,
+        end_sec=end_sec,
+        origin="editor",
+    )
+    path = _model_path()
+    learned = {}
+    if path.exists():
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(saved.get("pairs"), dict):
+                learned = dict(saved["pairs"])
+        except (OSError, ValueError):
+            learned = {}
+    learned[source_text] = rendered
+    _write_model(learned, 0, len(learned))
+    return True
+
+
 def promoted_english(source: str) -> Optional[str]:
     path = _model_path()
     if not path.exists():

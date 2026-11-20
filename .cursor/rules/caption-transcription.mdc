@@ -15,7 +15,7 @@ Before changing Whisper, translation, NLLB, caption layout, Join sentences, Redo
 - Hindi uses Gemini when a key exists. NLLB `facebook/nllb-200-distilled-600M` is the fallback. English lines stay local.
 - Reject Latin spellings (“Adelog”) and fluent wrong meanings (“thief” / “television” / “TV-like” for TB, “cough” for lung cancer). `correct_medical_lines` replaces them with TB-like. Do not wait for a person to mark the line.
 - A TB-versus-television decision uses `RunningInferences`: the current line first, then earlier lines in the same video and the medical domain. `टीवी पर` stays television.
-- A correct sentence stays. A saved edit that fails the medical check is not restored.
+- A correct sentence stays. Opening a project does not replace stored English with a medical template. The editor picks a reading per caption.
 - Same video and new video run together. This video restores saved captions by time. An accepted line is also appended to `accepted_translation_pairs.jsonl` for a later training run.
 - **Save mapping for training** stores the line and time for this video’s next prompt. It does not change model weights inside the caption pass.
 - **Redo captions** reruns the same video. It clears captions and `translation_checkpoints`, then the medical rules and any saved line that still passes are applied again.

@@ -46,7 +46,7 @@ Decisions such as TB versus television use `RunningInferences`, walked in time o
 - If the line itself does not decide, earlier lines do. TB already established, or a lung disease already established in a medical project, makes a later `टीवी` into TB.
 - The Gemini prompt for that later line includes those inferences and is told to write TB-like, not TV-like.
 - English that still says “TV-like”, “TV”, or “television” for that decision is rejected. The replacement is “TB-like”.
-- A line already stored on the project, including one marked `editor_locked` by Save edit, is corrected when the project is opened. The running server must be restarted after this code changes; it does not reload by itself. A finished translation is not treated as done while that English is still unusable.
+- Opening a project does not rewrite stored captions. A medical reading is offered on that caption for the editor to pick. It is not written until they choose **Update this video** or **Update this video and the model**.
 - The spoken line about half the people, TB medicine, and half the people treating it as a lung infection with no medicine is two clauses. “कोई दवाई नहीं” means no medicine is started. It does not mean the illness is not an infection.
 - After a lung-disease line, or on a patient line: `जाथ पेशेन्द` / `ददॉन` is “most patients come without any pain,” not the spellings “Jath”, “Profesand”, or “Dadon.” `सास में` with `दिक्कत` is breathing. It is not mother-in-law, and `पेशेंट` is not “a professional.” A family line such as `मेरी सास ने` stays mother-in-law.
 - Saving a mapping still does not train Whisper or NLLB. A later weight update is a separate job and only uses lines that already passed this check.

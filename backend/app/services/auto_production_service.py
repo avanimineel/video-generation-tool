@@ -372,7 +372,8 @@ class AutoProductionService:
             or any(not (c.translated_text or '').strip() for c in state.captions)
         )
         def _english_ready(caption) -> bool:
-            return translation_service.english_is_display_ready(caption)
+            english = caption.translated_text or ""
+            return bool(english.strip()) and not translation_service.is_devanagari(english) and not translation_service.is_transliteration_fragment(caption.text, english)
 
         is_already_translated = (
             state.detected_language != 'en'
@@ -448,8 +449,6 @@ class AutoProductionService:
                 )
                 translation_errors.append('Subtitle translation failed: ' + safe_error(exc))
         else:
-            domain = getattr(getattr(state, "settings", None), "domain_profile", None)
-            state.captions = translation_service.correct_medical_lines(state.captions, domain=domain)
             _stage_log(
                 "translation_skipped",
                 project_id=project_id,

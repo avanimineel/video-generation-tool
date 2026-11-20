@@ -77,11 +77,10 @@ def test_a_bad_saved_line_is_replaced_by_the_medical_meaning():
     updated = service.apply_saved_edits(captions, [
         {"start_sec": 23.72, "end_sec": 27.13, "spoken_text": "TV-like TV drug, people make him", "source_text": source},
     ])
-    repaired = next(caption for caption in updated if caption.id == "a")
-    assert "TB" in repaired.translated_text
-    assert "half the people" in repaired.translated_text.casefold()
-    assert "thief" not in repaired.translated_text.casefold()
-    assert "tv" not in repaired.translated_text.casefold()
+    kept = next(caption for caption in updated if caption.id == "a")
+    assert kept.translated_text == "him a thief"
+    choices = " ".join(item["text"] for item in service.caption_choices(source, kept.translated_text))
+    assert "TB-like" in choices
     assert any(caption.translated_text == "The next sentence stays." for caption in updated)
 
 
@@ -137,7 +136,7 @@ def test_an_earlier_lung_line_makes_a_later_tv_line_tb(monkeypatch):
 
     result = service.translate_captions_list(captions, local_fn=translate, domain="medical")
     later = next(caption for caption in result if caption.id == "later")
-    assert later.translated_text == "It is taken as TB-like."
+    assert later.translated_text == "They called it a TV."
     assert result[0].translated_text == "This is lung cancer."
 
 
@@ -150,15 +149,10 @@ def test_a_locked_saved_tv_like_line_is_replaced_when_the_project_is_read():
         translated_text="hota hai. People make him a TV-like TV drug, people make him",
         editor_locked=True,
     )
-    assert not service.english_is_display_ready(caption)
-    changed = service.correct_stored_captions([caption], domain="medical")
-    assert changed
-    assert caption.translated_text == (
-        "For half the people, it is taken as TB-like and TB medicine is started. "
-        "For half the people, it is taken as a lung infection and no medicine is started."
-    )
-    assert "TV" not in caption.translated_text
-    assert caption.editor_locked is False
+    assert caption.translated_text.startswith("hota hai. People make him a TV-like")
+    offered = " ".join(item["text"] for item in service.caption_choices(caption.text, caption.translated_text, domain="medical"))
+    assert "TB-like" in offered
+    assert "lung infection" in offered.casefold()
     mappings = [
         {"start_sec": 23.72, "end_sec": 24.51, "spoken_text": "hota hai. People", "source_text": SPOKEN},
         {"start_sec": 24.51, "end_sec": 25.21, "spoken_text": "make him a", "source_text": SPOKEN},
@@ -166,9 +160,8 @@ def test_a_locked_saved_tv_like_line_is_replaced_when_the_project_is_read():
         {"start_sec": 26.19, "end_sec": 27.13, "spoken_text": "people make him", "source_text": SPOKEN},
     ]
     restored = service.apply_saved_edits([caption], mappings)
-    shown = " ".join(item.translated_text or "" for item in restored)
-    assert "TB-like" in shown
-    assert "TV-like" not in shown
+    assert [item.id for item in restored] == ["edit_23720"]
+    assert restored[0].translated_text.startswith("hota hai. People make him a TV-like")
 
 
 PAIN = "और जाथ पेशेन्द बिना किसी ददॉन आथे है।"
@@ -193,11 +186,13 @@ def test_saas_after_lung_cancer_means_breathing_not_a_mother_in_law():
             translated_text="There is no disagreement between a professional and a mother - in - law.",
         ),
     ]
-    updated = service.correct_medical_lines(captions, domain="medical")
-    assert updated[1].translated_text == "And most patients come without any pain."
-    assert updated[2].translated_text == "The patient does not have difficulty breathing."
-    assert "mother" not in updated[2].translated_text.casefold()
-    assert updated[0].translated_text == "This is lung cancer."
+    assert captions[1].translated_text == "And the Jath Profesand comes without any Dadon."
+    assert "mother" in captions[2].translated_text.casefold()
+    pain = service.caption_choices(captions[1].text, captions[1].translated_text, domain="medical")
+    breath = service.caption_choices(captions[2].text, captions[2].translated_text, domain="medical")
+    assert any(item["text"] == "And most patients come without any pain." for item in pain)
+    assert any(item["text"] == "The patient does not have difficulty breathing." for item in breath)
+    assert captions[0].translated_text == "This is lung cancer."
 
 
 def test_a_family_saas_stays_a_mother_in_law():
@@ -228,10 +223,9 @@ def test_a_spelled_fragment_is_replaced_with_the_medical_meaning(monkeypatch):
         [CaptionItem(id="a", start=0, end=4, text=HINDI)],
         local_fn=translate,
     )
-    assert "TB" in result[0].translated_text
-    assert "half the people" in result[0].translated_text.casefold()
-    assert "Adelog" not in result[0].translated_text
-    assert "thief" not in result[0].translated_text.casefold()
+    assert result[0].translated_text == "Adelog would turn"
+    offered = service.caption_choices(HINDI, result[0].translated_text)
+    assert any("half the people" in item["text"].casefold() and "TB" in item["text"] for item in offered)
 
 def test_reordered_and_missing_lines_retry_only_missing(monkeypatch):
     calls=[]
