@@ -122,6 +122,13 @@ def test_tv_like_in_a_medical_line_is_rewritten_as_tb_like():
     assert "half the people" in repaired.casefold()
 
 
+def test_a_later_section_offers_tb_from_the_earlier_lung_line():
+    earlier = "यह लंग कैंसर है"
+    later = "उसको टीवी बताया"
+    offered = service.caption_choices(later, "They called it a TV.", domain="medical", earlier_lines=[earlier])
+    assert any(item["text"] == "It is taken as TB-like." for item in offered)
+
+
 def test_an_earlier_lung_line_makes_a_later_tv_line_tb(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
     monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
@@ -136,7 +143,7 @@ def test_an_earlier_lung_line_makes_a_later_tv_line_tb(monkeypatch):
 
     result = service.translate_captions_list(captions, local_fn=translate, domain="medical")
     later = next(caption for caption in result if caption.id == "later")
-    assert later.translated_text == "They called it a TV."
+    assert later.translated_text == "It is taken as TB-like."
     assert result[0].translated_text == "This is lung cancer."
 
 
@@ -223,9 +230,9 @@ def test_a_spelled_fragment_is_replaced_with_the_medical_meaning(monkeypatch):
         [CaptionItem(id="a", start=0, end=4, text=HINDI)],
         local_fn=translate,
     )
-    assert result[0].translated_text == "Adelog would turn"
-    offered = service.caption_choices(HINDI, result[0].translated_text)
-    assert any("half the people" in item["text"].casefold() and "TB" in item["text"] for item in offered)
+    assert "TB" in result[0].translated_text
+    assert "half the people" in result[0].translated_text.casefold()
+    assert "Adelog" not in result[0].translated_text
 
 def test_reordered_and_missing_lines_retry_only_missing(monkeypatch):
     calls=[]

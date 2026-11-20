@@ -412,9 +412,19 @@ class TranslationService:
             return False
         return True
 
-    def caption_choices(self, source: str, english: str, domain: Optional[str] = None) -> List[Dict[str, str]]:
-        """Readings for this one section. Nothing is written until the editor picks one."""
+    def caption_choices(
+        self,
+        source: str,
+        english: str,
+        domain: Optional[str] = None,
+        earlier_lines: Optional[List[str]] = None,
+    ) -> List[Dict[str, str]]:
+        """Readings for this one section. Earlier lines decide TB, pain, and breathing. Nothing is written until the editor picks one."""
         options: List[Dict[str, str]] = []
+        state = RunningInferences(domain)
+        for line in earlier_lines or []:
+            state.note(self.normalize_medical_asr(line, prior=state.snapshot(), domain=domain))
+        prior = state.snapshot()
 
         def add(kind: str, label: str, text: str) -> None:
             cleaned = " ".join((text or "").split())
@@ -423,7 +433,7 @@ class TranslationService:
             options.append({"kind": kind, "label": label, "text": cleaned})
 
         add("video", "On this video now", english)
-        add("medical", "Medical reading of this section", self.repair_medical_english(source, domain=domain))
+        add("medical", "Medical reading of this section", self.repair_medical_english(source, prior=prior, domain=domain))
         from app.services.translation_training import promoted_english
         add("taught", "Same section already taught", promoted_english(source) or "")
         return options
@@ -437,12 +447,15 @@ class TranslationService:
         self,
         captions: List[CaptionItem],
         domain: Optional[str] = None,
+        only_ids: Optional[set] = None,
     ) -> List[CaptionItem]:
+        """Walk the video in time order. Replace only a new or unusable line. A usable sentence stays."""
         state = RunningInferences(domain)
         for caption in sorted(captions, key=lambda item: (item.start, item.end)):
             prior = state.snapshot()
             english = caption.translated_text or ""
-            if self.medical_english_is_unusable(caption.text, english, prior=prior, domain=domain):
+            selected = only_ids is None or caption.id in only_ids
+            if selected and self.medical_english_is_unusable(caption.text, english, prior=prior, domain=domain):
                 from app.services.translation_training import promoted_english
                 learned = promoted_english(caption.text)
                 repaired = learned if learned and not self.medical_english_is_unusable(
@@ -519,7 +532,7 @@ class TranslationService:
         source_words = re.findall(r"[\u0900-\u097F]+", source)
         return bool(source_words) and len(english.split()) <= 4 and len(source_words) >= 6
 
-    def restore_sentences(self, captions: List[CaptionItem]) -> List[CaptionItem]:
+    def restore_sentences(self, captions: List[CaptionItem], domain: Optional[str] = None) -> List[CaptionItem]:
         """Join adjacent short captions into the spoken sentence they came from."""
         ordered = sorted(captions, key=lambda caption: (caption.start, caption.end))
         if len(ordered) < 2:
@@ -544,7 +557,8 @@ class TranslationService:
                 groups[-1].append(caption)
             else:
                 groups.append([caption])
-        return [self._merge_sentence(group) for group in groups]
+        merged = [self._merge_sentence(group) for group in groups]
+        return self.correct_medical_lines(merged, domain=domain)
 
     def _merge_sentence(self, group: List[CaptionItem]) -> CaptionItem:
         if len(group) == 1:
@@ -1093,12 +1107,18 @@ class TranslationService:
                 caption_count=len(captions),
                 translated_so_far=len(translated_texts),
             )
+        written = []
+        for offset, idx in enumerate(pending_indexes):
+            if offset >= len(translated_texts):
+                break
+            captions[idx].translated_text = translated_texts[offset]
+            written.append(captions[idx].id)
+        self.correct_medical_lines(captions, domain=domain, only_ids=set(written))
         for offset, idx in enumerate(pending_indexes):
             if offset >= len(translated_texts):
                 break
             cap = captions[idx]
-            t_text = translated_texts[offset]
-            cap.translated_text = t_text
+            t_text = cap.translated_text or ""
 
             if t_text == cap.text:
                 continue

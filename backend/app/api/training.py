@@ -11,6 +11,7 @@ class ChoiceRequest(BaseModel):
     source_text: str = ""
     english: str = ""
     domain: str = "general"
+    earlier_lines: list[str] = []
 
 
 class ChooseRequest(BaseModel):
@@ -29,7 +30,7 @@ def get_training_status():
 
 @router.post("/choices")
 def caption_choices(req: ChoiceRequest):
-    return {"options": translation_service.caption_choices(req.source_text, req.english, req.domain)}
+    return {"options": translation_service.caption_choices(req.source_text, req.english, req.domain, req.earlier_lines)}
 
 
 @router.post("/choose")

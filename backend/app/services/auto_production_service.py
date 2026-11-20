@@ -421,7 +421,10 @@ class AutoProductionService:
             try:
                 from app.services.caption_mappings import list_mappings
                 state.captions = translation_service.join_hindi_clauses(state.captions)
-                state.captions = translation_service.restore_sentences(state.captions)
+                state.captions = translation_service.restore_sentences(
+                    state.captions,
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+                )
                 state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
                 state.captions = translation_service.translate_captions_list(
                     state.captions,
@@ -461,7 +464,10 @@ class AutoProductionService:
 
         if not translation_errors and (state.ai_ingestion or {}).get('caption_layout_pending'):
             from app.services.caption_mappings import list_mappings
-            state.captions = translation_service.restore_sentences(state.captions)
+            state.captions = translation_service.restore_sentences(
+                state.captions,
+                domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+            )
             state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
             state.ai_ingestion['caption_layout_pending'] = False
             state.ai_ingestion['caption_layout_note'] = 'Captions stay as spoken sentences. Edited lines are kept.'

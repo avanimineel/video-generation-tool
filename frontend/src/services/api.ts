@@ -1746,7 +1746,7 @@ export const api = {
     return [];
   },
 
-  async captionChoices(data: { source_text: string; english: string; domain?: string }): Promise<{ options: { kind: string; label: string; text: string }[] }> {
+  async captionChoices(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ options: { kind: string; label: string; text: string }[] }> {
     const res = await fetch(`${API_BASE}/training/choices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

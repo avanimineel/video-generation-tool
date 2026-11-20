@@ -158,7 +158,7 @@ async def translate(req: TranslateRequest):
 
         def _translate_joined():
             captions = translation_service.join_hindi_clauses(state.captions)
-            captions = translation_service.restore_sentences(captions)
+            captions = translation_service.restore_sentences(captions, domain=domain)
             captions = translation_service.apply_saved_edits(captions, mappings)
             captions = translation_service.translate_captions_list(
                 captions,

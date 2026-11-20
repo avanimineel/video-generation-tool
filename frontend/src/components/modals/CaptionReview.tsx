@@ -81,10 +81,15 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
     setStatus('');
     onSeek(caption.start);
     const domain = project.settings?.domain_profile || 'general';
+    const earlier = project.captions
+      .filter((item) => item.start < caption.start)
+      .map((item) => item.text || '')
+      .filter(Boolean);
     api.captionChoices({
       source_text: caption.text || '',
       english: caption.translated_text || '',
       domain,
+      earlier_lines: earlier,
     }).then((result) => {
       setReadings(result.options || []);
     }).catch(() => {
