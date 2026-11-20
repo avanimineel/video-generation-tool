@@ -85,6 +85,79 @@ class TranslationService:
     def is_devanagari(self, text: str) -> bool:
         return bool(re.search(r'[\u0900-\u097F]', text))
 
+    _ROMAN = {
+        "अ": "a", "आ": "a", "इ": "i", "ई": "i", "उ": "u", "ऊ": "u", "ए": "e", "ऐ": "ai",
+        "ओ": "o", "औ": "au", "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "च": "ch", "छ": "chh",
+        "ज": "j", "झ": "jh", "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "त": "t", "थ": "th",
+        "द": "d", "ध": "dh", "न": "n", "प": "p", "फ": "ph", "ब": "b", "भ": "bh", "म": "m",
+        "य": "y", "र": "r", "ल": "l", "व": "v", "श": "sh", "ष": "sh", "स": "s", "ह": "h",
+        "ा": "a", "ि": "i", "ी": "i", "ु": "u", "ू": "u", "े": "e", "ै": "ai", "ो": "o",
+        "ौ": "au", "्": "", "ं": "n", "ँ": "n", "ः": "", "़": "",
+    }
+
+    def _romanize(self, word: str) -> str:
+        return "".join(self._ROMAN.get(ch, "") for ch in word)
+
+    def _close_spelling(self, hindi_word: str, english_word: str) -> bool:
+        spelled = self._romanize(hindi_word)
+        heard = re.sub(r"[^a-z]", "", english_word.casefold())
+        if len(spelled) < 3 or len(heard) < 3:
+            return False
+        if spelled in heard or heard in spelled:
+            return True
+        if abs(len(spelled) - len(heard)) > 1:
+            return False
+        previous = list(range(len(heard) + 1))
+        for i, left in enumerate(spelled, 1):
+            current = [i]
+            for j, right in enumerate(heard, 1):
+                current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (left != right)))
+            previous = current
+        return previous[-1] <= 1
+
+    def is_transliteration_fragment(self, hindi: str, english: str) -> bool:
+        """A spelling of the Hindi, not an English sentence. Do not use it."""
+        hindi_words = re.findall(r"[\u0900-\u097F]+", hindi or "")
+        english_words = (english or "").split()
+        if len(hindi_words) < 4 or not english_words:
+            return False
+        spelled = [
+            word for word in english_words
+            if any(self._close_spelling(hindi_word, word) for hindi_word in hindi_words)
+        ]
+        opens_with_spelling = self._close_spelling(hindi_words[0], english_words[0])
+        mostly_spelled = len(spelled) * 2 >= len(english_words)
+        too_short = opens_with_spelling and len(english_words) * 2 < len(hindi_words)
+        return mostly_spelled or too_short
+
+    def join_hindi_clauses(self, captions: List[CaptionItem]) -> List[CaptionItem]:
+        """One spoken Hindi line is translated once. Three-word slices are not separate sentences."""
+        if not captions:
+            return captions
+        joined: List[CaptionItem] = []
+        for caption in captions:
+            text = (caption.text or "").strip()
+            previous = joined[-1] if joined else None
+            can_join = (
+                previous is not None
+                and self.is_devanagari(previous.text)
+                and self.is_devanagari(text)
+                and caption.start - previous.end <= 0.6
+                and not previous.text.rstrip().endswith(("।", ".", "?", "!"))
+                and len(previous.text.split()) < 18
+            )
+            if not can_join:
+                item = caption.model_copy(deep=True)
+                item.source_caption_ids = list(caption.source_caption_ids or [caption.id])
+                joined.append(item)
+                continue
+            previous.text = f"{previous.text.rstrip()} {text}".strip()
+            previous.end = max(previous.end, caption.end)
+            previous.words = list(previous.words) + list(caption.words)
+            previous.translated_text = None
+            previous.source_caption_ids = list(previous.source_caption_ids) + [caption.id]
+        return joined
+
     def translate_with_gemini(self, text_list: List[str], checkpoint=None) -> List[str]:
         from app.services.editorial_planner import gemini_json
         import json
@@ -130,7 +203,8 @@ class TranslationService:
                     pending_count=len(pending),
                     accepted_count=len(accepted),
                 )
-                prompt = ("Translate Hindi, Hinglish and English into faithful English subtitles. "
+                prompt = ("Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
+                          "Do not spell Hindi sounds in Latin letters. "
                           "Keep all facts, names, numbers and negation. Do not invent or summarize. "
                           "Each ID is a separate subtitle fragment: return exactly one nonempty English text per requested ID, "
                           "even when adjacent fragments form a sentence. Never merge, renumber or omit IDs. "
@@ -150,6 +224,9 @@ class TranslationService:
                     if ident in candidates:
                         duplicates.add(ident)
                     if isinstance(text, str) and any(c.isalnum() for c in text) and not self.is_devanagari(text):
+                        source_text = next(row["text"] for row in pending if row["id"] == ident)
+                        if self.is_transliteration_fragment(source_text, text):
+                            continue
                         candidates[ident] = text.strip()
                 accepted.update({i:t for i,t in candidates.items() if i not in duplicates})
                 if checkpoint:
@@ -264,6 +341,11 @@ class TranslationService:
                         raise ValueError(
                             f'Local translation produced unusable English for subtitle line {idx + 1}; '
                             'original speech is saved.'
+                        )
+                    if self.is_transliteration_fragment(text_list[idx], text):
+                        raise ValueError(
+                            f'Local translation spelled Hindi aloud for subtitle line {idx + 1} '
+                            'instead of converting the whole line to English; original speech is saved.'
                         )
                     accepted[idx] = text.strip()
                 if checkpoint:

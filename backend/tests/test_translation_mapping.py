@@ -1,6 +1,60 @@
 import pytest
+from app.core.models import CaptionItem
 from app.services.translation_service import translation_service as service
 from app.services import editorial_planner as planner
+
+HINDI = "अदेलोग उसको टीवे माणके टीवे की दवाई चालू कर देते"
+
+
+def test_a_spelled_hindi_fragment_is_not_usable_english():
+    assert service.is_transliteration_fragment(HINDI, "Adelog would turn")
+    assert not service.is_transliteration_fragment(HINDI, "They start TB medicine for half the people")
+
+
+def test_hindi_slices_are_translated_together_and_the_english_is_kept(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    seen = []
+
+    def translate(lines):
+        seen.extend(lines)
+        return ["They start TB medicine for half the people" for _ in lines]
+
+    captions = [
+        CaptionItem(id="a", start=10.0, end=11.0, text="अदेलोग उसको टीवे"),
+        CaptionItem(id="b", start=11.0, end=12.0, text="माणके टीवे की"),
+        CaptionItem(id="c", start=12.0, end=13.4, text="दवाई चालू कर देते"),
+    ]
+    joined = service.join_hindi_clauses(captions)
+    result = service.translate_captions_list(joined, local_fn=translate)
+    assert seen == [HINDI]
+    assert len(result) == 1
+    assert result[0].translated_text == "They start TB medicine for half the people"
+    assert result[0].start == 10.0 and result[0].end == 13.4
+
+
+def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
+    from app.services.transcription_service import TranscriptionService
+    words = []
+    start = 10.0
+    for word in HINDI.split():
+        words.append({"word": word, "start": start, "end": start + 0.3})
+        start += 0.3
+    chunks = TranscriptionService().chunk_spoken_phrases(words)
+    assert len(chunks) == 1
+    assert " ".join(word["word"] for word in chunks[0]) == HINDI
+
+
+def test_a_spelled_fragment_is_not_stored_as_the_english(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+
+    def translate(lines):
+        return ["Adelog would turn" for _ in lines]
+
+    with pytest.raises(ValueError, match="converting the whole line"):
+        service.translate_captions_list(
+            [CaptionItem(id="a", start=0, end=4, text=HINDI)],
+            local_fn=translate,
+        )
 
 def test_reordered_and_missing_lines_retry_only_missing(monkeypatch):
     calls=[]

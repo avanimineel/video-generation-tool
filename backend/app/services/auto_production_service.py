@@ -353,12 +353,17 @@ class AutoProductionService:
             or any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
             or any(not (c.translated_text or '').strip() for c in state.captions)
         )
+        def _english_ready(caption) -> bool:
+            english = caption.translated_text or ""
+            return bool(english.strip()) and not translation_service.is_devanagari(english) and not translation_service.is_transliteration_fragment(caption.text, english)
+
         is_already_translated = (
             state.detected_language != 'en'
-            and all((c.translated_text or '').strip() for c in state.captions)
-            and not any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
+            and all(_english_ready(c) for c in state.captions)
             and any((c.translated_text or '') != c.text for c in state.captions)
         )
+        if any(translation_service.is_devanagari(c.text) and not _english_ready(c) for c in state.captions):
+            needs_translation = True
         translation_preference = translation_service.translation_backend_preference()
         gemini_key_present = False
         try:
@@ -396,6 +401,7 @@ class AutoProductionService:
                 gemini_key_present=gemini_key_present,
             )
             try:
+                state.captions = translation_service.join_hindi_clauses(state.captions)
                 state.captions = translation_service.translate_captions_list(
                     state.captions,
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',

@@ -276,6 +276,25 @@ class TranscriptionService:
         size = max(1, min(20, words_per_caption))
         return [words[i:i + size] for i in range(0, len(words), size)]
 
+    def chunk_spoken_phrases(self, words: List[Dict[str, Any]], max_words: int = 14, pause: float = 0.45) -> List[List[Dict[str, Any]]]:
+        """Keep a Hindi clause together so it can be translated before it is used."""
+        if not words:
+            return []
+        chunks: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        limit = max(4, min(18, max_words))
+        for word in words:
+            if current:
+                gap = float(word.get("start") or 0) - float(current[-1].get("end") or 0)
+                ended = str(current[-1].get("word") or "").rstrip().endswith((".", "?", "!", "।"))
+                if gap >= pause or ended or len(current) >= limit:
+                    chunks.append(current)
+                    current = []
+            current.append(word)
+        if current:
+            chunks.append(current)
+        return chunks
+
     def transcribe_with_whisper(
         self,
         media_path: str,
@@ -395,7 +414,11 @@ class TranscriptionService:
                 continue
 
             # Break segment into sentence-aware 3-5 word subtitle chunks
-            chunks = self.chunk_segment_words(seg_words, words_per_caption)
+            segment_text = " ".join(word["word"] for word in seg_words)
+            if re.search(r"[\u0900-\u097F]", segment_text):
+                chunks = self.chunk_spoken_phrases(seg_words)
+            else:
+                chunks = self.chunk_segment_words(seg_words, words_per_caption)
 
             for chunk in chunks:
                 if not chunk:
