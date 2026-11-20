@@ -171,6 +171,42 @@ def test_a_locked_saved_tv_like_line_is_replaced_when_the_project_is_read():
     assert "TV-like" not in shown
 
 
+PAIN = "और जाथ पेशेन्द बिना किसी ददॉन आथे है।"
+BREATH = "ना पेशेनको और सास में दिकचात होता हैं।"
+
+
+def test_a_spelled_patient_line_becomes_patients_without_pain():
+    english = "And the Jath Profesand comes without any Dadon."
+    assert service.medical_english_is_unusable(PAIN, english)
+    assert service.repair_medical_english(PAIN) == "And most patients come without any pain."
+
+
+def test_saas_after_lung_cancer_means_breathing_not_a_mother_in_law():
+    captions = [
+        CaptionItem(id="lung", start=1, end=3, text="यह लंग कैंसर है", translated_text="This is lung cancer."),
+        CaptionItem(id="pain", start=40.24, end=43.32, text=PAIN, translated_text="And the Jath Profesand comes without any Dadon."),
+        CaptionItem(
+            id="breath",
+            start=43.38,
+            end=45.32,
+            text=BREATH,
+            translated_text="There is no disagreement between a professional and a mother - in - law.",
+        ),
+    ]
+    updated = service.correct_medical_lines(captions, domain="medical")
+    assert updated[1].translated_text == "And most patients come without any pain."
+    assert updated[2].translated_text == "The patient does not have difficulty breathing."
+    assert "mother" not in updated[2].translated_text.casefold()
+    assert updated[0].translated_text == "This is lung cancer."
+
+
+def test_a_family_saas_stays_a_mother_in_law():
+    source = "मेरी सास ने कहा"
+    english = "My mother-in-law said so."
+    assert not service.medical_english_is_unusable(source, english, domain="medical")
+    assert service.repair_medical_english(source, domain="medical") == ""
+
+
 def test_watching_television_stays_television_after_a_lung_line():
     captions = [
         CaptionItem(id="earlier", start=1, end=3, text="यह लंग कैंसर है", translated_text="This is lung cancer."),

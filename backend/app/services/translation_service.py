@@ -47,12 +47,16 @@ class RunningInferences:
         self.tb = False
         self.lung = False
         self.medicine = False
+        self.patient = False
+        self.symptom = False
 
     def snapshot(self) -> "RunningInferences":
         copied = RunningInferences(self.domain)
         copied.tb = self.tb
         copied.lung = self.lung
         copied.medicine = self.medicine
+        copied.patient = self.patient
+        copied.symptom = self.symptom
         return copied
 
     def note(self, source: str) -> None:
@@ -63,6 +67,10 @@ class RunningInferences:
             self.lung = True
         if re.search(r"दवाई|दवा", text):
             self.medicine = True
+        if "पेशेंट" in text or re.search(r"\bpatients?\b", text, re.IGNORECASE):
+            self.patient = True
+        if "सांस" in text or "दर्द" in text or re.search(r"\b(breath|pain)\b", text, re.IGNORECASE):
+            self.symptom = True
 
     def describe(self) -> str:
         parts = []
@@ -70,6 +78,10 @@ class RunningInferences:
             parts.append("an earlier line established TB")
         if self.lung:
             parts.append("an earlier line established lung disease")
+        if self.patient:
+            parts.append("an earlier line established patients")
+        if self.symptom:
+            parts.append("an earlier line established pain or breathing")
         if not parts:
             return ""
         if self.domain == "medical":
@@ -197,6 +209,19 @@ class TranslationService:
             return True
         return False
 
+    def _saas_means_breath(self, text: str, prior: Optional[RunningInferences] = None) -> bool:
+        """सास is breath when the line is about difficulty or a patient. A family line keeps mother-in-law."""
+        raw = text or ""
+        if "सास" not in raw:
+            return False
+        if re.search(r"ससुर|बहू|दामाद|मेरी\s*सास|सास\s*ने", raw):
+            return False
+        if re.search(r"सास\s*में", raw) and re.search(r"दिक्कत|दिकचात|तकलीफ|पेशेंट|पेशेन", raw):
+            return True
+        if prior and prior.domain == "medical" and prior.lung and re.search(r"सास\s*में", raw):
+            return True
+        return False
+
     def normalize_medical_asr(
         self,
         text: str,
@@ -211,6 +236,17 @@ class TranslationService:
         normalized = re.sub(r"लंकान्शर", "लंग कैंसर", normalized)
         normalized = re.sub(r"इन्फेक्षन|इन्फेक्शन", "इन्फेक्शन", normalized)
         normalized = re.sub(r"उसको\s*लंग्+", "उसको लंग", normalized)
+        normalized = re.sub(r"पेशेनको", "पेशेंट को", normalized)
+        normalized = re.sub(r"पेशेन्द", "पेशेंट", normalized)
+        normalized = re.sub(r"दिकचात", "दिक्कत", normalized)
+        if re.search(r"पेशेंट", normalized) and re.search(r"बिना\s+किसी", normalized):
+            normalized = re.sub(r"जाथ", "ज्यादातर", normalized)
+            normalized = re.sub(r"ददॉन|ददों|ददोन", "दर्द", normalized)
+            normalized = re.sub(r"आथे", "आते", normalized)
+            normalized = re.sub(r"दर्द(?!\s*के)", "दर्द के", normalized)
+        if self._saas_means_breath(normalized, prior or RunningInferences(domain)):
+            normalized = re.sub(r"सास", "सांस", normalized)
+            normalized = re.sub(r"पेशेंट को और सांस", "पेशेंट को सांस", normalized)
         if self.tv_means_tb(normalized, prior or RunningInferences(domain)):
             normalized = re.sub(
                 r"(?<![\u0900-\u097F])(?:टीवी|टीवे|तीवी|तीबी|तीवे)(?![\u0900-\u097F])",
@@ -229,6 +265,8 @@ class TranslationService:
         medicine_not_started = bool(re.search(r"(?:कोई\s+)?(?:दवाई|दवा)\s+नहीं", clause))
         has_infection = "इन्फेक्शन" in clause
         infection_denied = bool(re.search(r"इन्फेक्शन\s+नहीं", clause)) and not medicine_not_started
+        breath = "सांस" in clause and bool(re.search(r"दिक्कत|तकलीफ", clause))
+        no_breath = bool(re.search(r"(?:^|\s)ना(?:\s|$)", clause)) and breath
         return {
             "half": "आधे लोग" in clause,
             "tb": has_tb,
@@ -240,6 +278,9 @@ class TranslationService:
             "not_infection": infection_denied,
             "lung_infection": has_infection and "लंग" in clause and "कैंसर" not in clause and not infection_denied,
             "treat_as": bool(re.search(r"मान|जैसा|तरह", clause)),
+            "patients_without_pain": "पेशेंट" in clause and "बिना किसी" in clause and "दर्द" in clause,
+            "breath_trouble": breath,
+            "no_breath_trouble": no_breath,
         }
 
     def _medical_facts(
@@ -260,6 +301,9 @@ class TranslationService:
             "not_infection": False,
             "lung_infection": False,
             "treat_as": False,
+            "patients_without_pain": False,
+            "breath_trouble": False,
+            "no_breath_trouble": False,
         }
         for clause in self._clauses(text):
             for key, value in self._clause_facts(clause).items():
@@ -300,6 +344,17 @@ class TranslationService:
             return True
         if facts["lung_infection"] and facts["medicine_not_started"] and "infection" not in rendered:
             return True
+        if facts["patients_without_pain"] and (
+            not re.search(r"\bpatients?\b", rendered)
+            or not re.search(r"\bpain\b", rendered)
+            or re.search(r"\b(jath|profesand|dadon)\b", rendered)
+        ):
+            return True
+        if (facts["no_breath_trouble"] or facts["breath_trouble"]) and (
+            re.search(r"mother(?:\s*-\s*|\s+)in(?:\s*-\s*|\s+)law|professional|disagreement", rendered)
+            or not re.search(r"breath", rendered)
+        ):
+            return True
         return False
 
     def _repair_clause(self, facts: Dict[str, bool], tb_name: str) -> str:
@@ -324,6 +379,12 @@ class TranslationService:
             sentences.append("The disease is lung cancer.")
         elif facts["cancer"] and not facts["tb_medicine"]:
             sentences.append("The disease is cancer.")
+        if facts["patients_without_pain"]:
+            sentences.append("And most patients come without any pain.")
+        if facts["no_breath_trouble"]:
+            sentences.append("The patient does not have difficulty breathing.")
+        elif facts["breath_trouble"]:
+            sentences.append("The patient has difficulty breathing.")
         return " ".join(sentences)
 
     def repair_medical_english(
@@ -589,12 +650,14 @@ class TranslationService:
                     medical = (
                         "This is medical speech. Keep cancer, tumour, TB, biopsy, chemotherapy, and scan names as medical terms. "
                         "Do not turn a spoken disease or medicine name into an unrelated English word. "
+                        "सास means breathing, not mother-in-law, when the line is about a patient or difficulty. "
+                        "पेशेंट means patient, not a professional. दर्द means pain. "
                     )
                 if prior_findings:
                     medical += (
                         "Running inferences already recorded: " + prior_findings + ". "
-                        "Use those inferences when a word could be either TB or television. "
-                        "Write TB-like, not TV-like. "
+                        "Use those inferences when a word could be either TB or television, or breath or mother-in-law. "
+                        "Write TB-like, not TV-like. Write breathing, not mother-in-law. "
                     )
                 prompt = (
                     "Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
