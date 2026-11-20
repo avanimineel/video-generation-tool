@@ -1746,6 +1746,36 @@ export const api = {
     return [];
   },
 
+  async getTranslationTraining(): Promise<{
+    accepted_pairs: number;
+    promoted: boolean;
+    reason: string;
+    train_count: number;
+    holdout_count: number;
+    baseline_errors: number;
+    candidate_errors: number;
+    promoted_pairs: number;
+  }> {
+    const res = await fetch(`${API_BASE}/training`);
+    if (!res.ok) throw new Error('The training status could not be loaded.');
+    return res.json();
+  },
+
+  async runTranslationTraining(): Promise<{
+    promoted: boolean;
+    reason: string;
+    accepted_pairs: number;
+    train_count: number;
+    holdout_count: number;
+    baseline_errors: number;
+    candidate_errors: number;
+    promoted_pairs: number;
+  }> {
+    const res = await fetch(`${API_BASE}/training/run`, { method: 'POST' });
+    if (!res.ok) throw new Error('The training check could not be run.');
+    return res.json();
+  },
+
   async saveCaptionMapping(data: {
     project_id: string;
     caption_id?: string;

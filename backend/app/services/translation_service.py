@@ -429,7 +429,11 @@ class TranslationService:
             prior = state.snapshot()
             english = caption.translated_text or ""
             if self.medical_english_is_unusable(caption.text, english, prior=prior, domain=domain):
-                repaired = self.repair_medical_english(caption.text, prior=prior, domain=domain)
+                from app.services.translation_training import promoted_english
+                learned = promoted_english(caption.text)
+                repaired = learned if learned and not self.medical_english_is_unusable(
+                    caption.text, learned, prior=prior, domain=domain
+                ) else self.repair_medical_english(caption.text, prior=prior, domain=domain)
                 if repaired and not self.medical_english_is_unusable(caption.text, repaired, prior=prior, domain=domain):
                     caption.translated_text = repaired
                     caption.editor_locked = False

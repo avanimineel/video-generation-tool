@@ -15,6 +15,7 @@ from app.api.feedback import router as feedback_router
 from app.api.brand_video import router as brand_video_router
 from app.api.studio import router as studio_router
 from app.api.music import router as music_router
+from app.api.training import router as training_router
 
 # Install safe handlers as early as the app module loads (before most requests).
 configure_logging()
@@ -60,6 +61,7 @@ app.include_router(feedback_router)
 app.include_router(brand_video_router)
 app.include_router(studio_router)
 app.include_router(music_router)
+app.include_router(training_router)
 
 
 @app.get("/health")

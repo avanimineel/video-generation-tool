@@ -85,7 +85,11 @@ Use this skill for both. Do not pick one and leave the other for later.
 
 **Same video.** The corrected English is saved on that project’s captions. The next run of this video restores a saved line by its time range. A saved line that fails the medical check is not restored. Deleting the saved English does not remove the rule: the same Hindi is corrected again from code.
 
-**New video.** When a line is accepted, also append the Hindi and the accepted English to `accepted_translation_pairs.jsonl`. That write happens in the same pass as the save. It does not change Whisper or NLLB weights inside the caption request. A separate training run is the only place weights may change. It may read only pairs that already passed the medical check, must keep a held-out set, and must not replace the model if those held-out lines get worse. Until a trained model is promoted, a new video still uses `correct_medical_lines`, so “TV”, “mother-in-law”, and spelled names are still replaced.
+**New video.** When a line is accepted, also append the Hindi and the accepted English to `accepted_translation_pairs.jsonl`. That write happens in the same pass as the save. It does not change Whisper or NLLB weights inside the caption request.
+
+The training module is separate. Add a new trainer by implementing `Trainer.fit(train) -> LineModel`. `LineModel.translate` returns English or `None` to leave the line to the medical rules. `run_training` holds at least one accepted line back, scores that set against `NullModel`, and writes `promoted_translation_model.json` only when the held-out errors are not higher. A pair that fails the medical check is dropped before the split. The first trainer is `ExemplarTrainer`: an exact spoken line maps to its accepted English. A future weight update uses the same `Trainer` and `LineModel` interfaces and the same promotion gate.
+
+Until a model is promoted, a new video still uses `correct_medical_lines`. After promotion, a matching line may use the stored English, and the medical check still rejects “TV”, “mother-in-law”, and spelled names. The captions screen calls `POST /api/training/run` from **Check accepted lines**.
 
 Do not write Gemini output, vision labels, or an editor line into the weights from the caption pass. Vision confirms a pictured entity. It does not write the sentence.
 
@@ -99,6 +103,8 @@ Do not write Gemini output, vision labels, or an editor line into the weights fr
 | Redo captions, skip 3-word layout | `backend/app/services/auto_production_service.py` |
 | Saved lines for this video, prompt examples | `backend/app/services/caption_mappings.py` |
 | Accepted pairs for a later training run | `backend/app/services/accepted_pairs.py` |
+| Training interfaces, holdout, promotion | `backend/app/services/translation_training.py` |
+| Teach a new video | `POST /api/training/run`, `CaptionReview.tsx` |
 | Legacy 3-word display | `backend/app/services/automatic_captions.py` |
 | Join sentences button | `frontend/src/components/modals/CaptionReview.tsx` |
 

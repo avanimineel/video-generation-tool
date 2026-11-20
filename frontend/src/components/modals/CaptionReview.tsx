@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CaptionItem, ProjectState, WordTiming } from '../../types';
 import { api } from '../../services/api';
 
@@ -47,6 +47,8 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
   const [status, setStatus] = useState('');
   const [busyId, setBusyId] = useState('');
   const [joining, setJoining] = useState(false);
+  const [training, setTraining] = useState(false);
+  const [trainStatus, setTrainStatus] = useState('');
 
   const counts = useMemo(() => {
     const tally = new Map<string, number>();
@@ -66,6 +68,39 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
       || (caption.translated_text || '').toLowerCase().includes(needle)
     );
   }, [project.captions, query]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getTranslationTraining()
+      .then((status) => {
+        if (cancelled) return;
+        const taught = status.promoted
+          ? `New videos can reuse ${status.promoted_pairs} accepted lines.`
+          : 'New videos still use the medical fixes only.';
+        setTrainStatus(`${status.accepted_pairs} accepted lines. ${taught}`);
+      })
+      .catch(() => {
+        if (!cancelled) setTrainStatus('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function teachNewVideos() {
+    setTraining(true);
+    try {
+      const report = await api.runTranslationTraining();
+      const held = report.holdout_count
+        ? ` ${report.holdout_count} lines were held back and ${report.candidate_errors} of them got worse.`
+        : '';
+      setTrainStatus(`${report.reason}${held}`);
+    } catch (err) {
+      setTrainStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTraining(false);
+    }
+  }
 
   function openEdit(caption: CaptionItem) {
     setEditingId(caption.id);
@@ -172,13 +207,34 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
               Redo captions
             </button>
           )}
+        </div>
+      </div>
+      <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-semibold text-neutral-900">Teach a new video</p>
+            <p className="text-[11px] text-neutral-600">
+              This video keeps its saved lines. Accepted lines are checked on a held-back set before a new video can reuse them.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={training}
+            onClick={() => { void teachNewVideos(); }}
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            {training ? 'Checking…' : 'Check accepted lines'}
+          </button>
+        </div>
+        {trainStatus && <p className="mt-1 text-[11px] text-neutral-700">{trainStatus}</p>}
+      </div>
+      <div className="flex justify-end">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search captions"
           className="w-48 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-900"
         />
-        </div>
       </div>
       {status && !editingId && <p className="text-[11px] text-neutral-600">{status}</p>}
       <div className="max-h-80 overflow-y-auto space-y-1.5">
