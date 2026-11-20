@@ -153,12 +153,21 @@ async def translate(req: TranslateRequest):
     from app.services.editorial_planner import safe_error
     try:
         domain = getattr(getattr(state, "settings", None), "domain_profile", None)
-        updated_captions = await run_in_threadpool(
-            lambda: translation_service.translate_captions_list(
-                state.captions,
+        from app.services.caption_mappings import list_mappings
+        mappings = list_mappings(state.id)
+
+        def _translate_joined():
+            captions = translation_service.join_hindi_clauses(state.captions)
+            captions = translation_service.restore_sentences(captions)
+            captions = translation_service.apply_saved_edits(captions, mappings)
+            captions = translation_service.translate_captions_list(
+                captions,
                 checkpoint_dir=settings.projects_dir/state.id/'transcription'/'translation_checkpoints',
                 domain=domain,
-            ))
+            )
+            return translation_service.apply_saved_edits(captions, mappings)
+
+        updated_captions = await run_in_threadpool(_translate_joined)
     except Exception as exc:
         raise HTTPException(503, detail=safe_error(exc))
     state.captions = updated_captions

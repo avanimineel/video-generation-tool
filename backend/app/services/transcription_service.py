@@ -423,12 +423,9 @@ class TranscriptionService:
             if not seg_words:
                 continue
 
-            # Break segment into sentence-aware 3-5 word subtitle chunks
-            segment_text = " ".join(word["word"] for word in seg_words)
-            if re.search(r"[\u0900-\u097F]", segment_text):
-                chunks = self.chunk_spoken_phrases(seg_words)
-            else:
-                chunks = self.chunk_segment_words(seg_words, words_per_caption)
+            # Keep a spoken clause together. Three-word boxes are restored only
+            # for the legacy layout helper, not for the captions the editor reads.
+            chunks = self.chunk_spoken_phrases(seg_words, max_words=18)
 
             for chunk in chunks:
                 if not chunk:

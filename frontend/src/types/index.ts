@@ -60,6 +60,7 @@ export interface CaptionItem {
   style: CaptionStyle;
   source_language: string;
   translated_text?: string | null;
+  editor_locked?: boolean;
 }
 
 export interface MotionGraphicItem {

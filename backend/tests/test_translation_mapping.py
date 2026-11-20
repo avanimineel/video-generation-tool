@@ -34,6 +34,56 @@ def test_hindi_slices_are_translated_together_and_the_english_is_kept(monkeypatc
     assert result[0].start == 10.0 and result[0].end == 13.4
 
 
+def test_short_captions_join_into_the_spoken_sentence():
+    slices = [
+        CaptionItem(id="a", start=12.45, end=13.55, text="बुट आपको आश्चर्रे हो गए जानके", translated_text="you'd be surprised"),
+        CaptionItem(id="b", start=13.55, end=14.40, text="बुट आपको आश्चर्रे हो गए जानके", translated_text="to learn that"),
+        CaptionItem(id="c", start=14.40, end=15.35, text="बुट आपको आश्चर्रे हो गए जानके", translated_text="in our country,"),
+    ]
+    joined = service.restore_sentences(slices)
+    assert len(joined) == 1
+    assert joined[0].translated_text == "you'd be surprised to learn that in our country,"
+    assert joined[0].text == "बुट आपको आश्चर्रे हो गए जानके"
+
+
+def test_an_edited_line_is_not_translated_again(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
+    edited = CaptionItem(
+        id="kept",
+        start=0,
+        end=2,
+        text="अदेलोग उसको टीवे माणके टीवे की दवाई चालू कर देते",
+        translated_text="They start TB medicine",
+        editor_locked=True,
+    )
+    fresh = CaptionItem(id="new", start=2, end=4, text="फेफड़े का कैंसर")
+
+    def translate(lines):
+        assert lines == ["फेफड़े का कैंसर"]
+        return ["Lung cancer"]
+
+    result = service.translate_captions_list([edited, fresh], local_fn=translate)
+    assert result[0].translated_text == "They start TB medicine"
+    assert result[1].translated_text == "Lung cancer"
+
+
+def test_saved_edits_replace_the_overlapping_caption():
+    captions = [
+        CaptionItem(id="a", start=23.7, end=25.2, text="आदिय लोग", translated_text="make him a"),
+        CaptionItem(id="b", start=25.2, end=27.1, text="आदिय लोग", translated_text="people make him"),
+        CaptionItem(id="c", start=28.0, end=29.0, text="next line", translated_text="The next sentence stays."),
+    ]
+    updated = service.apply_saved_edits(captions, [
+        {"start_sec": 23.72, "end_sec": 25.21, "spoken_text": "make him a", "source_text": "आदिय लोग उसको टीवी मान के"},
+        {"start_sec": 25.21, "end_sec": 27.13, "spoken_text": "people make him", "source_text": "आदिय लोग उसको टीवी मान के"},
+    ])
+    locked = [caption for caption in updated if caption.editor_locked]
+    assert len(locked) == 1
+    assert locked[0].translated_text == "make him a people make him"
+    assert any(caption.id == "c" for caption in updated)
+
+
 def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
     from app.services.transcription_service import TranscriptionService
     words = []

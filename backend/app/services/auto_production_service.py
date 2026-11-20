@@ -419,7 +419,10 @@ class AutoProductionService:
                 gemini_key_present=gemini_key_present,
             )
             try:
+                from app.services.caption_mappings import list_mappings
                 state.captions = translation_service.join_hindi_clauses(state.captions)
+                state.captions = translation_service.restore_sentences(state.captions)
+                state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
                 state.captions = translation_service.translate_captions_list(
                     state.captions,
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
@@ -457,11 +460,11 @@ class AutoProductionService:
             )
 
         if not translation_errors and (state.ai_ingestion or {}).get('caption_layout_pending'):
-            from app.services.automatic_captions import layout_automatic_captions
-            state.captions = layout_automatic_captions(state.captions)
+            from app.services.caption_mappings import list_mappings
+            state.captions = translation_service.restore_sentences(state.captions)
+            state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
             state.ai_ingestion['caption_layout_pending'] = False
-            if state.captions and len(state.captions[-1].translated_text.split()) != 3:
-                state.ai_ingestion['caption_layout_note'] = 'Final group contains fewer than three words; no speech was invented or removed.'
+            state.ai_ingestion['caption_layout_note'] = 'Captions stay as spoken sentences. Edited lines are kept.'
 
         latest=project_manager.get_project(project_id)
         if not latest or latest.model_dump(include={"source_media_path","captions","graphics","settings"}) != initial_content:

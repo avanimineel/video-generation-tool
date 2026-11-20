@@ -167,6 +167,131 @@ class TranslationService:
             previous.source_caption_ids = list(previous.source_caption_ids) + [caption.id]
         return joined
 
+    def _display_line(self, caption: CaptionItem) -> str:
+        return (caption.translated_text or caption.text or "").strip()
+
+    def _same_spoken_source(self, left: str, right: str) -> bool:
+        a = " ".join((left or "").split())
+        b = " ".join((right or "").split())
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        return len(shorter) >= 12 and shorter in longer
+
+    def needs_new_translation(self, caption: CaptionItem) -> bool:
+        """An edited line, or an English sentence already in hand, is not sent back to the translator."""
+        if caption.editor_locked:
+            return False
+        english = (caption.translated_text or "").strip()
+        source = (caption.text or "").strip()
+        if english and not self.is_devanagari(english) and not self.is_devanagari(source):
+            return False
+        if not english or self.is_devanagari(english):
+            return bool(self.is_devanagari(source) or not english)
+        if self.is_transliteration_fragment(source, english):
+            return True
+        source_words = re.findall(r"[\u0900-\u097F]+", source)
+        return bool(source_words) and len(english.split()) <= 4 and len(source_words) >= 6
+
+    def restore_sentences(self, captions: List[CaptionItem]) -> List[CaptionItem]:
+        """Join adjacent short captions into the spoken sentence they came from."""
+        ordered = sorted(captions, key=lambda caption: (caption.start, caption.end))
+        if len(ordered) < 2:
+            return ordered
+        groups: List[List[CaptionItem]] = []
+        for caption in ordered:
+            if not groups:
+                groups.append([caption])
+                continue
+            previous = groups[-1][-1]
+            previous_line = self._display_line(previous)
+            gap = caption.start - previous.end
+            words_so_far = sum(len(self._display_line(item).split()) for item in groups[-1])
+            ended = previous_line.rstrip().endswith(("।", ".", "?", "!"))
+            short_pair = len(previous_line.split()) <= 4 and len(self._display_line(caption).split()) <= 4
+            if (
+                gap <= 0.8
+                and not ended
+                and words_so_far < 22
+                and (self._same_spoken_source(previous.text, caption.text) or short_pair)
+            ):
+                groups[-1].append(caption)
+            else:
+                groups.append([caption])
+        return [self._merge_sentence(group) for group in groups]
+
+    def _merge_sentence(self, group: List[CaptionItem]) -> CaptionItem:
+        if len(group) == 1:
+            return group[0]
+        first = group[0].model_copy(deep=True)
+        sources = [caption.text for caption in group]
+        cleaned = [" ".join(text.split()) for text in sources if text and text.strip()]
+        if cleaned:
+            longest = max(cleaned, key=len)
+            if all(part == longest or part in longest for part in cleaned):
+                first.text = longest
+            else:
+                merged = cleaned[0]
+                for part in cleaned[1:]:
+                    if part and part not in merged:
+                        merged = f"{merged} {part}".strip()
+                first.text = merged
+        english = " ".join(line for line in (self._display_line(caption) for caption in group) if line)
+        first.translated_text = english or first.text
+        first.end = max(caption.end for caption in group)
+        first.words = [word for caption in group for word in caption.words]
+        first.source_caption_ids = [caption.id for caption in group]
+        first.editor_locked = any(caption.editor_locked for caption in group)
+        return first
+
+    def apply_saved_edits(self, captions: List[CaptionItem], mappings: List[Dict[str, Any]]) -> List[CaptionItem]:
+        """Put the editor's wording back on the time range they corrected."""
+        spans: List[Dict[str, Any]] = []
+        for row in sorted(mappings or [], key=lambda item: float(item.get("start_sec") or 0)):
+            spoken = " ".join(str(row.get("spoken_text") or "").split())
+            if not spoken:
+                continue
+            start = float(row.get("start_sec") or 0)
+            end = float(row.get("end_sec") or 0)
+            if end <= start:
+                continue
+            source = " ".join(str(row.get("source_text") or "").split())
+            if spans and start - float(spans[-1]["end"]) <= 0.45:
+                spans[-1]["end"] = max(float(spans[-1]["end"]), end)
+                spans[-1]["spoken"] = f"{spans[-1]['spoken']} {spoken}".strip()
+                if len(source) > len(spans[-1]["source"]):
+                    spans[-1]["source"] = source
+            else:
+                spans.append({"start": start, "end": end, "spoken": spoken, "source": source})
+        if not spans:
+            return captions
+        kept: List[CaptionItem] = []
+        for caption in captions:
+            duration = max(0.05, caption.end - caption.start)
+            covered = False
+            for span in spans:
+                overlap = min(caption.end, span["end"]) - max(caption.start, span["start"])
+                if overlap >= min(0.35, duration * 0.5):
+                    covered = True
+                    break
+            if not covered:
+                kept.append(caption)
+        style_source = captions[0] if captions else None
+        for span in spans:
+            item = (style_source.model_copy(deep=True) if style_source else CaptionItem(id="edit", start=0, end=1, text=""))
+            item.id = f"edit_{int(span['start'] * 1000)}"
+            item.start = span["start"]
+            item.end = span["end"]
+            item.text = span["source"] or span["spoken"]
+            item.translated_text = span["spoken"]
+            item.editor_locked = True
+            item.words = []
+            item.source_caption_ids = [item.id]
+            kept.append(item)
+        return sorted(kept, key=lambda caption: (caption.start, caption.end))
+
     def translate_with_gemini(self, text_list: List[str], checkpoint=None, domain: Optional[str] = None) -> List[str]:
         from app.services.editorial_planner import gemini_json
         import json
@@ -224,8 +349,8 @@ class TranslationService:
                     "Do not spell Hindi sounds in Latin letters. "
                     + medical
                     + "Keep all facts, names, numbers and negation. Do not invent or summarize. "
-                    + "Each ID is a separate subtitle fragment: return exactly one nonempty English text per requested ID, "
-                    + "even when adjacent fragments form a sentence. Never merge, renumber or omit IDs. "
+                    + "Each ID is one spoken sentence: return that full English sentence, not a three-word scrap. "
+                    + "Return exactly one nonempty English text per requested ID. Never renumber or omit IDs. "
                     + "Use the full context for meaning, but return only REQUESTED IDs. "
                     + "Return {lines:[{id:integer,text:string}]}. FULL CONTEXT: "
                     + json.dumps(source, ensure_ascii=False)
@@ -559,8 +684,12 @@ class TranslationService:
         for cap in captions:
             cap.text = re.sub(r'^\[EN\]\s*', '', cap.text, flags=re.IGNORECASE).strip()
 
-        # 2. Check if translation is needed
-        texts_to_translate = [c.text for c in captions]
+        # 2. Translate only lines that are still Hindi or a short scrap.
+        # An edited line and an English sentence already in hand stay as written.
+        pending_indexes = [i for i, caption in enumerate(captions) if self.needs_new_translation(caption)]
+        if not pending_indexes:
+            return captions
+        texts_to_translate = [captions[i].text for i in pending_indexes]
         chunk_size = 20
         chunk_count = (len(texts_to_translate) + chunk_size - 1) // chunk_size
         _log_info(
@@ -613,8 +742,9 @@ class TranslationService:
             )
             raise
 
-        for idx, cap in enumerate(captions):
-            t_text = translated_texts[idx] if idx < len(translated_texts) else cap.text
+        for offset, idx in enumerate(pending_indexes):
+            cap = captions[idx]
+            t_text = translated_texts[offset] if offset < len(translated_texts) else cap.text
             cap.translated_text = t_text
 
             if t_text == cap.text:

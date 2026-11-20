@@ -65,6 +65,7 @@ class CaptionItem(BaseModel):
     source_caption_ids: List[str] = Field(default_factory=list)
     timing_basis: str = "unverified"
     translated_text: Optional[str] = None
+    editor_locked: bool = False
     pos_x_during_graphic: Optional[float] = None
     pos_y_during_graphic: Optional[float] = None
 

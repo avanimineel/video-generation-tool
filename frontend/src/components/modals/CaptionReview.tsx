@@ -46,6 +46,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [joining, setJoining] = useState(false);
 
   const counts = useMemo(() => {
     const tally = new Map<string, number>();
@@ -94,6 +95,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
       text: source || caption.text,
       translated_text: spoken || source,
       words: timed,
+      editor_locked: true,
     };
     const next: ProjectState = {
       ...project,
@@ -127,16 +129,40 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
     }
   }
 
+  async function joinSentences() {
+    setJoining(true);
+    setStatus('Joining the understood lines into sentences…');
+    try {
+      const result = await api.translate(project.id);
+      if (result.captions) {
+        onSaved({ ...project, captions: result.captions });
+        setStatus('Joined into sentences. Edited lines were kept.');
+      }
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setJoining(false);
+    }
+  }
+
   return (
     <section className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 space-y-2">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-neutral-900">Captions on the timeline</h3>
           <p className="text-[11px] text-neutral-600 mt-0.5">
-            {project.captions.length} lines. Select a time to play that moment, edit the words, then save the mapping for the next run. Redo captions transcribes this video again and writes a fresh English line.
+            {project.captions.length} lines. Select a time to play that moment. Save edit keeps that line, and Join sentences gathers the understood lines into one caption.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={joining}
+            onClick={() => { void joinSentences(); }}
+            className="rounded-md bg-neutral-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+          >
+            {joining ? 'Joining…' : 'Join sentences'}
+          </button>
           {onRedoCaptions && (
             <button
               type="button"
@@ -154,6 +180,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
         />
         </div>
       </div>
+      {status && !editingId && <p className="text-[11px] text-neutral-600">{status}</p>}
       <div className="max-h-80 overflow-y-auto space-y-1.5">
         {rows.length === 0 && (
           <p className="text-xs text-neutral-500 px-1 py-4">No captions match this search.</p>
