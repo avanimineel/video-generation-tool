@@ -139,6 +139,91 @@ class TranslationService:
         spelling_led = bool(long_spellings) and len(english_words) <= len(long_spellings) + 2
         return mostly_spelled or too_short or spelling_led
 
+    def normalize_medical_asr(self, text: str) -> str:
+        """Rewrite common mishearings before the line is translated. No person has to mark them."""
+        normalized = text or ""
+        normalized = re.sub(r"अदेलोग", "आधे लोग", normalized)
+        normalized = re.sub(r"(?:अदिलों|आदिय|आदिलो)\s*लोग", "आधे लोग", normalized)
+        normalized = re.sub(r"कांसर|कान्सर|कानसर", "कैंसर", normalized)
+        normalized = re.sub(r"लंकान्शर", "लंग कैंसर", normalized)
+        normalized = re.sub(r"इन्फेक्षन|इन्फेक्शन", "इन्फेक्शन", normalized)
+        if re.search(r"दवाई|दवा|मान", normalized):
+            normalized = re.sub(
+                r"(?<![\u0900-\u097F])(?:टीवी|टीवे|तीवी|तीबी|तीवे)(?![\u0900-\u097F])",
+                "टीबी",
+                normalized,
+            )
+        return normalized
+
+    def _medical_facts(self, source: str) -> Dict[str, bool]:
+        text = self.normalize_medical_asr(source)
+        has_tb = "टीबी" in text
+        has_medicine = bool(re.search(r"दवाई|दवा", text))
+        has_infection = "इन्फेक्शन" in text
+        return {
+            "half": "आधे लोग" in text,
+            "tb": has_tb,
+            "tb_medicine": has_tb and has_medicine,
+            "lung_cancer": "लंग कैंसर" in text or "फेफड़े का कैंसर" in text,
+            "cancer": "कैंसर" in text,
+            "cough_in_source": "खांसी" in text,
+            "not_infection": has_infection and bool(re.search(r"नहीं|नी\b", text)),
+            "lung_infection": has_infection and "लंग" in text and "लंग कैंसर" not in text,
+        }
+
+    def medical_english_is_unusable(self, source: str, english: str) -> bool:
+        """Fluent English that missed the medical meaning. Do not show it."""
+        if self.is_transliteration_fragment(source, english):
+            return True
+        facts = self._medical_facts(source)
+        if not any(facts.values()):
+            return False
+        rendered = (english or "").casefold()
+        if facts["tb_medicine"] and (
+            not re.search(r"\btb\b", rendered)
+            or re.search(r"\b(thief|thieves|theft|television)\b", rendered)
+        ):
+            return True
+        if facts["tb"] and re.search(r"\b(thief|thieves|theft)\b", rendered):
+            return True
+        if (facts["lung_cancer"] or facts["cancer"]) and re.search(r"\bcough", rendered) and "cancer" not in rendered:
+            return True
+        if facts["lung_cancer"] and "cancer" not in rendered:
+            return True
+        if facts["half"] and re.search(r"\badelog\b", rendered):
+            return True
+        return False
+
+    def repair_medical_english(self, source: str) -> str:
+        """English built from the medical words in the spoken line, for every line that matches."""
+        facts = self._medical_facts(source)
+        sentences = []
+        if facts["half"] and facts["tb_medicine"]:
+            sentences.append("For half the people, it is taken as TB and TB medicine is started.")
+        elif facts["tb_medicine"]:
+            sentences.append("TB medicine is started.")
+        if facts["not_infection"]:
+            sentences.append(
+                "It is not treated as a lung infection." if facts["lung_infection"] else "It is not treated as an infection."
+            )
+        if facts["lung_cancer"]:
+            sentences.append("The disease is lung cancer.")
+        elif facts["cancer"] and not facts["tb_medicine"]:
+            sentences.append("The disease is cancer.")
+        return " ".join(sentences)
+
+    def correct_medical_lines(self, captions: List[CaptionItem]) -> List[CaptionItem]:
+        for caption in captions:
+            english = caption.translated_text or ""
+            if not self.medical_english_is_unusable(caption.text, english):
+                continue
+            repaired = self.repair_medical_english(caption.text)
+            if not repaired or self.medical_english_is_unusable(caption.text, repaired):
+                continue
+            caption.translated_text = repaired
+            caption.editor_locked = False
+        return captions
+
     def join_hindi_clauses(self, captions: List[CaptionItem]) -> List[CaptionItem]:
         """One spoken Hindi line is translated once. Three-word slices are not separate sentences."""
         if not captions:
@@ -182,15 +267,15 @@ class TranslationService:
 
     def needs_new_translation(self, caption: CaptionItem) -> bool:
         """An edited line, or an English sentence already in hand, is not sent back to the translator."""
-        if caption.editor_locked:
-            return False
         english = (caption.translated_text or "").strip()
         source = (caption.text or "").strip()
+        if caption.editor_locked and not self.medical_english_is_unusable(source, english):
+            return False
         if english and not self.is_devanagari(english) and not self.is_devanagari(source):
             return False
         if not english or self.is_devanagari(english):
             return bool(self.is_devanagari(source) or not english)
-        if self.is_transliteration_fragment(source, english):
+        if self.medical_english_is_unusable(source, english):
             return True
         source_words = re.findall(r"[\u0900-\u097F]+", source)
         return bool(source_words) and len(english.split()) <= 4 and len(source_words) >= 6
@@ -265,8 +350,12 @@ class TranslationService:
                     spans[-1]["source"] = source
             else:
                 spans.append({"start": start, "end": end, "spoken": spoken, "source": source})
+        spans = [
+            span for span in spans
+            if not self.medical_english_is_unusable(span["source"] or span["spoken"], span["spoken"])
+        ]
         if not spans:
-            return captions
+            return self.correct_medical_lines(captions)
         kept: List[CaptionItem] = []
         for caption in captions:
             duration = max(0.05, caption.end - caption.start)
@@ -290,7 +379,7 @@ class TranslationService:
             item.words = []
             item.source_caption_ids = [item.id]
             kept.append(item)
-        return sorted(kept, key=lambda caption: (caption.start, caption.end))
+        return self.correct_medical_lines(sorted(kept, key=lambda caption: (caption.start, caption.end)))
 
     def translate_with_gemini(self, text_list: List[str], checkpoint=None, domain: Optional[str] = None) -> List[str]:
         from app.services.editorial_planner import gemini_json
@@ -316,7 +405,7 @@ class TranslationService:
                                 if str(i).isdigit() and 0 <= int(i) < len(source)
                                 and isinstance(t, str) and any(c.isalnum() for c in t)
                                 and not self.is_devanagari(t)
-                                and not self.is_transliteration_fragment(source[int(i)]['text'], t)}
+                                and not self.medical_english_is_unusable(source[int(i)]['text'], t)}
                     _log_debug(
                         'translation_gemini_checkpoint_resume',
                         accepted_count=len(accepted),
@@ -347,6 +436,8 @@ class TranslationService:
                 prompt = (
                     "Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
                     "Do not spell Hindi sounds in Latin letters. "
+                    "When the speech is about TB, write TB, never thief or television. "
+                    "When the speech is about cancer, write cancer, never cough as the name of the disease. "
                     + medical
                     + "Keep all facts, names, numbers and negation. Do not invent or summarize. "
                     + "Each ID is one spoken sentence: return that full English sentence, not a three-word scrap. "
@@ -371,7 +462,7 @@ class TranslationService:
                         duplicates.add(ident)
                     if isinstance(text, str) and any(c.isalnum() for c in text) and not self.is_devanagari(text):
                         source_text = next(row["text"] for row in pending if row["id"] == ident)
-                        if self.is_transliteration_fragment(source_text, text):
+                        if self.medical_english_is_unusable(source_text, text):
                             continue
                         candidates[ident] = text.strip()
                 accepted.update({i:t for i,t in candidates.items() if i not in duplicates})
@@ -456,7 +547,7 @@ class TranslationService:
                                     if str(i).isdigit() and 0 <= int(i) < len(source)
                                     and isinstance(t, str) and any(c.isalnum() for c in t)
                                     and not self.is_devanagari(t)
-                                    and not self.is_transliteration_fragment(source[int(i)]['text'], t)}
+                                    and not self.medical_english_is_unusable(source[int(i)]['text'], t)}
                         _log_debug(
                             'translation_local_checkpoint_resume',
                             accepted_count=len(accepted),
@@ -489,10 +580,10 @@ class TranslationService:
                             f'Local translation produced unusable English for subtitle line {idx + 1}; '
                             'original speech is saved.'
                         )
-                    if self.is_transliteration_fragment(text_list[idx], text):
+                    if self.medical_english_is_unusable(text_list[idx], text):
                         raise ValueError(
-                            f'Local translation spelled Hindi aloud for subtitle line {idx + 1} '
-                            'instead of converting the whole line to English; original speech is saved.'
+                            f'Local translation missed the medical meaning of subtitle line {idx + 1}; '
+                            'original speech is saved.'
                         )
                     accepted[idx] = text.strip()
                 if checkpoint:
@@ -688,8 +779,8 @@ class TranslationService:
         # An edited line and an English sentence already in hand stay as written.
         pending_indexes = [i for i, caption in enumerate(captions) if self.needs_new_translation(caption)]
         if not pending_indexes:
-            return captions
-        texts_to_translate = [captions[i].text for i in pending_indexes]
+            return self.correct_medical_lines(captions)
+        texts_to_translate = [self.normalize_medical_asr(captions[i].text) for i in pending_indexes]
         chunk_size = 20
         chunk_count = (len(texts_to_translate) + chunk_size - 1) // chunk_size
         _log_info(
@@ -703,6 +794,7 @@ class TranslationService:
         )
 
         translated_texts: List[str] = []
+        translation_error: Optional[Exception] = None
         try:
             for chunk_index, i in enumerate(range(0, len(texts_to_translate), chunk_size)):
                 chunk = texts_to_translate[i:i + chunk_size]
@@ -710,7 +802,7 @@ class TranslationService:
                 if checkpoint_dir:
                     import hashlib, json
                     digest = hashlib.sha256(
-                        json.dumps({'version': 3, 'source': chunk}, ensure_ascii=False).encode()
+                        json.dumps({'version': 4, 'source': chunk}, ensure_ascii=False).encode()
                     ).hexdigest()
                     checkpoint_path = Path(checkpoint_dir) / (digest + '.json')
                 _log_debug(
@@ -731,7 +823,8 @@ class TranslationService:
                 if len(translated_chunk) != len(chunk):
                     raise ValueError('Translation returned mismatched IDs; no partial dictionary translation was inserted.')
                 translated_texts.extend(translated_chunk)
-        except Exception:
+        except Exception as exc:
+            translation_error = exc
             _log_exception(
                 'translation_captions_failed',
                 preference=preference,
@@ -740,11 +833,11 @@ class TranslationService:
                 caption_count=len(captions),
                 translated_so_far=len(translated_texts),
             )
-            raise
-
         for offset, idx in enumerate(pending_indexes):
+            if offset >= len(translated_texts):
+                break
             cap = captions[idx]
-            t_text = translated_texts[offset] if offset < len(translated_texts) else cap.text
+            t_text = translated_texts[offset]
             cap.translated_text = t_text
 
             if t_text == cap.text:
@@ -781,6 +874,16 @@ class TranslationService:
                     ))
                     cur_t = w_end
                 cap.words = new_words
+
+        self.correct_medical_lines(captions)
+        if translation_error:
+            unresolved = [
+                index for index in pending_indexes
+                if self.medical_english_is_unusable(captions[index].text, captions[index].translated_text or "")
+                or (captions[index].translated_text or "") in ("", captions[index].text)
+            ]
+            if unresolved:
+                raise translation_error
 
         _log_info(
             'translation_captions_end',

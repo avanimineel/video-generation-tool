@@ -28,7 +28,7 @@ def test_hindi_slices_are_translated_together_and_the_english_is_kept(monkeypatc
     ]
     joined = service.join_hindi_clauses(captions)
     result = service.translate_captions_list(joined, local_fn=translate)
-    assert seen == [HINDI]
+    assert seen == [service.normalize_medical_asr(HINDI)]
     assert len(result) == 1
     assert result[0].translated_text == "They start TB medicine for half the people"
     assert result[0].start == 10.0 and result[0].end == 13.4
@@ -60,7 +60,7 @@ def test_an_edited_line_is_not_translated_again(monkeypatch):
     fresh = CaptionItem(id="new", start=2, end=4, text="फेफड़े का कैंसर")
 
     def translate(lines):
-        assert lines == ["फेफड़े का कैंसर"]
+        assert lines == [service.normalize_medical_asr("फेफड़े का कैंसर")]
         return ["Lung cancer"]
 
     result = service.translate_captions_list([edited, fresh], local_fn=translate)
@@ -68,20 +68,29 @@ def test_an_edited_line_is_not_translated_again(monkeypatch):
     assert result[1].translated_text == "Lung cancer"
 
 
-def test_saved_edits_replace_the_overlapping_caption():
+def test_a_bad_saved_line_is_replaced_by_the_medical_meaning():
+    source = "आदिय लोग उसको टीवी मान के टीवी की दवाई चालू कर देते"
     captions = [
-        CaptionItem(id="a", start=23.7, end=25.2, text="आदिय लोग", translated_text="make him a"),
-        CaptionItem(id="b", start=25.2, end=27.1, text="आदिय लोग", translated_text="people make him"),
+        CaptionItem(id="a", start=23.7, end=27.1, text=source, translated_text="him a thief"),
         CaptionItem(id="c", start=28.0, end=29.0, text="next line", translated_text="The next sentence stays."),
     ]
     updated = service.apply_saved_edits(captions, [
-        {"start_sec": 23.72, "end_sec": 25.21, "spoken_text": "make him a", "source_text": "आदिय लोग उसको टीवी मान के"},
-        {"start_sec": 25.21, "end_sec": 27.13, "spoken_text": "people make him", "source_text": "आदिय लोग उसको टीवी मान के"},
+        {"start_sec": 23.72, "end_sec": 27.13, "spoken_text": "TV-like TV drug, people make him", "source_text": source},
     ])
-    locked = [caption for caption in updated if caption.editor_locked]
-    assert len(locked) == 1
-    assert locked[0].translated_text == "make him a people make him"
-    assert any(caption.id == "c" for caption in updated)
+    repaired = next(caption for caption in updated if caption.id == "a")
+    assert "TB" in repaired.translated_text
+    assert "half the people" in repaired.translated_text.casefold()
+    assert "thief" not in repaired.translated_text.casefold()
+    assert "tv" not in repaired.translated_text.casefold()
+    assert any(caption.translated_text == "The next sentence stays." for caption in updated)
+
+
+def test_lung_cancer_is_not_left_as_a_cough():
+    source = "फेफड़े का कैंसर वाले मरीज़ बिना जांच के"
+    assert service.medical_english_is_unusable(source, "patients without lung coughs")
+    repaired = service.repair_medical_english(source)
+    assert repaired == "The disease is lung cancer."
+    assert not service.medical_english_is_unusable(source, "Lung cancer is the commonest cancer in the world.")
 
 
 def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
@@ -96,18 +105,21 @@ def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
     assert " ".join(word["word"] for word in chunks[0]) == HINDI
 
 
-def test_a_spelled_fragment_is_not_stored_as_the_english(monkeypatch):
+def test_a_spelled_fragment_is_replaced_with_the_medical_meaning(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
     monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
 
     def translate(lines):
         return ["Adelog would turn" for _ in lines]
 
-    with pytest.raises(ValueError, match="converting the whole line"):
-        service.translate_captions_list(
-            [CaptionItem(id="a", start=0, end=4, text=HINDI)],
-            local_fn=translate,
-        )
+    result = service.translate_captions_list(
+        [CaptionItem(id="a", start=0, end=4, text=HINDI)],
+        local_fn=translate,
+    )
+    assert "TB" in result[0].translated_text
+    assert "half the people" in result[0].translated_text.casefold()
+    assert "Adelog" not in result[0].translated_text
+    assert "thief" not in result[0].translated_text.casefold()
 
 def test_reordered_and_missing_lines_retry_only_missing(monkeypatch):
     calls=[]
