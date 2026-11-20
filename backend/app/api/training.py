@@ -53,15 +53,16 @@ def caption_choices(req: ChoiceRequest):
 @router.post("/section-note")
 def suggest_section_note(req: SectionNoteRequest):
     try:
-        note = translation_service.suggest_section_note(
+        result = translation_service.suggest_section_note(
             req.source_text,
             req.english,
             domain=req.domain,
             earlier_lines=req.earlier_lines,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"note": note}
+        status = 400 if "source line" in str(exc).lower() else 503
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return result
 
 
 @router.post("/section-note/keep")

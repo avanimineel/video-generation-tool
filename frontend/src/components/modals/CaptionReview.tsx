@@ -54,6 +54,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
   const [busyId, setBusyId] = useState('');
   const [joining, setJoining] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  const [inferenceSummary, setInferenceSummary] = useState('');
   const [readings, setReadings] = useState<Reading[]>([]);
 
   const counts = useMemo(() => {
@@ -79,6 +80,7 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
     setEditingId(caption.id);
     setDraft(draftFrom(caption));
     setReadings([]);
+    setInferenceSummary('');
     setStatus('');
     onSeek(caption.start);
     const domain = project.settings?.domain_profile || 'general';
@@ -175,14 +177,20 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
         .filter((item) => item.start < caption.start)
         .map((item) => item.text || '')
         .filter(Boolean);
+      const sourceLine = draft.source.trim();
+      if (!sourceLine) {
+        setStatus('Add the source line before asking for a suggestion.');
+        return;
+      }
       const result = await api.suggestSectionNote({
-        source_text: draft.source,
+        source_text: sourceLine,
         english: draft.spoken,
         domain: project.settings?.domain_profile || 'general',
         earlier_lines: earlier,
       });
       setDraft((current) => (current ? { ...current, note: result.note } : current));
-      setStatus('Cloud suggestion is in the note. Change any word before you save.');
+      setInferenceSummary(result.inference_summary || '');
+      setStatus('Suggestion uses the source line and the inference summary. Change any word before you save.');
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -352,7 +360,10 @@ export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: Capt
                       placeholder="Type a note, or edit the AI suggestion"
                       className="mt-0.5 w-full rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-900"
                     />
-                    <p className="mt-0.5 text-[10px] text-neutral-500">Suggest from AI fills this box. Change any word, then save. The note is used the next time a similar section is translated.</p>
+                    <p className="mt-0.5 text-[10px] text-neutral-500">Suggest from AI uses the source line and the inference summary. Change any word, then save.</p>
+                    {inferenceSummary && (
+                      <p className="mt-0.5 text-[10px] text-neutral-700">Inference summary: {inferenceSummary}</p>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button

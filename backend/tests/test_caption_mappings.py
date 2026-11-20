@@ -104,14 +104,22 @@ def test_a_cloud_note_can_be_corrected_before_it_is_kept(monkeypatch):
     from app.services.translation_service import translation_service
 
     def cloud(prompt, schema):
-        assert "not the most common" in prompt or "Spoken line" in prompt
+        assert "Source line:" in prompt
+        assert "हमारे देश में लंग कांसर सबसे आम नहीं है" in prompt
+        assert "Inference summary:" in prompt
+        assert "lung cancer" in prompt
+        assert "negation" in prompt
+        assert "earlier line established lung disease" in prompt
         assert schema["required"] == ["note"]
         return {"note": "  Keep that lung cancer is not the most common cancer in this country.  "}
 
-    note = translation_service.suggest_section_note(
+    result = translation_service.suggest_section_note(
         "हमारे देश में लंग कांसर सबसे आम नहीं है",
         "The disease is lung cancer.",
         domain="medical",
+        earlier_lines=["यह लंग कैंसर है"],
         cloud_fn=cloud,
     )
-    assert note == "Keep that lung cancer is not the most common cancer in this country."
+    assert result["note"] == "Keep that lung cancer is not the most common cancer in this country."
+    assert "negation" in result["inference_summary"]
+    assert "lung disease" in result["inference_summary"]

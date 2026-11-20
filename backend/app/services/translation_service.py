@@ -438,6 +438,48 @@ class TranslationService:
         add("taught", "Same section already taught", promoted_english(source) or "")
         return options
 
+    def inference_summary(
+        self,
+        source: str,
+        domain: Optional[str] = None,
+        earlier_lines: Optional[List[str]] = None,
+    ) -> str:
+        """What earlier lines already decided, plus the claim in this source line."""
+        state = RunningInferences(domain)
+        for line in earlier_lines or []:
+            cleaned = " ".join((line or "").split())
+            if cleaned:
+                state.note(self.normalize_medical_asr(cleaned, prior=state.snapshot(), domain=domain))
+        prior = state.snapshot()
+        facts = self._medical_facts(source, prior=prior, domain=domain)
+        claims = []
+        if facts["lung_cancer"]:
+            claims.append("the source line names lung cancer")
+        elif facts["cancer"]:
+            claims.append("the source line names cancer")
+        if re.search(r"नहीं|\bnot\b", source or "", re.IGNORECASE):
+            claims.append("the source line contains a negation")
+        if "सबसे" in (source or "") or re.search(r"\bmost\b", source or "", re.IGNORECASE):
+            claims.append("the source line compares what is most common")
+        if re.search(r"आश्चर|surprise", source or "", re.IGNORECASE):
+            claims.append("the source line expresses surprise")
+        if self.tv_means_tb(source, prior):
+            claims.append("टीवी in this source line means TB")
+        if facts["tb_medicine"]:
+            claims.append("TB medicine is started")
+        if facts["lung_infection"] and facts["medicine_not_started"]:
+            claims.append("a lung infection is named and no medicine is started")
+        if facts["patients_without_pain"]:
+            claims.append("patients come without pain")
+        if facts["no_breath_trouble"]:
+            claims.append("the patient does not have difficulty breathing")
+        elif facts["breath_trouble"]:
+            claims.append("the source line is about difficulty breathing")
+        parts = [state.describe() or "no earlier inference yet"]
+        if claims:
+            parts.append("this source line: " + "; ".join(claims))
+        return ". ".join(parts)
+
     def suggest_section_note(
         self,
         source: str,
@@ -445,23 +487,24 @@ class TranslationService:
         domain: Optional[str] = None,
         earlier_lines: Optional[List[str]] = None,
         cloud_fn=None,
-    ) -> str:
-        """Ask the cloud model for a note the editor can correct before it is kept."""
+    ) -> Dict[str, str]:
+        """Ask the cloud model for a note built from the source line and the inference summary."""
         import json
         spoken = " ".join((source or "").split())
         current = " ".join((english or "").split())
-        if not spoken and not current:
-            raise ValueError("A note needs the spoken line or the English on this section.")
-        earlier = [" ".join(line.split()) for line in (earlier_lines or []) if " ".join(line.split())][-4:]
+        if not spoken:
+            raise ValueError("Add the source line before asking for a suggestion.")
+        summary = self.inference_summary(spoken, domain=domain, earlier_lines=earlier_lines)
         prompt = (
-            "Write one editor note for the next similar spoken section. "
-            "The note tells a later translation what to keep: the claim, the negation, names, and numbers. "
-            "Do not replace the line with a short label that drops the claim. "
+            "Write one editor note for the next similar section. "
+            "Use only the Source line and the inference summary. "
+            "Be specific to this source line: name its claim, its negation, and any comparison it makes. "
+            "Use the inference summary when a word could be TB or television, breath or mother-in-law, or patient or professional. "
+            "Do not shorten the source line to a label that drops its claim. "
             "One sentence, under 200 characters. Return {note: string}. "
-            "Domain: " + (domain or "general") + ". "
-            "Spoken line: " + json.dumps(spoken, ensure_ascii=False) + ". "
-            "English currently on the video: " + json.dumps(current, ensure_ascii=False) + ". "
-            "Earlier lines: " + json.dumps(earlier, ensure_ascii=False) + "."
+            "Source line: " + json.dumps(spoken, ensure_ascii=False) + ". "
+            "Inference summary: " + json.dumps(summary, ensure_ascii=False) + ". "
+            "English currently on the video, for contrast only: " + json.dumps(current, ensure_ascii=False) + "."
         )
         schema = {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}
         if cloud_fn is None:
@@ -471,7 +514,7 @@ class TranslationService:
         note = " ".join(str((data or {}).get("note") or "").split())
         if not note:
             raise ValueError("The cloud model did not return a note. Type one instead.")
-        return note[:240]
+        return {"note": note[:240], "inference_summary": summary}
 
     def correct_stored_captions(self, captions: List[CaptionItem], domain: Optional[str] = None) -> bool:
         before = [caption.translated_text for caption in captions]

@@ -1746,7 +1746,7 @@ export const api = {
     return [];
   },
 
-  async suggestSectionNote(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ note: string }> {
+  async suggestSectionNote(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ note: string; inference_summary: string }> {
     const res = await fetch(`${API_BASE}/training/section-note`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
