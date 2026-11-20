@@ -342,6 +342,22 @@ class TranslationService:
         ]
         return " ".join(sentence for sentence in sentences if sentence)
 
+    def english_is_display_ready(self, caption: CaptionItem) -> bool:
+        """A stored English line can stay only when it still matches the spoken medical meaning."""
+        english = caption.translated_text or ""
+        if not english.strip() or self.is_devanagari(english):
+            return False
+        if self.is_transliteration_fragment(caption.text, english):
+            return False
+        if self.medical_english_is_unusable(caption.text, english):
+            return False
+        return True
+
+    def correct_stored_captions(self, captions: List[CaptionItem], domain: Optional[str] = None) -> bool:
+        before = [caption.translated_text for caption in captions]
+        self.correct_medical_lines(captions, domain=domain)
+        return [caption.translated_text for caption in captions] != before
+
     def correct_medical_lines(
         self,
         captions: List[CaptionItem],

@@ -69,6 +69,11 @@ async def get_project(project_id: str):
     state = project_manager.get_project(project_id)
     if not state:
         raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.auto_jobs import active
+    from app.services.translation_service import translation_service
+    domain = getattr(getattr(state, "settings", None), "domain_profile", None)
+    if not active(project_id) and translation_service.correct_stored_captions(state.captions, domain=domain):
+        project_manager.save_project(state)
     return state
 
 @router.put("/{project_id}")

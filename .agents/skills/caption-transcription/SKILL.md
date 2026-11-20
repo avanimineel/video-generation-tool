@@ -46,6 +46,7 @@ Decisions such as TB versus television use `RunningInferences`, walked in time o
 - If the line itself does not decide, earlier lines do. TB already established, or a lung disease already established in a medical project, makes a later `टीवी` into TB.
 - The Gemini prompt for that later line includes those inferences and is told to write TB-like, not TV-like.
 - English that still says “TV-like”, “TV”, or “television” for that decision is rejected. The replacement is “TB-like”.
+- A line already stored on the project, including one marked `editor_locked` by Save edit, is corrected when the project is opened. The running server must be restarted after this code changes; it does not reload by itself. A finished translation is not treated as done while that English is still unusable.
 - The spoken line about half the people, TB medicine, and half the people treating it as a lung infection with no medicine is two clauses. “कोई दवाई नहीं” means no medicine is started. It does not mean the illness is not an infection.
 
 `medical_english_is_unusable` rejects a line when:

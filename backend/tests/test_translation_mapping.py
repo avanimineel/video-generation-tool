@@ -141,6 +141,36 @@ def test_an_earlier_lung_line_makes_a_later_tv_line_tb(monkeypatch):
     assert result[0].translated_text == "This is lung cancer."
 
 
+def test_a_locked_saved_tv_like_line_is_replaced_when_the_project_is_read():
+    caption = CaptionItem(
+        id="edit_23720",
+        start=23.72,
+        end=27.13,
+        text=SPOKEN,
+        translated_text="hota hai. People make him a TV-like TV drug, people make him",
+        editor_locked=True,
+    )
+    assert not service.english_is_display_ready(caption)
+    changed = service.correct_stored_captions([caption], domain="medical")
+    assert changed
+    assert caption.translated_text == (
+        "For half the people, it is taken as TB-like and TB medicine is started. "
+        "For half the people, it is taken as a lung infection and no medicine is started."
+    )
+    assert "TV" not in caption.translated_text
+    assert caption.editor_locked is False
+    mappings = [
+        {"start_sec": 23.72, "end_sec": 24.51, "spoken_text": "hota hai. People", "source_text": SPOKEN},
+        {"start_sec": 24.51, "end_sec": 25.21, "spoken_text": "make him a", "source_text": SPOKEN},
+        {"start_sec": 25.21, "end_sec": 26.19, "spoken_text": "TV-like TV drug,", "source_text": SPOKEN},
+        {"start_sec": 26.19, "end_sec": 27.13, "spoken_text": "people make him", "source_text": SPOKEN},
+    ]
+    restored = service.apply_saved_edits([caption], mappings)
+    shown = " ".join(item.translated_text or "" for item in restored)
+    assert "TB-like" in shown
+    assert "TV-like" not in shown
+
+
 def test_watching_television_stays_television_after_a_lung_line():
     captions = [
         CaptionItem(id="earlier", start=1, end=3, text="यह लंग कैंसर है", translated_text="This is lung cancer."),
