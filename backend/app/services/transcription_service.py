@@ -15,6 +15,17 @@ from app.services.whisper_device import (
 
 logger = get_logger(__name__)
 
+CAPTION_PROMPTS = {
+    "general": "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms.",
+    "medical": "Clinical discussion. Transcribe the diagnosis, symptoms, treatment and anatomy faithfully. Keep terms such as cancer, tumour, biopsy, chemotherapy, patient, lung, scan and x-ray.",
+    "sports": "Sports commentary. Transcribe the match, players, score and action faithfully. Keep terms such as goal, ball, coach, tournament, injury and team.",
+}
+
+
+def caption_prompt(domain: Optional[str]) -> str:
+    from app.services.project_manager import project_domain
+    return CAPTION_PROMPTS[project_domain(domain or "")]
+
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
     # number is never split across subtitle boxes; no spoken text is changed.
@@ -300,7 +311,8 @@ class TranscriptionService:
         media_path: str,
         words_per_caption: int = 3,
         task: str = 'translate',
-        model_size: Optional[str] = None
+        model_size: Optional[str] = None,
+        domain: Optional[str] = None,
     ) -> Tuple[str, List[CaptionItem]]:
         target_model = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
         model = self.get_whisper_model(target_model)
@@ -310,9 +322,7 @@ class TranscriptionService:
         # Default to 'translate' for high-accuracy English subtitles from Hindi/Hinglish speech
         whisper_task = task if task in ['transcribe', 'translate'] else 'translate'
         from app.services.caption_mappings import transcription_prompt
-        prompt = transcription_prompt(
-            "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms."
-        )
+        prompt = transcription_prompt(caption_prompt(domain))
 
         # Fast 16kHz mono audio extraction: avoids slow video container demuxing in Python
         audio_target = media_path

@@ -576,8 +576,8 @@ export const api = {
     return getInitialProjectsList();
   },
 
-  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string): Promise<ProjectState> {
-    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath})});
+  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string, domain: 'general' | 'medical' | 'sports' = 'general'): Promise<ProjectState> {
+    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath,domain_profile:domain})});
     if(!res.ok)throw new Error(`Could not create project (${res.status}).`);
     const data=await res.json();saveLocalProject(data);return data;
   },

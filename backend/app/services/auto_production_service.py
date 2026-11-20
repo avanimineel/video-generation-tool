@@ -180,7 +180,8 @@ class AutoProductionService:
                     media_file,
                     words_per_caption=3,
                     task="transcribe",
-                    model_size=model_size
+                    model_size=model_size,
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
                 )
             except Exception as e:
                 from app.services.editorial_planner import safe_error, write_json as _write_json
@@ -306,8 +307,9 @@ class AutoProductionService:
                 'video_hash': video_hash, 'issues': speech_issues,
                 'captions': [c.model_dump() for c in state.captions]})
             try:
-                repaired_lang, repaired = transcription_service.transcribe_with_whisper(
-                    media_file, words_per_caption=3, task='transcribe', model_size='medium')
+                    repaired_lang, repaired = transcription_service.transcribe_with_whisper(
+                        media_file, words_per_caption=3, task='transcribe', model_size='medium',
+                        domain=getattr(getattr(state, "settings", None), "domain_profile", None))
                 remaining = transcript_issues(repaired)
                 if not repaired or remaining:
                     raise ValueError('; '.join(remaining[:5]) or 'No speech recognized')
