@@ -152,9 +152,13 @@ async def translate(req: TranslateRequest):
     from starlette.concurrency import run_in_threadpool
     from app.services.editorial_planner import safe_error
     try:
+        domain = getattr(getattr(state, "settings", None), "domain_profile", None)
         updated_captions = await run_in_threadpool(
-            translation_service.translate_captions_list, state.captions,
-            checkpoint_dir=settings.projects_dir/state.id/'transcription'/'translation_checkpoints')
+            lambda: translation_service.translate_captions_list(
+                state.captions,
+                checkpoint_dir=settings.projects_dir/state.id/'transcription'/'translation_checkpoints',
+                domain=domain,
+            ))
     except Exception as exc:
         raise HTTPException(503, detail=safe_error(exc))
     state.captions = updated_captions

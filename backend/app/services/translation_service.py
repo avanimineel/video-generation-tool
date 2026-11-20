@@ -125,10 +125,19 @@ class TranslationService:
             word for word in english_words
             if any(self._close_spelling(hindi_word, word) for hindi_word in hindi_words)
         ]
+        long_spellings = [
+            word for word in english_words
+            if any(
+                self._close_spelling(hindi_word, word) and len(self._romanize(hindi_word)) >= 4
+                for hindi_word in hindi_words
+            )
+        ]
         opens_with_spelling = self._close_spelling(hindi_words[0], english_words[0])
         mostly_spelled = len(spelled) * 2 >= len(english_words)
         too_short = opens_with_spelling and len(english_words) * 2 < len(hindi_words)
-        return mostly_spelled or too_short
+        # "The Adelog considered" still spells a Hindi word. A real sentence does not.
+        spelling_led = bool(long_spellings) and len(english_words) <= len(long_spellings) + 2
+        return mostly_spelled or too_short or spelling_led
 
     def join_hindi_clauses(self, captions: List[CaptionItem]) -> List[CaptionItem]:
         """One spoken Hindi line is translated once. Three-word slices are not separate sentences."""
@@ -158,7 +167,7 @@ class TranslationService:
             previous.source_caption_ids = list(previous.source_caption_ids) + [caption.id]
         return joined
 
-    def translate_with_gemini(self, text_list: List[str], checkpoint=None) -> List[str]:
+    def translate_with_gemini(self, text_list: List[str], checkpoint=None, domain: Optional[str] = None) -> List[str]:
         from app.services.editorial_planner import gemini_json
         import json
         if not text_list:
@@ -177,11 +186,12 @@ class TranslationService:
         if checkpoint and checkpoint.exists():
             try:
                 cached = json.loads(checkpoint.read_text())
-                if cached.get('source') == source:
+                if cached.get('source') == source and cached.get('backend') != 'local':
                     accepted = {int(i): t for i, t in cached.get('accepted', {}).items()
                                 if str(i).isdigit() and 0 <= int(i) < len(source)
                                 and isinstance(t, str) and any(c.isalnum() for c in t)
-                                and not self.is_devanagari(t)}
+                                and not self.is_devanagari(t)
+                                and not self.is_transliteration_fragment(source[int(i)]['text'], t)}
                     _log_debug(
                         'translation_gemini_checkpoint_resume',
                         accepted_count=len(accepted),
@@ -203,14 +213,25 @@ class TranslationService:
                     pending_count=len(pending),
                     accepted_count=len(accepted),
                 )
-                prompt = ("Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
-                          "Do not spell Hindi sounds in Latin letters. "
-                          "Keep all facts, names, numbers and negation. Do not invent or summarize. "
-                          "Each ID is a separate subtitle fragment: return exactly one nonempty English text per requested ID, "
-                          "even when adjacent fragments form a sentence. Never merge, renumber or omit IDs. "
-                          "Use the full context for meaning, but return only REQUESTED IDs. "
-                          "Return {lines:[{id:integer,text:string}]}. FULL CONTEXT: " + json.dumps(source,ensure_ascii=False)
-                          + " REQUESTED: " + json.dumps(pending,ensure_ascii=False))
+                medical = ""
+                if (domain or "").strip().lower() == "medical":
+                    medical = (
+                        "This is medical speech. Keep cancer, tumour, TB, biopsy, chemotherapy, and scan names as medical terms. "
+                        "Do not turn a spoken disease or medicine name into an unrelated English word. "
+                    )
+                prompt = (
+                    "Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
+                    "Do not spell Hindi sounds in Latin letters. "
+                    + medical
+                    + "Keep all facts, names, numbers and negation. Do not invent or summarize. "
+                    + "Each ID is a separate subtitle fragment: return exactly one nonempty English text per requested ID, "
+                    + "even when adjacent fragments form a sentence. Never merge, renumber or omit IDs. "
+                    + "Use the full context for meaning, but return only REQUESTED IDs. "
+                    + "Return {lines:[{id:integer,text:string}]}. FULL CONTEXT: "
+                    + json.dumps(source, ensure_ascii=False)
+                    + " REQUESTED: "
+                    + json.dumps(pending, ensure_ascii=False)
+                )
                 data = gemini_json(prompt, schema, max_requests=2)
                 requested = {row['id'] for row in pending}
                 candidates = {}
@@ -309,7 +330,8 @@ class TranslationService:
                         accepted = {int(i): t for i, t in cached.get('accepted', {}).items()
                                     if str(i).isdigit() and 0 <= int(i) < len(source)
                                     and isinstance(t, str) and any(c.isalnum() for c in t)
-                                    and not self.is_devanagari(t)}
+                                    and not self.is_devanagari(t)
+                                    and not self.is_transliteration_fragment(source[int(i)]['text'], t)}
                         _log_debug(
                             'translation_local_checkpoint_resume',
                             accepted_count=len(accepted),
@@ -385,6 +407,7 @@ class TranslationService:
         local_fn: Optional[Callable[[Sequence[str]], List[str]]] = None,
         chunk_index: int = 0,
         chunk_count: int = 1,
+        domain: Optional[str] = None,
     ) -> List[str]:
         """Translate one batch honoring TRANSLATION_BACKEND=auto|local|gemini."""
         from app.core.config import get_provider_key
@@ -434,7 +457,7 @@ class TranslationService:
                 lines=len(chunk),
                 gemini_key_present=has_gemini,
             )
-            result = self.translate_with_gemini(chunk, checkpoint_path)
+            result = self.translate_with_gemini(chunk, checkpoint_path, domain=domain)
             _log_info(
                 'translation_backend_selected',
                 backend='gemini',
@@ -447,60 +470,48 @@ class TranslationService:
             )
             return result
 
+        # NLLB-600M spells Hindi ("Adelog", "thief"). Gemini is the Hindi translator
+        # whenever a key is configured, including TRANSLATION_BACKEND=local.
+        # English lines on the local setting stay on NLLB. NLLB is the fallback.
+        hindi = any(self.is_devanagari(line) for line in chunk)
+        use_gemini = has_gemini and (
+            preference in ('gemini', 'auto') or (preference == 'local' and hindi)
+        )
         try:
-            if preference == 'local':
-                return try_local()
-            if preference == 'gemini':
-                if not has_gemini:
-                    raise ValueError(
-                        'TRANSLATION_BACKEND=gemini but no usable GEMINI_API_KEY is configured; '
-                        'original-language captions retained.'
-                    )
-                return try_gemini()
-
-            # auto: local first, Gemini fallback when key present
-            try:
-                return try_local()
-            except Exception as local_exc:
-                _log_exception(
-                    'translation_local_failed_in_auto',
-                    preference='auto',
-                    gemini_key_present=has_gemini,
-                    chunk_index=chunk_index,
-                    chunk_count=chunk_count,
-                    local_error=str(local_exc)[:300],
+            if preference == 'gemini' and not has_gemini:
+                raise ValueError(
+                    'TRANSLATION_BACKEND=gemini but no usable GEMINI_API_KEY is configured; '
+                    'original-language captions retained.'
                 )
-                if not has_gemini:
-                    raise ValueError(
-                        'Local translation failed and no Gemini key is configured; '
-                        'original-language captions retained. No guessed translation was inserted. '
-                        f'({local_exc})'
-                    ) from local_exc
-                _log_info(
-                    'translation_backend_fallback',
-                    backend='gemini',
-                    preference='auto',
-                    fallback_reason='local_failed',
-                    gemini_key_present=True,
-                    chunk_index=chunk_index,
-                    chunk_count=chunk_count,
-                    local_error=str(local_exc)[:300],
-                )
+            if use_gemini:
                 try:
                     return try_gemini()
                 except Exception as gemini_exc:
+                    if preference == 'gemini':
+                        raise
                     _log_exception(
-                        'translation_gemini_fallback_failed',
-                        preference='auto',
+                        'translation_gemini_failed_falling_back_to_local',
+                        preference=preference,
                         chunk_index=chunk_index,
                         chunk_count=chunk_count,
                         gemini_error=str(gemini_exc)[:300],
                     )
-                    raise ValueError(
-                        'Local translation failed and Gemini fallback also failed; '
-                        'original-language captions retained. '
-                        f'local=({local_exc}); gemini=({gemini_exc})'
-                    ) from gemini_exc
+                    try:
+                        return try_local()
+                    except Exception as local_exc:
+                        raise ValueError(
+                            'Gemini translation failed and the local fallback also failed; '
+                            'original-language captions retained. '
+                            f'gemini=({gemini_exc}); local=({local_exc})'
+                        ) from local_exc
+            try:
+                return try_local()
+            except Exception as local_exc:
+                raise ValueError(
+                    'Local translation failed and no Gemini key is configured; '
+                    'original-language captions retained. No guessed translation was inserted. '
+                    f'({local_exc})'
+                ) from local_exc
         finally:
             _log_debug(
                 'translation_chunk_end',
@@ -516,6 +527,7 @@ class TranslationService:
         checkpoint_dir=None,
         *,
         local_fn: Optional[Callable[[Sequence[str]], List[str]]] = None,
+        domain: Optional[str] = None,
     ) -> List[CaptionItem]:
         if not captions:
             return captions
@@ -569,7 +581,7 @@ class TranslationService:
                 if checkpoint_dir:
                     import hashlib, json
                     digest = hashlib.sha256(
-                        json.dumps({'version': 2, 'source': chunk}, ensure_ascii=False).encode()
+                        json.dumps({'version': 3, 'source': chunk}, ensure_ascii=False).encode()
                     ).hexdigest()
                     checkpoint_path = Path(checkpoint_dir) / (digest + '.json')
                 _log_debug(
@@ -585,6 +597,7 @@ class TranslationService:
                     local_fn=local_fn,
                     chunk_index=chunk_index,
                     chunk_count=chunk_count,
+                    domain=domain,
                 )
                 if len(translated_chunk) != len(chunk):
                     raise ValueError('Translation returned mismatched IDs; no partial dictionary translation was inserted.')

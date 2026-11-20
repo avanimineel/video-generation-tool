@@ -130,6 +130,26 @@ export const App: React.FC = () => {
     }
   };
 
+  const redoCaptions = async () => {
+    if (!project?.id || isAutoProducing) return;
+    setSaveError('');
+    setIsAutoProducing(true);
+    setAutoProduceStatusText('Transcribing and translating the captions again…');
+    setEditorialPlanOpen(false);
+    try {
+      const result = await api.runAutoProduction(project.id, true, 'small', setAutoProduceStatusText, 'captions_only', true);
+      if (result.project) {
+        const next = { ...result.project, video_url: api.getSourceVideoUrl(project.id) };
+        setProject(next);
+        pushHistory(next);
+        setEditorialPlanOpen(true);
+      }
+      if (!result.success) setSaveError(result.error || 'Captions could not be redone.');
+    } finally {
+      setIsAutoProducing(false);
+    }
+  };
+
   // 1. Initial Load & Background Hydration from Backend
   useEffect(() => {
     let isMounted = true;
@@ -1092,6 +1112,7 @@ export const App: React.FC = () => {
         onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
         open={editorialPlanOpen}
         onOpenChange={setEditorialPlanOpen}
+        onRedoCaptions={() => { void redoCaptions(); }}
       />
       {saveError && <div role="alert" className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-sm flex items-center gap-3"><span>{saveError}</span><button onClick={()=>setSaveRetry(v=>v+1)} disabled={!backendReady} className="underline">Retry save</button><button onClick={()=>setIsProjectDrawerOpen(true)} className="underline">Open projects</button></div>}
       {!isAutoProducing && project.source_media_path && (() => {
@@ -1123,6 +1144,15 @@ export const App: React.FC = () => {
               <span className="font-medium text-neutral-800 truncate">{statusFacts}</span>
               <span className={needsAttention || hasGaps ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
             </div>
+            {project.captions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { void redoCaptions(); }}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 transition"
+              >
+                Redo captions
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditorialPlanOpen(true)}

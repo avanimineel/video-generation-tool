@@ -17,6 +17,7 @@ interface EditorialPlanPanelProps {
   /** Controlled open — lets the status banner CTA open Review without a second entry point. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onRedoCaptions?: () => void;
 }
 
 export function EditorialPlanPanel({
@@ -26,7 +27,8 @@ export function EditorialPlanPanel({
   onUpdated,
   onBusy,
   open: controlledOpen,
-  onOpenChange
+  onOpenChange,
+  onRedoCaptions,
 }: EditorialPlanPanelProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -243,7 +245,7 @@ export function EditorialPlanPanel({
               || (report && !(report.decisions || []).length)
             ) && (
               <div className="pt-4">
-                <CaptionReview project={project} onSeek={onSeek} onSaved={onUpdated} />
+                <CaptionReview project={project} onSeek={onSeek} onSaved={onUpdated} onRedoCaptions={onRedoCaptions} />
               </div>
             )}
 

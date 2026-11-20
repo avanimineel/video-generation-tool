@@ -140,3 +140,31 @@ def test_full_mode_without_cloud_finishes_captions_clearly(monkeypatch, tmp_path
     assert result["success"] is True
     assert result["editorial_report"]["stage"] == "captions_only_complete"
     assert any("TWELVE_LABS" in e for e in result["editorial_report"]["errors"])
+
+
+def test_recaption_replaces_captions_and_drops_saved_translations(monkeypatch, tmp_path):
+    from app.core.models import CaptionItem
+    from app.services.auto_production_service import auto_production_service
+    from app.services.project_manager import project_manager
+    from app.services.transcription_service import transcription_service
+
+    state = _seed_project(monkeypatch, tmp_path, "redo_captions")
+    state.captions = [CaptionItem(id="old", start=0, end=1, text="अदेलोग", translated_text="The Adelog considered")]
+    state.ai_ingestion = {"status": "completed", "editorial_run": "run-1", "video_hash": "same"}
+    project_manager.save_project(state)
+    checkpoint_dir = tmp_path / state.id / "transcription" / "translation_checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "stale.json").write_text("{}")
+    calls = []
+
+    def whisper(*_args, **_kwargs):
+        calls.append(True)
+        return ("hi", [CaptionItem(id="fresh", start=0, end=2, text="Hello again", translated_text="Hello again")])
+
+    monkeypatch.setattr(transcription_service, "transcribe_with_whisper", whisper)
+    result = auto_production_service.run_pipeline(state.id, recaption=True)
+    assert calls == [True]
+    assert result["success"] is True
+    assert result["editorial_report"]["outcome"] == "captions_only"
+    assert result["project"]["captions"][0]["text"] == "Hello again"
+    assert not (checkpoint_dir / "stale.json").exists()

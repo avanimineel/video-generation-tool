@@ -80,10 +80,10 @@ class AutoProductionService:
             "summary": ingestion.get("summary", {})
         }
 
-    def run_pipeline(self, project_id, force=False, model_size="base", mode=None):
+    def run_pipeline(self, project_id, force=False, model_size="base", mode=None, recaption=False):
         if not self._lock.acquire(blocking=False):
             return {'success':False,'error':'An automatic edit is already running. Wait for it to finish.'}
-        try:return self._run_pipeline(project_id,force,model_size,mode=mode)
+        try:return self._run_pipeline(project_id,force,model_size,mode=mode,recaption=recaption)
         finally:self._lock.release()
 
     def _run_pipeline(
@@ -92,6 +92,7 @@ class AutoProductionService:
         force: bool = False,
         model_size: str = "base",
         mode=None,
+        recaption: bool = False,
     ) -> Dict[str, Any]:
         """
         Executes the zero-click auto-production pipeline:
@@ -107,6 +108,9 @@ class AutoProductionService:
            - Reconstructed article / investigative report screens
         7. Saves project state and marks ingestion completed.
         """
+        if recaption:
+            force = True
+            mode = "captions_only"
         state = project_manager.get_project(project_id)
         if not state:
             return {"success": False, "error": f"Project {project_id} not found"}
@@ -160,6 +164,18 @@ class AutoProductionService:
         from app.services.editorial_planner import write_json
         from uuid import uuid4
         write_json(pdir/'recovery'/('before-auto-'+uuid4().hex+'.json'),state.model_dump())
+
+        if recaption:
+            state.captions = []
+            checkpoint_dir = pdir / "transcription" / "translation_checkpoints"
+            if checkpoint_dir.is_dir():
+                for stale in checkpoint_dir.glob("*.json"):
+                    stale.unlink()
+            state.ai_ingestion = {
+                **(state.ai_ingestion or {}),
+                "caption_layout_pending": True,
+                "status": "running",
+            }
 
         # 0. Ensure duration and proxy exist
         if state.duration_seconds <= 1.0:
@@ -307,9 +323,9 @@ class AutoProductionService:
                 'video_hash': video_hash, 'issues': speech_issues,
                 'captions': [c.model_dump() for c in state.captions]})
             try:
-                    repaired_lang, repaired = transcription_service.transcribe_with_whisper(
-                        media_file, words_per_caption=3, task='transcribe', model_size='medium',
-                        domain=getattr(getattr(state, "settings", None), "domain_profile", None))
+                repaired_lang, repaired = transcription_service.transcribe_with_whisper(
+                    media_file, words_per_caption=3, task='transcribe', model_size='medium',
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None))
                 remaining = transcript_issues(repaired)
                 if not repaired or remaining:
                     raise ValueError('; '.join(remaining[:5]) or 'No speech recognized')
@@ -407,6 +423,7 @@ class AutoProductionService:
                 state.captions = translation_service.translate_captions_list(
                     state.captions,
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
                 )
                 mark_stage(project_id, 'translation', status='complete')
                 _stage_log(

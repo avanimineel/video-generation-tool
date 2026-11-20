@@ -6,6 +6,7 @@ interface CaptionReviewProps {
   project: ProjectState;
   onSeek: (time: number) => void;
   onSaved: (project: ProjectState) => void;
+  onRedoCaptions?: () => void;
 }
 
 interface Draft {
@@ -39,7 +40,7 @@ function draftFrom(caption: CaptionItem): Draft {
   };
 }
 
-export function CaptionReview({ project, onSeek, onSaved }: CaptionReviewProps) {
+export function CaptionReview({ project, onSeek, onSaved, onRedoCaptions }: CaptionReviewProps) {
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -132,15 +133,26 @@ export function CaptionReview({ project, onSeek, onSaved }: CaptionReviewProps) 
         <div>
           <h3 className="text-sm font-semibold text-neutral-900">Captions on the timeline</h3>
           <p className="text-[11px] text-neutral-600 mt-0.5">
-            {project.captions.length} lines. Select a time to play that moment, edit the words, then save the mapping for the next run.
+            {project.captions.length} lines. Select a time to play that moment, edit the words, then save the mapping for the next run. Redo captions transcribes this video again and writes a fresh English line.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          {onRedoCaptions && (
+            <button
+              type="button"
+              onClick={onRedoCaptions}
+              className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-neutral-100"
+            >
+              Redo captions
+            </button>
+          )}
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search captions"
           className="w-48 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-900"
         />
+        </div>
       </div>
       <div className="max-h-80 overflow-y-auto space-y-1.5">
         {rows.length === 0 && (

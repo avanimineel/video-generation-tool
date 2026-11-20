@@ -8,11 +8,13 @@ HINDI = "अदेलोग उसको टीवे माणके टीव�
 
 def test_a_spelled_hindi_fragment_is_not_usable_english():
     assert service.is_transliteration_fragment(HINDI, "Adelog would turn")
+    assert service.is_transliteration_fragment(HINDI, "The Adelog considered")
     assert not service.is_transliteration_fragment(HINDI, "They start TB medicine for half the people")
 
 
 def test_hindi_slices_are_translated_together_and_the_english_is_kept(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
     seen = []
 
     def translate(lines):
@@ -46,6 +48,7 @@ def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
 
 def test_a_spelled_fragment_is_not_stored_as_the_english(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
 
     def translate(lines):
         return ["Adelog would turn" for _ in lines]
