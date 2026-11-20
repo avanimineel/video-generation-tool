@@ -1,0 +1,20 @@
+---
+description: Hindi/Hinglish captions, Gemini-first translation, NLLB fallback, and medical meaning checks. Load on every session in this repo; deepen via skill caption-transcription.
+alwaysApply: true
+---
+
+# Caption transcription (always on)
+
+Before changing Whisper, translation, NLLB, caption layout, Join sentences, Redo captions, Save edit, or Save mapping, read `.agents/skills/caption-transcription/SKILL.md`.
+
+## Invariants
+
+- Speech sets the words and the times. English is a label on that span. The picture is not used to decide the words.
+- Domain is `general`, `medical`, or `sports`. Whisper uses `caption_prompt(domain)`.
+- Captions stay spoken clauses (`chunk_spoken_phrases`). Do not send the editor 3-word boxes. `layout_automatic_captions` is a legacy helper only.
+- Hindi uses Gemini when a key exists. NLLB `facebook/nllb-200-distilled-600M` is the fallback. English lines stay local.
+- Reject Latin spellings (“Adelog”) and fluent wrong meanings (“thief” / “television” for TB, “cough” for lung cancer). `correct_medical_lines` replaces them. Do not wait for a person to mark the line.
+- A correct sentence stays. A saved edit that fails the medical check is not restored.
+- **Save mapping for training** stores the line and time for the next prompt. It does not change model weights.
+- **Redo captions** reruns the same video. It clears captions and `translation_checkpoints`.
+- Do not write Gemini or editor text into NLLB or Whisper weights during a caption pass.
