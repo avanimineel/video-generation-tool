@@ -13,7 +13,8 @@ Before changing Whisper, translation, NLLB, caption layout, Join sentences, Redo
 - Domain is `general`, `medical`, or `sports`. Whisper uses `caption_prompt(domain)`.
 - Captions stay spoken clauses (`chunk_spoken_phrases`). Do not send the editor 3-word boxes. `layout_automatic_captions` is a legacy helper only.
 - Hindi uses Gemini when a key exists. NLLB `facebook/nllb-200-distilled-600M` is the fallback. English lines stay local.
-- Reject Latin spellings (“Adelog”) and fluent wrong meanings (“thief” / “television” for TB, “cough” for lung cancer). `correct_medical_lines` replaces them. Do not wait for a person to mark the line.
+- Reject Latin spellings (“Adelog”) and fluent wrong meanings (“thief” / “television” / “TV-like” for TB, “cough” for lung cancer). `correct_medical_lines` replaces them with TB-like. Do not wait for a person to mark the line.
+- A TB-versus-television decision uses `RunningInferences`: the current line first, then earlier lines in the same video and the medical domain. `टीवी पर` stays television.
 - A correct sentence stays. A saved edit that fails the medical check is not restored.
 - **Save mapping for training** stores the line and time for the next prompt. It does not change model weights.
 - **Redo captions** reruns the same video. It clears captions and `translation_checkpoints`.

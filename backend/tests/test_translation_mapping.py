@@ -105,6 +105,52 @@ def test_a_hindi_clause_is_not_cut_into_three_word_boxes_before_translation():
     assert " ".join(word["word"] for word in chunks[0]) == HINDI
 
 
+SPOKEN = (
+    "hota hai. आदिय लोग उसको टीवी मान के टीवी की दवाई चालूँ कर देते हैं, "
+    "आदिय लोग उसकोलंग् इन्फेक्षन मान के कोई दवाई नहीं चालूँ कर थे है,"
+)
+
+
+def test_tv_like_in_a_medical_line_is_rewritten_as_tb_like():
+    english = "hota hai. People make him a TV-like TV drug, people make him"
+    assert service.medical_english_is_unusable(SPOKEN, english)
+    repaired = service.repair_medical_english(SPOKEN)
+    assert "TB-like" in repaired
+    assert "TV" not in repaired
+    assert "television" not in repaired.casefold()
+    assert "lung infection" in repaired.casefold()
+    assert "no medicine is started" in repaired.casefold()
+    assert "half the people" in repaired.casefold()
+
+
+def test_an_earlier_lung_line_makes_a_later_tv_line_tb(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
+    captions = [
+        CaptionItem(id="earlier", start=1, end=3, text="यह लंग कैंसर है", translated_text="This is lung cancer."),
+        CaptionItem(id="later", start=4, end=7, text="उसको टीवी बताया", translated_text=""),
+    ]
+
+    def translate(lines):
+        assert lines == ["उसको टीबी बताया"]
+        return ["They called it a TV."]
+
+    result = service.translate_captions_list(captions, local_fn=translate, domain="medical")
+    later = next(caption for caption in result if caption.id == "later")
+    assert later.translated_text == "It is taken as TB-like."
+    assert result[0].translated_text == "This is lung cancer."
+
+
+def test_watching_television_stays_television_after_a_lung_line():
+    captions = [
+        CaptionItem(id="earlier", start=1, end=3, text="यह लंग कैंसर है", translated_text="This is lung cancer."),
+        CaptionItem(id="screen", start=4, end=7, text="मरीज़ टीवी पर मैच देख रहा था", translated_text="The patient was watching the match on TV."),
+    ]
+    updated = service.correct_medical_lines(captions, domain="medical")
+    screen = next(caption for caption in updated if caption.id == "screen")
+    assert screen.translated_text == "The patient was watching the match on TV."
+
+
 def test_a_spelled_fragment_is_replaced_with_the_medical_meaning(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
     monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")

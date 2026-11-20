@@ -39,6 +39,44 @@ def _log_exception(event: str, **fields: Any) -> None:
         logger.error("%s %s", event, fields, exc_info=exc_info)
 
 
+class RunningInferences:
+    """Facts already decided for this video, used the next time a word is ambiguous."""
+
+    def __init__(self, domain: Optional[str] = None):
+        self.domain = (domain or "general").strip().lower()
+        self.tb = False
+        self.lung = False
+        self.medicine = False
+
+    def snapshot(self) -> "RunningInferences":
+        copied = RunningInferences(self.domain)
+        copied.tb = self.tb
+        copied.lung = self.lung
+        copied.medicine = self.medicine
+        return copied
+
+    def note(self, source: str) -> None:
+        text = source or ""
+        if "टीबी" in text or re.search(r"(?<![A-Za-z])TB(?![A-Za-z])", text):
+            self.tb = True
+        if "लंग" in text or "फेफड़" in text or "कैंसर" in text:
+            self.lung = True
+        if re.search(r"दवाई|दवा", text):
+            self.medicine = True
+
+    def describe(self) -> str:
+        parts = []
+        if self.tb:
+            parts.append("an earlier line established TB")
+        if self.lung:
+            parts.append("an earlier line established lung disease")
+        if not parts:
+            return ""
+        if self.domain == "medical":
+            parts.append("the project domain is medical")
+        return "; ".join(parts)
+
+
 class TranslationService:
     # Context-aware medical and conversational phrase dictionary
     EXPANDED_DICTIONARY = {
@@ -139,7 +177,32 @@ class TranslationService:
         spelling_led = bool(long_spellings) and len(english_words) <= len(long_spellings) + 2
         return mostly_spelled or too_short or spelling_led
 
-    def normalize_medical_asr(self, text: str) -> str:
+    def tv_means_tb(self, text: str, prior: Optional[RunningInferences] = None) -> bool:
+        """Choose TB or television. Same-line words decide first; earlier inferences break a tie."""
+        raw = text or ""
+        if re.search(r"टीवी\s*पर|टीवी\s*देख|टीवी\s*शो", raw):
+            return False
+        if re.search(r"\b(on|watch|watching)\s+tv\b|\btv\s+(show|screen)\b", raw, re.IGNORECASE):
+            return False
+        has_token = bool(re.search(r"टीवी|टीवे|तीवी|तीबी|तीवे", raw)) or bool(
+            re.search(r"\btv\b|television", raw, re.IGNORECASE)
+        )
+        if not has_token:
+            return False
+        if re.search(r"दवाई|दवा|मान|जैसा|तरह", raw):
+            return True
+        if prior and prior.tb:
+            return True
+        if prior and prior.domain == "medical" and prior.lung:
+            return True
+        return False
+
+    def normalize_medical_asr(
+        self,
+        text: str,
+        prior: Optional[RunningInferences] = None,
+        domain: Optional[str] = None,
+    ) -> str:
         """Rewrite common mishearings before the line is translated. No person has to mark them."""
         normalized = text or ""
         normalized = re.sub(r"अदेलोग", "आधे लोग", normalized)
@@ -147,7 +210,8 @@ class TranslationService:
         normalized = re.sub(r"कांसर|कान्सर|कानसर", "कैंसर", normalized)
         normalized = re.sub(r"लंकान्शर", "लंग कैंसर", normalized)
         normalized = re.sub(r"इन्फेक्षन|इन्फेक्शन", "इन्फेक्शन", normalized)
-        if re.search(r"दवाई|दवा|मान", normalized):
+        normalized = re.sub(r"उसको\s*लंग्+", "उसको लंग", normalized)
+        if self.tv_means_tb(normalized, prior or RunningInferences(domain)):
             normalized = re.sub(
                 r"(?<![\u0900-\u097F])(?:टीवी|टीवे|तीवी|तीबी|तीवे)(?![\u0900-\u097F])",
                 "टीबी",
@@ -155,30 +219,72 @@ class TranslationService:
             )
         return normalized
 
-    def _medical_facts(self, source: str) -> Dict[str, bool]:
-        text = self.normalize_medical_asr(source)
-        has_tb = "टीबी" in text
-        has_medicine = bool(re.search(r"दवाई|दवा", text))
-        has_infection = "इन्फेक्शन" in text
+    def _clauses(self, text: str) -> List[str]:
+        parts = [part.strip() for part in re.split(r"[,，]", text or "") if part.strip()]
+        return parts or [text or ""]
+
+    def _clause_facts(self, clause: str) -> Dict[str, bool]:
+        has_tb = "टीबी" in clause
+        has_medicine = bool(re.search(r"दवाई|दवा", clause))
+        medicine_not_started = bool(re.search(r"(?:कोई\s+)?(?:दवाई|दवा)\s+नहीं", clause))
+        has_infection = "इन्फेक्शन" in clause
+        infection_denied = bool(re.search(r"इन्फेक्शन\s+नहीं", clause)) and not medicine_not_started
         return {
-            "half": "आधे लोग" in text,
+            "half": "आधे लोग" in clause,
             "tb": has_tb,
-            "tb_medicine": has_tb and has_medicine,
-            "lung_cancer": "लंग कैंसर" in text or "फेफड़े का कैंसर" in text,
-            "cancer": "कैंसर" in text,
-            "cough_in_source": "खांसी" in text,
-            "not_infection": has_infection and bool(re.search(r"नहीं|नी\b", text)),
-            "lung_infection": has_infection and "लंग" in text and "लंग कैंसर" not in text,
+            "tb_medicine": has_tb and has_medicine and not medicine_not_started,
+            "medicine_not_started": medicine_not_started,
+            "lung_cancer": "लंग कैंसर" in clause or "फेफड़े का कैंसर" in clause,
+            "cancer": "कैंसर" in clause,
+            "cough_in_source": "खांसी" in clause,
+            "not_infection": infection_denied,
+            "lung_infection": has_infection and "लंग" in clause and "कैंसर" not in clause and not infection_denied,
+            "treat_as": bool(re.search(r"मान|जैसा|तरह", clause)),
         }
 
-    def medical_english_is_unusable(self, source: str, english: str) -> bool:
+    def _medical_facts(
+        self,
+        source: str,
+        prior: Optional[RunningInferences] = None,
+        domain: Optional[str] = None,
+    ) -> Dict[str, bool]:
+        text = self.normalize_medical_asr(source, prior=prior, domain=domain)
+        merged = {
+            "half": False,
+            "tb": False,
+            "tb_medicine": False,
+            "medicine_not_started": False,
+            "lung_cancer": False,
+            "cancer": False,
+            "cough_in_source": False,
+            "not_infection": False,
+            "lung_infection": False,
+            "treat_as": False,
+        }
+        for clause in self._clauses(text):
+            for key, value in self._clause_facts(clause).items():
+                merged[key] = merged[key] or value
+        return merged
+
+    def medical_english_is_unusable(
+        self,
+        source: str,
+        english: str,
+        prior: Optional[RunningInferences] = None,
+        domain: Optional[str] = None,
+    ) -> bool:
         """Fluent English that missed the medical meaning. Do not show it."""
         if self.is_transliteration_fragment(source, english):
             return True
-        facts = self._medical_facts(source)
-        if not any(facts.values()):
+        facts = self._medical_facts(source, prior=prior, domain=domain)
+        if not any(facts.values()) and not self.tv_means_tb(source, prior or RunningInferences(domain)):
             return False
         rendered = (english or "").casefold()
+        decided_tb = self.tv_means_tb(source, prior or RunningInferences(domain))
+        if decided_tb and not re.search(r"\btb\b", rendered):
+            return True
+        if (facts["tb"] or facts["tb_medicine"] or decided_tb) and re.search(r"\btv\b|television", rendered):
+            return True
         if facts["tb_medicine"] and (
             not re.search(r"\btb\b", rendered)
             or re.search(r"\b(thief|thieves|theft|television)\b", rendered)
@@ -192,17 +298,25 @@ class TranslationService:
             return True
         if facts["half"] and re.search(r"\badelog\b", rendered):
             return True
+        if facts["lung_infection"] and facts["medicine_not_started"] and "infection" not in rendered:
+            return True
         return False
 
-    def repair_medical_english(self, source: str) -> str:
-        """English built from the medical words in the spoken line, for every line that matches."""
-        facts = self._medical_facts(source)
+    def _repair_clause(self, facts: Dict[str, bool], tb_name: str) -> str:
         sentences = []
         if facts["half"] and facts["tb_medicine"]:
-            sentences.append("For half the people, it is taken as TB and TB medicine is started.")
+            sentences.append(f"For half the people, it is taken as {tb_name} and TB medicine is started.")
         elif facts["tb_medicine"]:
             sentences.append("TB medicine is started.")
-        if facts["not_infection"]:
+        elif facts["tb"] and (facts["treat_as"] or tb_name == "TB-like"):
+            lead = "For half the people, " if facts["half"] else ""
+            sentences.append(f"{lead}it is taken as {tb_name}." if lead else f"It is taken as {tb_name}.")
+        if facts["lung_infection"] and facts["medicine_not_started"]:
+            if facts["half"]:
+                sentences.append("For half the people, it is taken as a lung infection and no medicine is started.")
+            else:
+                sentences.append("It is taken as a lung infection and no medicine is started.")
+        elif facts["not_infection"]:
             sentences.append(
                 "It is not treated as a lung infection." if facts["lung_infection"] else "It is not treated as an infection."
             )
@@ -212,16 +326,37 @@ class TranslationService:
             sentences.append("The disease is cancer.")
         return " ".join(sentences)
 
-    def correct_medical_lines(self, captions: List[CaptionItem]) -> List[CaptionItem]:
-        for caption in captions:
+    def repair_medical_english(
+        self,
+        source: str,
+        prior: Optional[RunningInferences] = None,
+        domain: Optional[str] = None,
+    ) -> str:
+        """English built from the medical words in the spoken line, for every line that matches."""
+        decided = self.tv_means_tb(source, prior or RunningInferences(domain))
+        text = self.normalize_medical_asr(source, prior=prior, domain=domain)
+        tb_name = "TB-like" if decided else "TB"
+        sentences = [
+            self._repair_clause(self._clause_facts(clause), tb_name)
+            for clause in self._clauses(text)
+        ]
+        return " ".join(sentence for sentence in sentences if sentence)
+
+    def correct_medical_lines(
+        self,
+        captions: List[CaptionItem],
+        domain: Optional[str] = None,
+    ) -> List[CaptionItem]:
+        state = RunningInferences(domain)
+        for caption in sorted(captions, key=lambda item: (item.start, item.end)):
+            prior = state.snapshot()
             english = caption.translated_text or ""
-            if not self.medical_english_is_unusable(caption.text, english):
-                continue
-            repaired = self.repair_medical_english(caption.text)
-            if not repaired or self.medical_english_is_unusable(caption.text, repaired):
-                continue
-            caption.translated_text = repaired
-            caption.editor_locked = False
+            if self.medical_english_is_unusable(caption.text, english, prior=prior, domain=domain):
+                repaired = self.repair_medical_english(caption.text, prior=prior, domain=domain)
+                if repaired and not self.medical_english_is_unusable(caption.text, repaired, prior=prior, domain=domain):
+                    caption.translated_text = repaired
+                    caption.editor_locked = False
+            state.note(self.normalize_medical_asr(caption.text, prior=prior, domain=domain))
         return captions
 
     def join_hindi_clauses(self, captions: List[CaptionItem]) -> List[CaptionItem]:
@@ -381,7 +516,13 @@ class TranslationService:
             kept.append(item)
         return self.correct_medical_lines(sorted(kept, key=lambda caption: (caption.start, caption.end)))
 
-    def translate_with_gemini(self, text_list: List[str], checkpoint=None, domain: Optional[str] = None) -> List[str]:
+    def translate_with_gemini(
+        self,
+        text_list: List[str],
+        checkpoint=None,
+        domain: Optional[str] = None,
+        prior_findings: str = "",
+    ) -> List[str]:
         from app.services.editorial_planner import gemini_json
         import json
         if not text_list:
@@ -432,6 +573,12 @@ class TranslationService:
                     medical = (
                         "This is medical speech. Keep cancer, tumour, TB, biopsy, chemotherapy, and scan names as medical terms. "
                         "Do not turn a spoken disease or medicine name into an unrelated English word. "
+                    )
+                if prior_findings:
+                    medical += (
+                        "Running inferences already recorded: " + prior_findings + ". "
+                        "Use those inferences when a word could be either TB or television. "
+                        "Write TB-like, not TV-like. "
                     )
                 prompt = (
                     "Translate each Hindi or Hinglish line into one English sentence, then that English is what gets used. "
@@ -624,6 +771,7 @@ class TranslationService:
         chunk_index: int = 0,
         chunk_count: int = 1,
         domain: Optional[str] = None,
+        prior_findings: str = "",
     ) -> List[str]:
         """Translate one batch honoring TRANSLATION_BACKEND=auto|local|gemini."""
         from app.core.config import get_provider_key
@@ -673,7 +821,9 @@ class TranslationService:
                 lines=len(chunk),
                 gemini_key_present=has_gemini,
             )
-            result = self.translate_with_gemini(chunk, checkpoint_path, domain=domain)
+            result = self.translate_with_gemini(
+                chunk, checkpoint_path, domain=domain, prior_findings=prior_findings
+            )
             _log_info(
                 'translation_backend_selected',
                 backend='gemini',
@@ -779,8 +929,16 @@ class TranslationService:
         # An edited line and an English sentence already in hand stay as written.
         pending_indexes = [i for i, caption in enumerate(captions) if self.needs_new_translation(caption)]
         if not pending_indexes:
-            return self.correct_medical_lines(captions)
-        texts_to_translate = [self.normalize_medical_asr(captions[i].text) for i in pending_indexes]
+            return self.correct_medical_lines(captions, domain=domain)
+        state = RunningInferences(domain)
+        normalized: Dict[int, str] = {}
+        findings_for_index: Dict[int, str] = {}
+        for index in sorted(range(len(captions)), key=lambda item: (captions[item].start, captions[item].end)):
+            findings_for_index[index] = state.describe()
+            prior = state.snapshot()
+            normalized[index] = self.normalize_medical_asr(captions[index].text, prior=prior, domain=domain)
+            state.note(normalized[index])
+        texts_to_translate = [normalized[i] for i in pending_indexes]
         chunk_size = 20
         chunk_count = (len(texts_to_translate) + chunk_size - 1) // chunk_size
         _log_info(
@@ -819,6 +977,7 @@ class TranslationService:
                     chunk_index=chunk_index,
                     chunk_count=chunk_count,
                     domain=domain,
+                    prior_findings=findings_for_index.get(pending_indexes[i], ""),
                 )
                 if len(translated_chunk) != len(chunk):
                     raise ValueError('Translation returned mismatched IDs; no partial dictionary translation was inserted.')
@@ -875,7 +1034,7 @@ class TranslationService:
                     cur_t = w_end
                 cap.words = new_words
 
-        self.correct_medical_lines(captions)
+        self.correct_medical_lines(captions, domain=domain)
         if translation_error:
             unresolved = [
                 index for index in pending_indexes

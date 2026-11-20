@@ -36,7 +36,17 @@ NLLB on this medical video spelled Hindi instead of translating it: “Adelog”
 
 ## Medical meaning, no person required
 
-`normalize_medical_asr` rewrites mishearings before translation: `अदेलोग` / `आदिय लोग` → `आधे लोग`; `टीवी` / `तीवी` / `तीबी` → `टीबी` when the line is about medicine; `कांसर` → `कैंसर`. A correct phrase such as `फेफड़े का कैंसर` is not rewritten before the translator sees it.
+`normalize_medical_asr` rewrites mishearings before translation: `अदेलोग` / `आदिय लोग` → `आधे लोग`; `कांसर` → `कैंसर`; `उसकोलंग्` → `उसको लंग`. A correct phrase such as `फेफड़े का कैंसर` is not rewritten before the translator sees it.
+
+## Running inferences
+
+Decisions such as TB versus television use `RunningInferences`, walked in time order.
+
+- Same-line evidence comes first. `टीवी` / `तीवी` with medicine, `मान`, `जैसा`, or `तरह` is TB. `टीवी पर` and “watching TV” stay television.
+- If the line itself does not decide, earlier lines do. TB already established, or a lung disease already established in a medical project, makes a later `टीवी` into TB.
+- The Gemini prompt for that later line includes those inferences and is told to write TB-like, not TV-like.
+- English that still says “TV-like”, “TV”, or “television” for that decision is rejected. The replacement is “TB-like”.
+- The spoken line about half the people, TB medicine, and half the people treating it as a lung infection with no medicine is two clauses. “कोई दवाई नहीं” means no medicine is started. It does not mean the illness is not an infection.
 
 `medical_english_is_unusable` rejects a line when:
 
@@ -46,7 +56,8 @@ NLLB on this medical video spelled Hindi instead of translating it: “Adelog”
 
 `repair_medical_english` then writes the English that is used:
 
-- TB medicine for half the people → “For half the people, it is taken as TB and TB medicine is started.”
+- TB medicine for half the people, when the spoken word was the TV homophone → “For half the people, it is taken as TB-like and TB medicine is started.”
+- The following clause, half the people treating it as a lung infection and starting no medicine → “For half the people, it is taken as a lung infection and no medicine is started.”
 - lung cancer named as cough → “The disease is lung cancer.”
 
 `correct_medical_lines` applies that after translation and after saved edits. A saved line that fails the check is not put back. A saved line that passes stays, `editor_locked`. A correct sentence such as “Lung cancer is the commonest cancer in the world.” is left as it is.
