@@ -67,9 +67,8 @@ def test_translate_with_local_uses_injected_fn_and_checkpoint(tmp_path, monkeypa
     assert out2 == ["Lung cancer", "Biopsy"]
 
 
-def test_auto_falls_back_to_gemini_when_local_fails(monkeypatch):
+def test_auto_uses_gemini_before_the_local_model(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "auto")
-    monkeypatch.setenv("GEMINI_API_KEY", "real-looking-gemini-key-not-placeholder")
     from app.services import editorial_planner as planner
     from app.core import config as cfg
 
@@ -81,7 +80,7 @@ def test_auto_falls_back_to_gemini_when_local_fails(monkeypatch):
     )
 
     def boom(_texts):
-        raise RuntimeError("transformers missing")
+        raise AssertionError("NLLB must not run when Gemini translates the line")
 
     chunk = service._translate_chunk(
         ["डॉक्टर ने कहा", "बायोप्सी कराओ"],
@@ -90,11 +89,31 @@ def test_auto_falls_back_to_gemini_when_local_fails(monkeypatch):
     assert chunk == ["Doctor said", "Get biopsy"]
 
 
-def test_local_backend_does_not_call_gemini(monkeypatch):
-    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
-    monkeypatch.setenv("GEMINI_API_KEY", "real-looking-gemini-key-not-placeholder")
+def test_auto_falls_back_to_local_when_gemini_fails(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "auto")
     from app.services import editorial_planner as planner
+    from app.core import config as cfg
 
+    monkeypatch.setattr(cfg, "get_provider_key", lambda name: "real-looking-gemini-key-not-placeholder")
+    monkeypatch.setattr(
+        planner,
+        "gemini_json",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("gemini unavailable")),
+    )
+
+    chunk = service._translate_chunk(
+        ["डॉक्टर ने कहा", "बायोप्सी कराओ"],
+        local_fn=lambda texts: ["Doctor said", "Get biopsy"],
+    )
+    assert chunk == ["Doctor said", "Get biopsy"]
+
+
+def test_english_on_the_local_backend_does_not_call_gemini(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    from app.services import editorial_planner as planner
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg, "get_provider_key", lambda name: "real-looking-gemini-key-not-placeholder")
     monkeypatch.setattr(
         planner,
         "gemini_json",
@@ -102,10 +121,32 @@ def test_local_backend_does_not_call_gemini(monkeypatch):
     )
 
     out = service._translate_chunk(
-        ["कैंसर"],
-        local_fn=lambda texts: ["cancer"],
+        ["already English"],
+        local_fn=lambda texts: ["already English"],
     )
-    assert out == ["cancer"]
+    assert out == ["already English"]
+
+
+def test_hindi_on_the_local_backend_uses_gemini_when_a_key_exists(monkeypatch):
+    monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    from app.services import editorial_planner as planner
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg, "get_provider_key", lambda name: "real-looking-gemini-key-not-placeholder")
+    monkeypatch.setattr(
+        planner,
+        "gemini_json",
+        lambda *a, **k: {"lines": [{"id": 0, "text": "They start TB medicine for half the people"}]},
+    )
+
+    def local_fn(_texts):
+        raise AssertionError("NLLB must not translate Hindi")
+
+    chunk = service._translate_chunk(
+        ["अदेलोग उसको टीवे माणके टीवे की दवाई चालू कर देते"],
+        local_fn=local_fn,
+    )
+    assert chunk == ["They start TB medicine for half the people"]
 
 
 def test_gemini_backend_without_key_errors(monkeypatch):
@@ -119,6 +160,7 @@ def test_gemini_backend_without_key_errors(monkeypatch):
 
 def test_translate_captions_list_local_backend(monkeypatch):
     monkeypatch.setenv("TRANSLATION_BACKEND", "local")
+    monkeypatch.setattr("app.core.config.get_provider_key", lambda name: "")
     from app.services.transcript_quality import transcript_issues
 
     monkeypatch.setattr(

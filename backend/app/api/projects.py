@@ -10,6 +10,7 @@ class CreateProjectRequest(BaseModel):
     name: str
     aspect_ratio: str = "9:16"
     source_media_path: Optional[str] = None
+    domain_profile: str = "general"
 
 class RenameProjectRequest(BaseModel):
     new_name: str
@@ -23,7 +24,7 @@ async def list_projects():
 
 @router.post("")
 async def create_project(req: CreateProjectRequest):
-    project = project_manager.create_project(req.name, req.aspect_ratio, req.source_media_path)
+    project = project_manager.create_project(req.name, req.aspect_ratio, req.source_media_path, req.domain_profile)
     return project
 
 class BulkDownloadRequest(BaseModel):

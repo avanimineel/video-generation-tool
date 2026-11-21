@@ -576,8 +576,8 @@ export const api = {
     return getInitialProjectsList();
   },
 
-  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string): Promise<ProjectState> {
-    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath})});
+  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string, domain: 'general' | 'medical' | 'sports' = 'general'): Promise<ProjectState> {
+    const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath,domain_profile:domain})});
     if(!res.ok)throw new Error(`Could not create project (${res.status}).`);
     const data=await res.json();saveLocalProject(data);return data;
   },
@@ -707,12 +707,18 @@ export const api = {
     }
   },
 
-  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string): Promise<any> {
+  async pipelineStages(projectId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/media/${encodeURIComponent(projectId)}/pipeline-stages`);
+    if (!res.ok) throw new Error(`Pipeline stages HTTP ${res.status}`);
+    return res.json();
+  },
+
+  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string, recaption: boolean = false, fromStage?: string): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/media/${projectId}/auto-produce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force, model_size: modelSize, ...(mode ? { mode } : {}) })
+        body: JSON.stringify({ force: force || recaption || Boolean(fromStage), model_size: modelSize, mode: recaption ? 'captions_only' : mode, recaption, from_stage: fromStage })
       });
       if (res.ok) {
         const response = await res.json();
@@ -1744,6 +1750,115 @@ export const api = {
       console.error('getVisualReasoningLog error:', e);
     }
     return [];
+  },
+
+  async suggestSectionNote(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ note: string; inference_summary: string }> {
+    const res = await fetch(`${API_BASE}/training/section-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'The cloud model did not return a note.');
+    }
+    return res.json();
+  },
+
+  async keepSectionNote(data: {
+    project_id: string;
+    caption_id?: string;
+    source_text?: string;
+    spoken_text?: string;
+    note: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ success: boolean; note: string }> {
+    const res = await fetch(`${API_BASE}/training/section-note/keep`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('The note could not be saved for the next section.');
+    return res.json();
+  },
+
+  async captionChoices(data: { source_text: string; english: string; domain?: string; earlier_lines?: string[] }): Promise<{ options: { kind: string; label: string; text: string }[] }> {
+    const res = await fetch(`${API_BASE}/training/choices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('The readings for this section could not be loaded.');
+    return res.json();
+  },
+
+  async chooseTranslationLine(data: {
+    source_text: string;
+    english: string;
+    domain?: string;
+    project_id?: string;
+    start_sec?: number;
+    end_sec?: number;
+  }): Promise<{ taught: boolean; detail: string }> {
+    const res = await fetch(`${API_BASE}/training/choose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('This section could not be taught.');
+    return res.json();
+  },
+
+  async getTranslationTraining(): Promise<{
+    accepted_pairs: number;
+    promoted: boolean;
+    reason: string;
+    train_count: number;
+    holdout_count: number;
+    baseline_errors: number;
+    candidate_errors: number;
+    promoted_pairs: number;
+  }> {
+    const res = await fetch(`${API_BASE}/training`);
+    if (!res.ok) throw new Error('The training status could not be loaded.');
+    return res.json();
+  },
+
+  async runTranslationTraining(): Promise<{
+    promoted: boolean;
+    reason: string;
+    accepted_pairs: number;
+    train_count: number;
+    holdout_count: number;
+    baseline_errors: number;
+    candidate_errors: number;
+    promoted_pairs: number;
+  }> {
+    const res = await fetch(`${API_BASE}/training/run`, { method: 'POST' });
+    if (!res.ok) throw new Error('The training check could not be run.');
+    return res.json();
+  },
+
+  async saveCaptionMapping(data: {
+    project_id: string;
+    caption_id?: string;
+    start_sec: number;
+    end_sec: number;
+    source_text?: string;
+    spoken_text: string;
+    note?: string;
+  }): Promise<{ success: boolean; detail?: string }> {
+    const res = await fetch(`${API_BASE}/feedback/caption-mappings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, detail: body.detail || 'Could not save this caption mapping.' };
+    }
+    return { success: true };
   },
 
   async saveProjectGuidance(projectId: string, guidance: string): Promise<{ success: boolean; guidance: string }> {

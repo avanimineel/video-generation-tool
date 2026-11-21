@@ -84,6 +84,32 @@ async def export_few_shot_prompt_examples(
     ids_list = [i.strip() for i in decision_ids.split(",") if i.strip()] if decision_ids else None
     return feedback_service.generate_few_shot_export(decision_ids=ids_list)
 
+class CaptionMappingRequest(BaseModel):
+    project_id: str
+    caption_id: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+    source_text: str = ""
+    spoken_text: str = ""
+    note: str = ""
+
+
+@router.post("/caption-mappings")
+async def save_caption_mapping(req: CaptionMappingRequest):
+    from app.services.caption_mappings import save_mapping
+    try:
+        example = save_mapping(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "example": example}
+
+
+@router.get("/caption-mappings")
+async def get_caption_mappings(project_id: str = Query(...)):
+    from app.services.caption_mappings import list_mappings
+    return {"mappings": list_mappings(project_id)}
+
+
 class GuidanceRequest(BaseModel):
     project_id: str = "global"
     guidance: str = ""

@@ -6,6 +6,7 @@ from app.services.auto_produce_mode import (
     cloud_readiness,
     feature_flags,
     resolve_auto_produce_mode,
+    visuals_already_produced,
 )
 
 
@@ -23,6 +24,19 @@ from app.services.auto_produce_mode import (
 def test_resolve_auto_produce_mode(value, expected, monkeypatch):
     monkeypatch.delenv("AUTO_PRODUCE_MODE", raising=False)
     assert resolve_auto_produce_mode(value) == expected
+
+
+def test_a_caption_pass_does_not_count_as_a_finished_visual_timeline():
+    ingestion = {
+        "status": "completed",
+        "editorial_run": "captions-only-abc",
+        "video_hash": "same",
+        "auto_produce_mode": "captions_only",
+        "summary": {"outcome": "captions_only"},
+    }
+    assert not visuals_already_produced(ingestion, "same", False, "full")
+    assert visuals_already_produced(ingestion, "same", False, "captions_only")
+    assert not visuals_already_produced(ingestion, "same", True, "captions_only")
 
 
 def test_env_mode_when_request_absent(monkeypatch):
@@ -54,7 +68,7 @@ def test_cloud_readiness_reports_blockers(monkeypatch):
     )
     ok, blockers = cloud_readiness()
     assert ok is False
-    assert any("TWELVE_LABS" in b for b in blockers)
+    assert not any("TWELVE_LABS" in b for b in blockers)
     assert any("GEMINI" in b for b in blockers)
 
 
@@ -109,6 +123,31 @@ def test_captions_only_pipeline_skips_editorial(monkeypatch, tmp_path):
     assert result["ingestion"]["status"] == "completed"
     assert result["ingestion"]["summary"]["auto_produce_mode"] == "captions_only"
     assert result["project"]["captions"][0]["text"] == "Hello world"
+
+
+def test_missing_twelve_labs_key_still_plans_visuals(monkeypatch, tmp_path):
+    from app.core.models import CaptionItem
+    from app.services.auto_production_service import auto_production_service
+    from app.services.editorial_planner import normalize_segments, segments_from_captions
+    from app.services.transcription_service import transcription_service
+    from app.services import editorial_planner
+
+    state = _seed_project(monkeypatch, tmp_path, "full_without_twelve")
+    spoken = [CaptionItem(id="spoken", start=0, end=2, text="Lung cancer screening", translated_text="Lung cancer screening")]
+    monkeypatch.setattr(transcription_service, "transcribe_with_whisper", lambda *a, **k: ("en", spoken))
+    monkeypatch.setattr(
+        "app.services.editorial_planner.configured_key",
+        lambda name: "fixture-credential-value" if name == "GEMINI_API_KEY" else "",
+    )
+    calls = []
+    monkeypatch.setattr(editorial_planner, "run_editorial", lambda *a, **k: calls.append(True) or ([], [], {"status": "complete", "run_id": "planned", "errors": [], "inserted": 0, "outcome": "complete_with_gaps"}))
+
+    covered = normalize_segments(segments_from_captions(spoken, 5), spoken, 5)
+    assert covered[0].transcript == "Lung cancer screening"
+
+    result = auto_production_service.run_pipeline(state.id, mode="full")
+    assert calls == [True]
+    assert result["editorial_report"]["run_id"] == "planned"
 
 
 def test_full_mode_without_cloud_finishes_captions_clearly(monkeypatch, tmp_path):
@@ -173,3 +212,31 @@ def test_full_run_continues_after_captions_only(monkeypatch, tmp_path):
     second = auto_production_service.run_pipeline(state.id, mode="full")
     assert second.get("already_produced") is not True
     assert called == [True]
+
+
+def test_recaption_replaces_captions_and_drops_saved_translations(monkeypatch, tmp_path):
+    from app.core.models import CaptionItem
+    from app.services.auto_production_service import auto_production_service
+    from app.services.project_manager import project_manager
+    from app.services.transcription_service import transcription_service
+
+    state = _seed_project(monkeypatch, tmp_path, "redo_captions")
+    state.captions = [CaptionItem(id="old", start=0, end=1, text="अदेलोग", translated_text="The Adelog considered")]
+    state.ai_ingestion = {"status": "completed", "editorial_run": "run-1", "video_hash": "same"}
+    project_manager.save_project(state)
+    checkpoint_dir = tmp_path / state.id / "transcription" / "translation_checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "stale.json").write_text("{}")
+    calls = []
+
+    def whisper(*_args, **_kwargs):
+        calls.append(True)
+        return ("hi", [CaptionItem(id="fresh", start=0, end=2, text="Hello again", translated_text="Hello again")])
+
+    monkeypatch.setattr(transcription_service, "transcribe_with_whisper", whisper)
+    result = auto_production_service.run_pipeline(state.id, recaption=True)
+    assert calls == [True]
+    assert result["success"] is True
+    assert result["editorial_report"]["outcome"] == "captions_only"
+    assert result["project"]["captions"][0]["text"] == "Hello again"
+    assert not (checkpoint_dir / "stale.json").exists()

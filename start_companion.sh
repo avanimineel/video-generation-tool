@@ -64,8 +64,9 @@ mkdir -p "$HF_HOME"
 export WHISPER_DEVICE="${WHISPER_DEVICE:-auto}"
 export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-float16}"
 export FFMPEG_VIDEO_ENCODER="${FFMPEG_VIDEO_ENCODER:-auto}"
-# EC2 default: local NLLB (override with TRANSLATION_BACKEND=auto if desired)
-export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-local}"
+# Hindi uses Gemini when GEMINI_API_KEY is set. NLLB-600M is only the offline fallback.
+# Set TRANSLATION_BACKEND=local to keep English lines on NLLB; Hindi still uses Gemini when a key exists.
+export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-auto}"
 export LOCAL_TRANSLATION_MODEL="${LOCAL_TRANSLATION_MODEL:-facebook/nllb-200-distilled-600M}"
 export AUTO_PRODUCE_MODE="${AUTO_PRODUCE_MODE:-captions_only}"
 export LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
