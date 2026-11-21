@@ -1097,18 +1097,37 @@ export const App: React.FC = () => {
         const englishLines = project.captions.filter(c => /[A-Za-z0-9]/.test(c.translated_text || "")).length;
         const addedVisuals = project.graphics.filter(g => !g.parameters?.retention_camera && !['caption_cover','authored_title'].includes(g.template_id)).length;
         const cameraBeats = project.graphics.filter(g => g.parameters?.retention_camera).length;
-        const needsAttention = Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
+        const ingestionErrors: string[] = project.ai_ingestion?.errors || [];
+        const captionsOnly = ingestionErrors.some((item) => item.startsWith('Captions-only complete'))
+          || project.ai_ingestion?.summary?.outcome === 'captions_only'
+          || project.ai_ingestion?.auto_produce_mode === 'captions_only';
+        const blockingErrors = ingestionErrors.filter((item) => !item.startsWith('Captions-only complete'));
+        const needsAttention = Boolean(blockingErrors.length || project.ai_ingestion?.status === 'needs_review');
         const hasGaps = project.ai_ingestion?.status === 'completed_with_gaps';
         const statusFacts = `Video prepared · ${project.captions.length} captions · ${englishLines} English subtitle lines · ${addedVisuals} added visuals${cameraBeats ? ` · ${cameraBeats} camera beats` : ''}`;
-        const actionCopy = needsAttention
+        const actionCopy = captionsOnly && !needsAttention
+          ? 'Captions are ready. Visuals have not been built yet.'
+          : needsAttention
           ? 'Automatic editing needs attention.'
           : hasGaps
             ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')}`
             : 'Inspect inserted or skipped treatments when ready.';
+        const produceVisuals = () => {
+          setIsAutoProducing(true);
+          setAutoProduceStatusText('Planning visuals and the timeline…');
+          void api.runAutoProduction(project.id, false, 'small', setAutoProduceStatusText, 'full').then((result) => {
+            if (result?.project) {
+              const next = { ...result.project, video_url: api.getSourceVideoUrl(project.id) };
+              setProject(next);
+              pushHistory(next);
+            }
+            if (result && result.success === false) setSaveError(result.error || 'Visual production did not finish.');
+          }).finally(() => setIsAutoProducing(false));
+        };
         return (
           <div
             className={`px-3 py-1.5 text-xs border-b flex items-center gap-3 shrink-0 ${
-              needsAttention
+              needsAttention || captionsOnly
                 ? 'bg-amber-50 border-amber-200 text-amber-950'
                 : hasGaps
                   ? 'bg-amber-50/70 border-amber-100 text-amber-900'
@@ -1117,8 +1136,17 @@ export const App: React.FC = () => {
           >
             <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="font-medium text-neutral-800 truncate">{statusFacts}</span>
-              <span className={needsAttention || hasGaps ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
+              <span className={needsAttention || hasGaps || captionsOnly ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
             </div>
+            {captionsOnly && !needsAttention && (
+              <button
+                type="button"
+                onClick={produceVisuals}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800 transition shadow-2xs"
+              >
+                Produce Visuals & Timeline
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditorialPlanOpen(true)}

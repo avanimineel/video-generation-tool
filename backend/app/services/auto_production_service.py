@@ -135,9 +135,19 @@ class AutoProductionService:
         if source_role(digest=video_hash)=='finished_reference':
             return {'success':False,'project':state.model_dump(),'error':'113.mov is your finished reference, not raw footage. Upload sub.mov as the source; the finished-reel reference style is already configured. Existing timeline preserved.'}
 
-        # Idempotency check: Skip if already executed for this exact video hash
+        # Idempotency check: Skip if already executed for this exact video hash.
+        # A captions-only finish is not a finished visual edit, so a later full run continues.
         current_ingestion = state.ai_ingestion or {}
-        if not force and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash:
+        from app.services.auto_produce_mode import resolve_auto_produce_mode
+        requested_mode = resolve_auto_produce_mode(mode)
+        previous_summary = current_ingestion.get("summary") or {}
+        captions_only_done = (
+            current_ingestion.get("auto_produce_mode") == "captions_only"
+            or previous_summary.get("outcome") == "captions_only"
+            or previous_summary.get("auto_produce_mode") == "captions_only"
+            or str(current_ingestion.get("editorial_run") or "").startswith("captions-only-")
+        )
+        if not force and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash and not (requested_mode == "full" and captions_only_done):
             print(f"[AutoProduction] Video {project_id} with hash {video_hash[:8]} already auto-produced. Skipping duplicate run.")
             return {
                 "success": True,

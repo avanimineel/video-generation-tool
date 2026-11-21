@@ -103,7 +103,7 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly);
+      const r = await api.runAutoProduction(projectId, planOnly, 'small', undefined, 'full');
       if (!r.success) throw new Error(r.error);
       if (r.project) onUpdated(r.project);
       await refresh();

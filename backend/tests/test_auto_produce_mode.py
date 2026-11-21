@@ -140,3 +140,36 @@ def test_full_mode_without_cloud_finishes_captions_clearly(monkeypatch, tmp_path
     assert result["success"] is True
     assert result["editorial_report"]["stage"] == "captions_only_complete"
     assert any("TWELVE_LABS" in e for e in result["editorial_report"]["errors"])
+
+
+def test_full_run_continues_after_captions_only(monkeypatch, tmp_path):
+    from app.core.models import CaptionItem
+    from app.services.auto_production_service import auto_production_service
+    from app.services.transcription_service import transcription_service
+    from app.services import editorial_planner
+
+    state = _seed_project(monkeypatch, tmp_path, "captions_then_visuals")
+    monkeypatch.setattr(
+        transcription_service,
+        "transcribe_with_whisper",
+        lambda *a, **k: (
+            "en",
+            [CaptionItem(id="spoken", start=0, end=2, text="Speech", translated_text="Speech")],
+        ),
+    )
+    called = []
+    monkeypatch.setattr(
+        "app.services.auto_produce_mode.cloud_readiness",
+        lambda: (True, []),
+    )
+    monkeypatch.setattr(
+        editorial_planner,
+        "run_editorial",
+        lambda *a, **k: called.append(True) or ([], [], {"status": "complete", "errors": [], "run_id": "visual-run", "needs_review": 0, "inserted": 0, "outcome": "complete"}),
+    )
+
+    first = auto_production_service.run_pipeline(state.id, mode="captions_only")
+    assert first["editorial_report"]["outcome"] == "captions_only"
+    second = auto_production_service.run_pipeline(state.id, mode="full")
+    assert second.get("already_produced") is not True
+    assert called == [True]
