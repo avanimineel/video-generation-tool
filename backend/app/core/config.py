@@ -125,7 +125,7 @@ RESOLVE_SCRIPT_API = "/Applications/DaVinci Resolve.app/Contents/Resources/Devel
 
 class Settings(BaseModel):
     app_name: str = "Resolve AI Editing Companion"
-    version: str = "1.0.0"
+    version: str = "2.2.0"
     projects_dir: Path = PROJECTS_DIR
     database_url: str = Field(
         default_factory=lambda: os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/resolve_companion.db")
