@@ -277,14 +277,21 @@ def test_daily_quota_uses_cursor_and_skips_later_gemini_models(monkeypatch):
     assert len(calls) == 1
 
 
-def test_picture_review_stays_on_gemini_when_the_daily_quota_is_spent(monkeypatch):
+def test_picture_review_uses_cursor_when_the_daily_quota_is_spent(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
     monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
-    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: SimpleNamespace(status_code=429, text=QUOTA_BODY))
-    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(AssertionError('picture review must stay on Gemini')))
-    with pytest.raises(ValueError, match='AI providers unavailable') as caught:
-        e.gemini_json('review', image_parts=[{'inline_data': {'data': 'abc'}}])
-    assert 'cursor:' not in str(caught.value)
+    calls = []
+    seen = {}
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: calls.append(1) or SimpleNamespace(status_code=429, text=QUOTA_BODY))
+
+    def cursor(prompt, schema=None, timeout=120, image_parts=None):
+        seen['images'] = image_parts
+        return {'selected_index': 0}
+
+    monkeypatch.setattr(e, 'cursor_json', cursor)
+    parts = [{'inline_data': {'data': 'abc', 'mime_type': 'image/jpeg'}}]
+    assert e.gemini_json('review', image_parts=parts) == {'selected_index': 0}
+    assert len(calls) == 1 and seen['images'] == parts
 
 
 def test_cursor_failure_keeps_the_gemini_quota_error(monkeypatch):

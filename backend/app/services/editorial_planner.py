@@ -191,7 +191,30 @@ def json_from_model_text(text):
         return value
 
 
-def cursor_json(prompt, schema=None, timeout=120):
+def cursor_message(prompt, schema=None, image_parts=None):
+    """Text plus any thumbnail parts. Gemini inline images become Cursor images."""
+    from cursor_sdk import SDKImage, UserMessage
+    message = 'Reply with one JSON object only. No markdown and no explanation.'
+    if schema:
+        message += '\nJSON schema:\n' + json.dumps(schema)
+    message += '\n\n' + prompt
+    images = []
+    for part in image_parts or []:
+        if not isinstance(part, dict):
+            continue
+        if part.get('text'):
+            message += '\n' + str(part['text'])
+            continue
+        inline = part.get('inlineData') or part.get('inline_data') or {}
+        data = inline.get('data')
+        if not data:
+            continue
+        mime = inline.get('mimeType') or inline.get('mime_type') or 'image/jpeg'
+        images.append(SDKImage.from_data(data, mime))
+    return UserMessage(text=message, images=tuple(images) or None)
+
+
+def cursor_json(prompt, schema=None, timeout=120, image_parts=None):
     """Ask a Cursor model for one JSON object. No project files are offered as tools."""
     from app.core.config import reload_env
     reload_env()
@@ -199,10 +222,7 @@ def cursor_json(prompt, schema=None, timeout=120):
     if len(key) < 8:
         raise ValueError('CURSOR_API_KEY is missing.')
     model = os.getenv('CURSOR_MODEL', 'composer-2.5').strip() or 'composer-2.5'
-    message = 'Reply with one JSON object only. No markdown and no explanation.'
-    if schema:
-        message += '\nJSON schema:\n' + json.dumps(schema)
-    message += '\n\n' + prompt
+    message = cursor_message(prompt, schema, image_parts)
     from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
     with tempfile.TemporaryDirectory(prefix='cursor-json-') as cwd:
         options = AgentOptions(
@@ -280,9 +300,9 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 break
         if quota_hit:
             break
-    if quota_hit and not image_parts:
+    if quota_hit:
         try:
-            return cursor_json(prompt, schema, timeout=max(int(timeout or 75), 90))
+            return cursor_json(prompt, schema, timeout=max(int(timeout or 75), 90), image_parts=image_parts)
         except Exception as exc:
             errors.append('cursor: ' + safe_error(exc))
     raise ValueError('AI providers unavailable: '+' | '.join(errors))
