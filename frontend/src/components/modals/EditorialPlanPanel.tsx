@@ -67,10 +67,13 @@ export function EditorialPlanPanel({
   const [guidanceSaved, setGuidanceSaved] = useState(false);
   const [decisionFeedback, setDecisionFeedback] = useState<Record<string, 'keep' | 'cut' | 'swap'>>({});
   const [loggingDecision, setLoggingDecision] = useState<Record<string, boolean>>({});
+  const [stages, setStages] = useState<any>(null);
+  const [confirmStage, setConfirmStage] = useState<any>(null);
 
   async function refresh() {
     try {
       setReport(await api.getEditorialReport(projectId));
+      setStages(await api.pipelineStages(projectId));
       const g = await api.getProjectGuidance(projectId);
       setGuidance(g || '');
       setError('');
@@ -126,7 +129,8 @@ export function EditorialPlanPanel({
     }
   }
 
-  async function run(planOnly = false) {
+  async function runFrom(stage?: string) {
+    setConfirmStage(null);
     setBusy(true);
     onBusy(true);
     setError('');
@@ -134,7 +138,7 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly, 'small', undefined, 'full');
+      const r = await api.runAutoProduction(projectId, true, 'small', undefined, 'full', false, stage);
       if (!r.success) throw new Error(r.error);
       const report = r.editorial_report;
       if (report?.outcome === 'captions_only') {
@@ -234,31 +238,79 @@ export function EditorialPlanPanel({
               </div>
             </div>
 
-            {/* ACTION CONTROLS */}
-            <div className="flex items-center gap-3 pb-4 border-b border-neutral-200">
-              <button
-                disabled={busy}
-                onClick={() => run(false)}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs shadow-sm disabled:opacity-50 transition flex items-center gap-1.5"
-              >
-                <Sparkles className="w-4 h-4" />
-                {busy ? 'Producing Visuals…' : 'Produce Visuals & Timeline'}
-              </button>
-              <button
-                disabled={busy}
-                onClick={() => run(true)}
-                className="px-3 py-2 rounded-lg bg-white hover:bg-neutral-50 border border-neutral-300 text-neutral-700 font-medium text-xs transition"
-              >
-                Plan Visuals Only (Preview)
-              </button>
+            {/* STAGE CONTROLS */}
+            <div className="pb-4 border-b border-neutral-200 space-y-3">
+              <div className="flex items-center gap-3">
+                {stages?.next_stage && (
+                  <button
+                    disabled={busy}
+                    onClick={() => runFrom(stages.next_stage)}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs shadow-sm disabled:opacity-50 transition flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {busy ? 'Running…' : stages.continue_label}
+                  </button>
+                )}
+                {onRedoCaptions && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onRedoCaptions}
+                    className="px-3 py-2 rounded-lg bg-white hover:bg-neutral-50 border border-neutral-300 text-neutral-700 font-medium text-xs transition"
+                  >
+                    Redo captions only
+                  </button>
+                )}
+              </div>
+              {stages?.continue_note && (
+                <p className="text-[11px] text-neutral-600 select-text">{stages.continue_note}</p>
+              )}
+              <ol className="space-y-2">
+                {(stages?.stages || []).map((stage: any) => (
+                  <li key={stage.id} className="flex items-start justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                          stage.state === 'done' ? 'bg-emerald-50 text-emerald-800' :
+                          stage.state === 'next' ? 'bg-indigo-50 text-indigo-800' :
+                          stage.state === 'out_of_date' ? 'bg-amber-50 text-amber-900' :
+                          'bg-neutral-100 text-neutral-600'
+                        }`}>{String(stage.state).replace(/_/g, ' ')}</span>
+                        <span className="text-xs font-semibold text-neutral-900">{stage.label}</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-1 select-text">{stage.summary}</p>
+                    </div>
+                    {stage.state !== 'not_run' && stage.state !== 'next' && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setConfirmStage(stage)}
+                        className="shrink-0 px-2.5 py-1 rounded-md border border-neutral-300 bg-white text-[11px] font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50"
+                      >
+                        Run again from here
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ol>
               <button
                 onClick={refresh}
-                className="px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-xs font-medium ml-auto flex items-center gap-1.5 transition"
+                className="px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-xs font-medium flex items-center gap-1.5 transition"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Refresh Status
               </button>
             </div>
+            {confirmStage && (
+              <div className="my-3 p-3 rounded-lg border border-amber-200 bg-amber-50 space-y-2">
+                <p className="text-xs font-semibold text-amber-950">Run again from {confirmStage.label}?</p>
+                <p className="text-[11px] text-amber-900 select-text">{confirmStage.replace_note}</p>
+                <div className="flex gap-2">
+                  <button type="button" disabled={busy} onClick={() => runFrom(confirmStage.id)} className="px-3 py-1.5 rounded-md bg-neutral-900 text-white text-[11px] font-semibold">Replace and continue</button>
+                  <button type="button" onClick={() => setConfirmStage(null)} className="px-3 py-1.5 rounded-md border border-neutral-300 bg-white text-[11px] font-semibold text-neutral-800">Cancel</button>
+                </div>
+              </div>
+            )}
 
             {error && (
               <p role="alert" className="p-3 my-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">

@@ -1139,7 +1139,104 @@ def execute_plan(state,rows,run_dir):
     return graphics,logs
 
 
-def run_editorial(state,media_file,protected=(),plan_only=False):
+def _latest_editorial_file(project_id, name):
+    from app.core.config import settings
+    found=sorted((settings.projects_dir/project_id/'editorial').glob('*/'+name))
+    return found[-1] if found else None
+
+
+def _saved_transcript_matches(state, run_dir):
+    path=run_dir/'00_transcript.json'
+    if not path.is_file():
+        return True
+    try:
+        saved=json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    current=transcript_rows(state.captions)
+    def brief(rows):
+        return [(round(float(r.get('start_sec',0)),2), round(float(r.get('end_sec',0)),2), (r.get('text') or '').strip()) for r in rows]
+    return brief(saved)==brief(current)
+
+
+def _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only):
+    """Place a saved or new schedule and close the editorial report."""
+    from app.services.finished_reel_understanding import audit_plan
+    write_json(run_dir/'03_schedule.json', rows)
+    model_name=os.getenv('EDITORIAL_MODEL', 'gemini-3-flash-preview')
+    if plan_only:
+        report.update(status='review_ready', stage='understanding_ready', decisions=rows, mode='analysis_only')
+        report_save()
+        persist_evaluation_decisions(state, report['run_id'], rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)
+        return [], [], report
+    report['stage']='asset_review'
+    report_save()
+    graphics, logs=execute_plan(state, rows, run_dir)
+    camera={'punch_ins':0, 'cut_times':[]}
+    report['camera']=camera
+    report['finished_reel_audit']=audit_plan(rows, getattr(state,'duration_seconds',0), camera['cut_times'])
+    report['scorecard']=report['finished_reel_audit']['scorecard']
+    report['outcome']=report['scorecard']['outcome']
+    write_json(run_dir/'07_finished_reel_audit.json', report['finished_reel_audit'])
+    report.update(status='complete', stage='timeline_ready', decisions=rows, inserted=len(graphics), retained_speaker=sum(r['status']=='no_intervention' for r in rows), needs_review=sum(r['status'] not in ('inserted','no_intervention') for r in rows))
+    report_save()
+    persist_evaluation_decisions(state, report['run_id'], rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)
+    return graphics, logs, report
+
+
+def resume_saved_stage(state, protected, plan_only, start_at, run_dir, report, report_save):
+    """Reuse a saved plan when the editor starts at plan, pictures, or timeline.
+
+    Returns None when the saved files are missing or the captions have changed,
+    so the caller runs understanding again.
+    """
+    from app.core.models import MotionGraphicItem
+    if start_at=='timeline':
+        path=_latest_editorial_file(state.id, '06_timeline.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            graphics=[MotionGraphicItem.model_validate(row) for row in json.loads(path.read_text())]
+        except (OSError, ValueError):
+            return None
+        report.update(status='complete', stage='timeline_ready', decisions=[], inserted=len(graphics), outcome='complete', resumed_from='timeline')
+        report_save()
+        return graphics, [], report
+    if start_at=='pictures':
+        path=_latest_editorial_file(state.id, '03_schedule.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            rows=json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        for row in rows:
+            if row.get('status')!='no_intervention':
+                row['status']='planned'
+        report['resumed_from']='pictures'
+        return _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only)
+    if start_at=='plan':
+        path=_latest_editorial_file(state.id, '01_planning_windows.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            segments=[Segment.model_validate(row) for row in json.loads(path.read_text())]
+        except (OSError, ValueError):
+            return None
+        from app.services.feedback_service import feedback_service
+        feedback=feedback_service.planning_feedback(state.id)
+        decisions=editorial_decisions(segments, feedback, None)
+        decisions=preserve_number_enumerations(segments, decisions)
+        decisions=add_spoken_figures(segments, decisions, state.captions)
+        decisions=repair_sparse_schedule(segments, decisions, state.captions, list(protected))
+        write_json(run_dir/'02_editorial_decisions.json', [d.model_dump() for d in decisions])
+        rows=schedule(segments, decisions, state.captions, list(protected))
+        report['resumed_from']='plan'
+        return _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only)
+    return None
+
+
+def run_editorial(state,media_file,protected=(),plan_only=False,start_at='understanding'):
     from datetime import datetime
     from uuid import uuid4
     from app.core.config import settings
@@ -1153,6 +1250,10 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
     report_save()
     try:
         if not configured_key('GEMINI_API_KEY'):raise ValueError('GEMINI_API_KEY is missing or a test placeholder. Add a working key in backend settings. No arbitrary stock was inserted.')
+        if start_at in ('plan','pictures','timeline'):
+            resumed=resume_saved_stage(state, protected, plan_only, start_at, run_dir, report, report_save)
+            if resumed is not None:
+                return resumed
         from app.services.auto_produce_mode import feature_flags
         use_twelve = bool(feature_flags().get('twelve_labs') and configured_key('TWELVE_LABS_API_KEY'))
         write_json(run_dir/'00_transcript.json',transcript_rows(state.captions))

@@ -707,12 +707,18 @@ export const api = {
     }
   },
 
-  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string, recaption: boolean = false): Promise<any> {
+  async pipelineStages(projectId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/media/${encodeURIComponent(projectId)}/pipeline-stages`);
+    if (!res.ok) throw new Error(`Pipeline stages HTTP ${res.status}`);
+    return res.json();
+  },
+
+  async runAutoProduction(projectId: string, force: boolean = false, modelSize: string = 'small', onProgress?: (message: string) => void, mode?: string, recaption: boolean = false, fromStage?: string): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/media/${projectId}/auto-produce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: force || recaption, model_size: modelSize, mode: recaption ? 'captions_only' : mode, recaption })
+        body: JSON.stringify({ force: force || recaption || Boolean(fromStage), model_size: modelSize, mode: recaption ? 'captions_only' : mode, recaption, from_stage: fromStage })
       });
       if (res.ok) {
         const response = await res.json();
