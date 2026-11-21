@@ -125,6 +125,19 @@ class Decision(BaseModel):
     editorial_need: str = ''
     viewer_need: str = ''
     visual_role: Literal['identity','evidence','illustration','demonstration','emphasis','checklist','cta','outro','presenter'] = 'illustration'
+
+    @field_validator('visual_role', mode='before')
+    @classmethod
+    def normalize_visual_role(cls, value):
+        if value is None or value == '':
+            return 'illustration'
+        if not isinstance(value, str):
+            return value
+        normalized = re.sub(r'[\s-]+', '_', value.strip()).casefold()
+        allowed = {'identity', 'evidence', 'illustration', 'demonstration', 'emphasis', 'checklist', 'cta', 'outro', 'presenter'}
+        # A model sometimes copies the intent, such as contextualize, into this field.
+        return normalized if normalized in allowed else 'illustration'
+
     existing_treatment_action: Literal['preserve','augment','replace','none'] = 'none'
     source_requirement: str = ''
     alternatives_considered: list[str] = Field(default_factory=list)
@@ -521,7 +534,7 @@ Spoken Text & Query Precision:
 '''
     from app.services.finished_reel_understanding import profile_prompt
     prompt += '\n' + profile_prompt()
-    prompt += '\nFor EACH decision fill viewer_need, visual_role, existing_treatment_action and source_requirement BEFORE choosing strategy. A checklist is CHECKLIST and a branded closing is BRANDED_OUTRO; report these even if rendering requires follow-up. Never label generic stock as identity or evidence. Use preserve/NO_INTERVENTION for adequate existing treatments.\n'
+    prompt += '\nFor EACH decision fill viewer_need, visual_role, existing_treatment_action and source_requirement BEFORE choosing strategy. visual_role is only identity, evidence, illustration, demonstration, emphasis, checklist, cta, outro, or presenter. CONTEXTUALIZE belongs in intent, not visual_role. A checklist is CHECKLIST and a branded closing is BRANDED_OUTRO; report these even if rendering requires follow-up. Never label generic stock as identity or evidence. Use preserve/NO_INTERVENTION for adequate existing treatments.\n'
     if finish_brief:
         prompt += '\nFinished-reel understanding brief:\n' + json.dumps(finish_brief,ensure_ascii=False)
     if feedback:

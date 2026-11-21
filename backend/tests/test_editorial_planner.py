@@ -630,6 +630,32 @@ def spoken(text,**overrides):
     return [seg],[decision(end=10,**overrides)],[CaptionItem(id='c',start=0,end=10,text=text,words=words)]
 
 
+def test_contextualize_visual_role_is_read_as_an_illustration():
+    decision = e.Decision.model_validate({
+        'segment_id': 'segment-1',
+        'intervene': True,
+        'rationale': 'Set the scene',
+        'visual_role': 'contextualize',
+        'intent': 'CONTEXTUALIZE',
+        'strategy': 'STOCK_IMAGE',
+        'start_sec': 1,
+        'end_sec': 3,
+        'scores': {name: 0.5 for name in e.Scores.model_fields},
+    })
+    assert decision.visual_role == 'illustration'
+    kept = e.Decision.model_validate({
+        'segment_id': 'segment-1',
+        'intervene': True,
+        'rationale': 'Named subject',
+        'visual_role': 'Evidence',
+        'strategy': 'STOCK_IMAGE',
+        'start_sec': 1,
+        'end_sec': 3,
+        'scores': {name: 0.5 for name in e.Scores.model_fields},
+    })
+    assert kept.visual_role == 'evidence'
+
+
 def test_number_forms_are_the_same_spoken_text():
     same=[('1,000,000 subscribers','even a million subscribers'),('1 million','a million'),('8 models','eight models'),
           ('250,000','two hundred fifty thousand'),('3,000','3 ,000'.replace(' ','')),('25','twenty five'),('2.5 million','2.5 million'),('10 lakh','ten lakh')]
