@@ -490,12 +490,24 @@ class AutoProduceRequest(BaseModel):
     mode: Optional[str] = None
     # Drop existing captions and saved translations, then transcribe this video again.
     recaption: bool = False
+    # captions, translation, understanding, plan, pictures, or timeline.
+    # The named stage and every stage after it run. Earlier stages are kept.
+    from_stage: Optional[str] = None
 
 @router.post("/{project_id}/auto-produce")
 def run_auto_produce_endpoint(project_id: str, req: AutoProduceRequest = AutoProduceRequest()):
     from app.services.auto_jobs import start
-    try:return {'success':True,'job':start(project_id,req.force,req.model_size,mode=req.mode,recaption=req.recaption)}
+    try:return {'success':True,'job':start(project_id,req.force,req.model_size,mode=req.mode,recaption=req.recaption,from_stage=req.from_stage)}
     except ValueError as exc:raise HTTPException(status_code=404,detail=str(exc))
+
+@router.get("/{project_id}/pipeline-stages")
+def pipeline_stages_endpoint(project_id: str):
+    from app.core.config import settings
+    from app.services.pipeline_stages import pipeline_status
+    state = project_manager.get_project(project_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return pipeline_status(state, settings.projects_dir)
 
 @router.get("/{project_id}/auto-produce/status")
 def get_auto_produce_status_endpoint(project_id: str):

@@ -80,10 +80,10 @@ class AutoProductionService:
             "summary": ingestion.get("summary", {})
         }
 
-    def run_pipeline(self, project_id, force=False, model_size="base", mode=None, recaption=False):
+    def run_pipeline(self, project_id, force=False, model_size="base", mode=None, recaption=False, from_stage=None):
         if not self._lock.acquire(blocking=False):
             return {'success':False,'error':'An automatic edit is already running. Wait for it to finish.'}
-        try:return self._run_pipeline(project_id,force,model_size,mode=mode,recaption=recaption)
+        try:return self._run_pipeline(project_id,force,model_size,mode=mode,recaption=recaption,from_stage=from_stage)
         finally:self._lock.release()
 
     def _run_pipeline(
@@ -93,6 +93,7 @@ class AutoProductionService:
         model_size: str = "base",
         mode=None,
         recaption: bool = False,
+        from_stage: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes the zero-click auto-production pipeline:
@@ -108,9 +109,14 @@ class AutoProductionService:
            - Reconstructed article / investigative report screens
         7. Saves project state and marks ingestion completed.
         """
+        from app.services.pipeline_stages import normalize_from_stage
+        start_at = normalize_from_stage(from_stage)
         if recaption:
             force = True
             mode = "captions_only"
+            start_at = start_at or "captions"
+        elif start_at:
+            force = True
         state = project_manager.get_project(project_id)
         if not state:
             return {"success": False, "error": f"Project {project_id} not found"}
@@ -149,7 +155,7 @@ class AutoProductionService:
         produce_mode = resolve_auto_produce_mode(mode)
         # Idempotency check: a finished caption pass still allows a later visual run.
         current_ingestion = state.ai_ingestion or {}
-        if visuals_already_produced(current_ingestion, video_hash, force, produce_mode):
+        if not start_at and visuals_already_produced(current_ingestion, video_hash, force, produce_mode):
             print(f"[AutoProduction] Video {project_id} with hash {video_hash[:8]} already auto-produced. Skipping duplicate run.")
             return {
                 "success": True,
@@ -166,7 +172,7 @@ class AutoProductionService:
         from uuid import uuid4
         write_json(pdir/'recovery'/('before-auto-'+uuid4().hex+'.json'),state.model_dump())
 
-        if recaption:
+        if start_at == "captions":
             state.captions = []
             checkpoint_dir = pdir / "transcription" / "translation_checkpoints"
             if checkpoint_dir.is_dir():
@@ -365,6 +371,13 @@ class AutoProductionService:
 
         # Ensure subtitle translation runs for non-English or Devanagari speech
         translation_errors = []
+        if start_at == "translation":
+            for caption in state.captions:
+                caption.translated_text = ""
+            checkpoint_dir = pdir / "transcription" / "translation_checkpoints"
+            if checkpoint_dir.is_dir():
+                for stale in checkpoint_dir.glob("*.json"):
+                    stale.unlink()
         mark_stage(project_id, 'transcription', status='complete')
         needs_translation = (
             state.detected_language != 'en'
@@ -571,7 +584,8 @@ class AutoProductionService:
             after="translation",
         )
         protected=[g for g in state.graphics if not g.parameters.get('editorial_generated')]
-        generated,reasoning_log,report=run_editorial(state,media_file,protected)
+        editorial_start = start_at if start_at in ("understanding", "plan", "pictures", "timeline") else "understanding"
+        generated,reasoning_log,report=run_editorial(state,media_file,protected,start_at=editorial_start)
         mark_stage(
             project_id,
             'editorial',
