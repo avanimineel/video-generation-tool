@@ -28,6 +28,22 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
+def visuals_already_produced(ingestion: Optional[Dict[str, Any]], video_hash: str, force: bool, produce_mode: str) -> bool:
+    """A finished caption pass is not a finished visual timeline."""
+    if force:
+        return False
+    current = ingestion or {}
+    if current.get("status") != "completed" or not current.get("editorial_run"):
+        return False
+    if current.get("video_hash") != video_hash:
+        return False
+    summary = current.get("summary") or {}
+    previous = summary.get("outcome") or current.get("auto_produce_mode")
+    if produce_mode == "full" and previous == "captions_only":
+        return False
+    return True
+
+
 def resolve_auto_produce_mode(request_mode: Optional[str] = None) -> str:
     """Request body wins over AUTO_PRODUCE_MODE env; invalid values → full."""
     candidate = (request_mode or os.getenv("AUTO_PRODUCE_MODE") or "full").strip().lower()

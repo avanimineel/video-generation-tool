@@ -111,8 +111,13 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly);
+      const r = await api.runAutoProduction(projectId, planOnly, 'small', undefined, 'full');
       if (!r.success) throw new Error(r.error);
+      const report = r.editorial_report;
+      if (report?.outcome === 'captions_only') {
+        const reasons = (report.errors || []).filter((item: string) => item !== CAPTIONS_ONLY_MESSAGE);
+        throw new Error(reasons.join(' ') || 'Visual planning did not start.');
+      }
       if (r.project) onUpdated(r.project);
       await refresh();
     } catch (e) {

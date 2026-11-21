@@ -139,9 +139,17 @@ class AutoProductionService:
         if source_role(digest=video_hash)=='finished_reference':
             return {'success':False,'project':state.model_dump(),'error':'113.mov is your finished reference, not raw footage. Upload sub.mov as the source; the finished-reel reference style is already configured. Existing timeline preserved.'}
 
-        # Idempotency check: Skip if already executed for this exact video hash
+        from app.services.auto_produce_mode import (
+            CAPTIONS_ONLY_MESSAGE,
+            cloud_readiness,
+            describe_mode,
+            resolve_auto_produce_mode,
+            visuals_already_produced,
+        )
+        produce_mode = resolve_auto_produce_mode(mode)
+        # Idempotency check: a finished caption pass still allows a later visual run.
         current_ingestion = state.ai_ingestion or {}
-        if not force and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash:
+        if visuals_already_produced(current_ingestion, video_hash, force, produce_mode):
             print(f"[AutoProduction] Video {project_id} with hash {video_hash[:8]} already auto-produced. Skipping duplicate run.")
             return {
                 "success": True,
@@ -151,13 +159,6 @@ class AutoProductionService:
                 "ingestion": current_ingestion
             }
 
-        from app.services.auto_produce_mode import (
-            CAPTIONS_ONLY_MESSAGE,
-            cloud_readiness,
-            describe_mode,
-            resolve_auto_produce_mode,
-        )
-        produce_mode = resolve_auto_produce_mode(mode)
         print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}' (mode={produce_mode})...")
 
         from app.services.auto_jobs import mark_stage

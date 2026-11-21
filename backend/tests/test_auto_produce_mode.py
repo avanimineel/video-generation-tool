@@ -6,6 +6,7 @@ from app.services.auto_produce_mode import (
     cloud_readiness,
     feature_flags,
     resolve_auto_produce_mode,
+    visuals_already_produced,
 )
 
 
@@ -23,6 +24,19 @@ from app.services.auto_produce_mode import (
 def test_resolve_auto_produce_mode(value, expected, monkeypatch):
     monkeypatch.delenv("AUTO_PRODUCE_MODE", raising=False)
     assert resolve_auto_produce_mode(value) == expected
+
+
+def test_a_caption_pass_does_not_count_as_a_finished_visual_timeline():
+    ingestion = {
+        "status": "completed",
+        "editorial_run": "captions-only-abc",
+        "video_hash": "same",
+        "auto_produce_mode": "captions_only",
+        "summary": {"outcome": "captions_only"},
+    }
+    assert not visuals_already_produced(ingestion, "same", False, "full")
+    assert visuals_already_produced(ingestion, "same", False, "captions_only")
+    assert not visuals_already_produced(ingestion, "same", True, "captions_only")
 
 
 def test_env_mode_when_request_absent(monkeypatch):
