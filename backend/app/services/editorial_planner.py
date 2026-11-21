@@ -1050,10 +1050,24 @@ def execute_plan(state,rows,run_dir):
             if not selected:
                 # A rejected search is not retried with looser terms: a second,
                 # weaker pool is how unrelated stock used to get approved.
-                row.update(status='rejected_assets',decision_reason='No candidate passed visual review and local download. Presenter retained.');continue
+                detail=next((a.get('review') for a in reversed(attempts) if a.get('review')), '')
+                reason='No candidate passed visual review and local download. Presenter retained.'
+                if detail:
+                    reason=detail if len(detail)<=240 else reason+' '+detail[:180]
+                thumbs=[]
+                for attempt in attempts:
+                    for candidate in attempt.get('candidates') or []:
+                        src=candidate.get('thumb_url') or candidate.get('preview_url')
+                        if src:
+                            thumbs.append({'thumb_url':src,'title':candidate.get('title') or ''})
+                        if len(thumbs)>=3:break
+                    if len(thumbs)>=3:break
+                row['used_image']={'candidates':thumbs,'review':detail[:500]}
+                row.update(status='rejected_assets',decision_reason=reason);continue
             full=row['composition']['layout']=='fullscreen'
             template='youtube_insert' if full else 'split_screen_vertical'
             url=selected['local']['media_url']
+            row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or ''}
             params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none')
             row['realized_composition']={'layout':'fullscreen' if full else 'split_screen','transition':'cut','entrance_animation':'none','exit_animation':'none','image_motion':'slow_zoom_in'}
             # Centre the cutaway's subject in the vertical crop instead of always cropping the middle.

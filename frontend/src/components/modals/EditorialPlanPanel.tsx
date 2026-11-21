@@ -8,6 +8,29 @@ import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
 
 const CAPTIONS_ONLY_MESSAGE = 'Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline';
 
+function picturesForDecision(d: any, project?: ProjectState, report?: any) {
+  const graphic = project?.graphics?.find((g) => g.id === d.graphic_id);
+  const saved = d.used_image || {};
+  const reviews = report?.stages?.['04_asset_review'];
+  const review = Array.isArray(reviews) ? reviews.find((row: any) => row.segment_id === d.segment_id) : null;
+  const selected = review?.selected;
+  const used = graphic?.media_url || saved.media_url || selected?.local?.media_url || selected?.thumb_url || selected?.preview_url || '';
+  if (used) {
+    return { used, title: graphic?.title || saved.title || selected?.title || 'Image used', candidates: [] as { src: string; title: string }[] };
+  }
+  const candidates: { src: string; title: string }[] = [];
+  const push = (src?: string, title?: string) => {
+    if (src && !candidates.some((item) => item.src === src) && candidates.length < 3) {
+      candidates.push({ src, title: title || 'Reviewed candidate' });
+    }
+  };
+  for (const item of saved.candidates || []) push(item.thumb_url || item.preview_url, item.title);
+  for (const attempt of review?.attempts || []) {
+    for (const candidate of attempt.candidates || []) push(candidate.thumb_url || candidate.preview_url, candidate.title);
+  }
+  return { used: '', title: '', candidates };
+}
+
 interface EditorialPlanPanelProps {
   projectId: string;
   project?: ProjectState;
@@ -152,7 +175,7 @@ export function EditorialPlanPanel({
           <section
             role="dialog"
             aria-label="Editorial plan"
-            className="bg-white text-neutral-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 flex flex-col"
+            className="bg-white text-neutral-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 flex flex-col select-text"
           >
             <header className="flex justify-between items-center pb-3 border-b border-neutral-200">
               <div>
@@ -366,9 +389,30 @@ export function EditorialPlanPanel({
                           </div>
                         </div>
 
-                        <p className="text-xs text-neutral-700 leading-relaxed">
+                        <p className="text-xs text-neutral-700 leading-relaxed select-text">
                           {d.decision_reason || d.rationale}
                         </p>
+
+                        {(() => {
+                          const pictures = picturesForDecision(d, project, report);
+                          if (!pictures.used && pictures.candidates.length === 0) return null;
+                          return (
+                            <div className="flex gap-2 items-end">
+                              {pictures.used && (
+                                <figure className="shrink-0">
+                                  <img src={pictures.used} alt={pictures.title || 'Image used'} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
+                                  <figcaption className="mt-1 text-[10px] text-neutral-500">Image used</figcaption>
+                                </figure>
+                              )}
+                              {pictures.candidates.map((candidate) => (
+                                <figure key={candidate.src} className="shrink-0">
+                                  <img src={candidate.src} alt={candidate.title} title={candidate.title} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
+                                  <figcaption className="mt-1 text-[10px] text-neutral-500">Reviewed, not used</figcaption>
+                                </figure>
+                              ))}
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex items-center justify-between text-[11px] text-neutral-500 pt-1 border-t border-neutral-100">
                           <span>Timing: {d.timing_method}</span>

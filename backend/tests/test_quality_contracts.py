@@ -2,6 +2,11 @@ from app.services.media_constraints import evidence_rejection
 from app.services.title_styles import choose_title_style
 from app.core.models import MotionGraphicItem
 
+def test_a_chest_xray_is_not_rejected_because_nearby_speech_mentions_india():
+    row={'visual_role':'illustration','semantic_context':{'transcript':'in India lung cancer is not detected'},'asset':{'retrieval_query':'chest x-ray lung infection','semantic_target':'chest x-ray'}}
+    assert evidence_rejection({'title':'Chest x-ray of lungs'}, row) is None
+
+
 def test_india_requires_metadata_not_search_keyword():
     row={'asset':{'retrieval_query':'India polio camp'}}
     assert evidence_rejection({'title':'Nurse in an American hospital'},row)

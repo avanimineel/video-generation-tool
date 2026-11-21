@@ -14,6 +14,23 @@ import { Studio } from './components/studio/Studio';
 import { api, DEFAULT_TEMPLATES, VisualReasoningItem } from './services/api';
 import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, MotionGraphicItem, FeedbackStats } from './types';
 
+function copyPlainText(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  document.execCommand('copy');
+  area.remove();
+  return Promise.resolve();
+}
+
 export const App: React.FC = () => {
   const [project, setProject] = useState<ProjectState>(() => api.getInitialProject());
   const [projectsList, setProjectsList] = useState<ProjectSummary[]>(() => api.getInitialProjectsList());
@@ -70,6 +87,7 @@ export const App: React.FC = () => {
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
   const [isAutoProducing, setIsAutoProducing] = useState<boolean>(false);
   const [autoProduceStatusText, setAutoProduceStatusText] = useState<string>('');
+  const [statusCopied, setStatusCopied] = useState(false);
   const [activeLanguageView, setActiveLanguageView] = useState<'english' | 'hindi'>('english');
   const [syncStylesToAll, setSyncStylesToAll] = useState<boolean>(true);
   const [activeLinesMode, setActiveLinesMode] = useState<1 | 2>(1);
@@ -1140,10 +1158,24 @@ export const App: React.FC = () => {
                   : 'bg-neutral-50 border-neutral-200 text-neutral-600'
             }`}
           >
-            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="font-medium text-neutral-800 truncate">{statusFacts}</span>
+            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 select-text">
+              <span className="font-medium text-neutral-800">{statusFacts}</span>
               <span className={needsAttention || hasGaps ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
             </div>
+            {(needsAttention || hasGaps) && (
+              <button
+                type="button"
+                onClick={() => {
+                  void copyPlainText(`${statusFacts} ${actionCopy}`).then(() => {
+                    setStatusCopied(true);
+                    window.setTimeout(() => setStatusCopied(false), 1500);
+                  });
+                }}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-amber-300 bg-white text-amber-950 hover:bg-amber-100 transition"
+              >
+                {statusCopied ? 'Copied' : 'Copy'}
+              </button>
+            )}
             {project.captions.length > 0 && (
               <button
                 type="button"
