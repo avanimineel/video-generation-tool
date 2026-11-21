@@ -211,6 +211,32 @@ def transcript_rows(captions):
     return [dict(start_sec=c.start,end_sec=c.end,text=c.translated_text or c.text,words=[w.model_dump() for w in c.words]) for c in captions]
 
 
+def segments_from_captions(captions, duration):
+    """Plan from speech when Twelve Labs video understanding is not available."""
+    spoken = [c for c in captions if (c.translated_text or c.text or '').strip()]
+    if not spoken:
+        raise ValueError('No spoken captions to plan visuals from.')
+    start = max(0.0, min(c.start for c in spoken))
+    end = max(c.end for c in spoken)
+    limit = max(float(duration or 0), end)
+    end = min(max(end, start + 0.05), limit)
+    text = ' '.join((c.translated_text or c.text).strip() for c in spoken)
+    return [{
+        'id': 'captions',
+        'start_sec': round(start, 2),
+        'end_sec': round(end, 2),
+        'transcript': text,
+        'semantic_summary': text[:500],
+        'narrative_role': 'EXPLANATION',
+        'current_visual_context': 'speaker on camera',
+        'observations': [],
+        'claims': [],
+        'uncertainties': ['Twelve Labs was not used. The visual plan follows the spoken captions.'],
+        'confidence': 0.45,
+        'visual_opportunity_score': 0.55,
+    }]
+
+
 def normalize_segments(raw,captions,duration):
     if not isinstance(raw,list):raise ValueError('Video understanding must return a segment array')
 
@@ -409,6 +435,9 @@ Spoken Text & Query Precision:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"
             if decisions_list:
                 prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\nMaintain patterns from approved (keep) items and avoid rejected (cut) concepts:\n{json.dumps(decisions_list, ensure_ascii=False)}\n"
+            mappings = feedback.get('caption_mappings') or []
+            if mappings:
+                prompt += "\nEditor caption timeline. Keep these spoken lines at these times instead of a shorter or repeated fragment:\n" + json.dumps(mappings, ensure_ascii=False) + "\n"
         else:
             prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\n{json.dumps(feedback, ensure_ascii=False)}\n"
 
@@ -937,7 +966,20 @@ def retrieve_asset(row,project_id,used):
     provider_order = ('pexels', 'pixabay', 'wikimedia')
 
     attempts=[]
-    context=json.dumps({'identity_rule': 'A matching name is not sufficient: verify profession, biography, relationships and era in source metadata against the semantic context. Reject namesakes. A contemporary pageant ambassador cannot depict a deceased actress mentioned as a specific spouse. If context cannot establish identity, reject.', 'geographic_rule': 'When dialogue specifies India, require source metadata confirming an Indian location/context. Never infer nationality from appearance. ASHA workers, polio campaigns and named people need specific documented source identity; generic doctors or vaccination shots are not substitutes.', 'editor_feedback':row.get('editor_feedback', {}),'intent':row['intent'],'rationale':row['rationale'],'asset':asset,'semantic_context':row.get('semantic_context',{})},ensure_ascii=False)
+    domain='general'
+    from app.services.project_manager import project_manager
+    state=project_manager.get_project(project_id)
+    if state is not None:
+        domain=getattr(getattr(state,'settings',None),'domain_profile',None) or 'general'
+    context=json.dumps({
+        'domain':domain,
+        'review_rule':'Judge the picture against this video only. Use the project domain, the spoken line, and the visual brief. Require a person, institution, or place only when the brief names it as a required entity or required environment and the visual is identity or evidence. A country or city mentioned in nearby speech does not apply to every illustration. Do not infer nationality from appearance. A matching name is not enough when the source metadata contradicts the spoken line.',
+        'editor_feedback':row.get('editor_feedback', {}),
+        'intent':row['intent'],
+        'rationale':row['rationale'],
+        'asset':asset,
+        'semantic_context':row.get('semantic_context',{}),
+    },ensure_ascii=False)
     for provider in provider_order:
         adapter=getattr(media,provider)
         # Review the alternate queries together, rather than paying one model
@@ -1021,10 +1063,24 @@ def execute_plan(state,rows,run_dir):
             if not selected:
                 # A rejected search is not retried with looser terms: a second,
                 # weaker pool is how unrelated stock used to get approved.
-                row.update(status='rejected_assets',decision_reason='No candidate passed visual review and local download. Presenter retained.');continue
+                detail=next((a.get('review') for a in reversed(attempts) if a.get('review')), '')
+                reason='No candidate passed visual review and local download. Presenter retained.'
+                if detail:
+                    reason=detail if len(detail)<=240 else reason+' '+detail[:180]
+                thumbs=[]
+                for attempt in attempts:
+                    for candidate in attempt.get('candidates') or []:
+                        src=candidate.get('thumb_url') or candidate.get('preview_url')
+                        if src:
+                            thumbs.append({'thumb_url':src,'title':candidate.get('title') or ''})
+                        if len(thumbs)>=3:break
+                    if len(thumbs)>=3:break
+                row['used_image']={'candidates':thumbs,'review':detail[:500]}
+                row.update(status='rejected_assets',decision_reason=reason);continue
             full=row['composition']['layout']=='fullscreen'
             template='youtube_insert' if full else 'split_screen_vertical'
             url=selected['local']['media_url']
+            row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or ''}
             params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none')
             row['realized_composition']={'layout':'fullscreen' if full else 'split_screen','transition':'cut','entrance_animation':'none','exit_animation':'none','image_motion':'slow_zoom_in'}
             # Centre the cutaway's subject in the vertical crop instead of always cropping the middle.
@@ -1097,7 +1153,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
     report_save()
     try:
         if not configured_key('GEMINI_API_KEY'):raise ValueError('GEMINI_API_KEY is missing or a test placeholder. Add a working key in backend settings. No arbitrary stock was inserted.')
-        if not configured_key('TWELVE_LABS_API_KEY'):raise ValueError('TWELVE_LABS_API_KEY is missing. Video understanding cannot run.')
+        from app.services.auto_produce_mode import feature_flags
+        use_twelve = bool(feature_flags().get('twelve_labs') and configured_key('TWELVE_LABS_API_KEY'))
         write_json(run_dir/'00_transcript.json',transcript_rows(state.captions))
         report['stage']='video_understanding';report_save()
         import hashlib
@@ -1127,23 +1184,35 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     transcript_path=prior.parent/'00_transcript.json'
                     try:
                         metadata=json.loads(prior.read_text())
+                        if use_twelve and metadata.get('understanding_source')=='captions':
+                            continue
                         if metadata.get('understanding_schema') in (None, 'finished-reel-observations-v4') and source.stat().st_mtime <= prior.stat().st_mtime and raw_path.exists() and transcript_path.exists() and json.loads(transcript_path.read_text())==transcript:
                             candidate=json.loads(raw_path.read_text())
                             normalize_segments(candidate,state.captions,state.duration_seconds)
                             raw=candidate;report['understanding_reused']=True;break
                     except (ValueError,TypeError):continue
                 if raw is not None: break
-        if raw is None:
+        if raw is None and not use_twelve:
+            plan_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+            raw = segments_from_captions(state.captions, plan_duration)
+            report['understanding_source'] = 'captions'
+            report['twelve_labs'] = 'skipped'
+        elif raw is None:
             result=tl.analyze_video(media_file,state.duration_seconds)
             asset_id=result.get('asset_id')
             if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
             if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
             raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
-        # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
+            report['understanding_source'] = 'twelve_labs'
+        # Keep provider output for diagnosing rejected analysis. Caption-only
+        # understanding is not cached as if the video had been analyzed.
         write_json(run_dir/'01_understanding_raw.json',raw)
-        normalize_segments(raw,state.captions,state.duration_seconds)
-        write_json(cache,raw)
-        segments=normalize_segments(raw,state.captions,state.duration_seconds)
+        if use_twelve and report.get('understanding_source') != 'captions':
+            write_json(cache,raw)
+        understand_duration = state.duration_seconds
+        if report.get('understanding_source')=='captions':
+            understand_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+        segments=normalize_segments(raw,state.captions,understand_duration)
         write_json(run_dir/'01_semantic_timeline.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         from app.services.feedback_service import feedback_service

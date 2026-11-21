@@ -14,6 +14,23 @@ import { Studio } from './components/studio/Studio';
 import { api, DEFAULT_TEMPLATES, VisualReasoningItem } from './services/api';
 import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, MotionGraphicItem, FeedbackStats } from './types';
 
+function copyPlainText(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  document.execCommand('copy');
+  area.remove();
+  return Promise.resolve();
+}
+
 export const App: React.FC = () => {
   const [project, setProject] = useState<ProjectState>(() => api.getInitialProject());
   const [projectsList, setProjectsList] = useState<ProjectSummary[]>(() => api.getInitialProjectsList());
@@ -70,6 +87,7 @@ export const App: React.FC = () => {
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
   const [isAutoProducing, setIsAutoProducing] = useState<boolean>(false);
   const [autoProduceStatusText, setAutoProduceStatusText] = useState<string>('');
+  const [statusCopied, setStatusCopied] = useState(false);
   const [activeLanguageView, setActiveLanguageView] = useState<'english' | 'hindi'>('english');
   const [syncStylesToAll, setSyncStylesToAll] = useState<boolean>(true);
   const [activeLinesMode, setActiveLinesMode] = useState<1 | 2>(1);
@@ -127,6 +145,26 @@ export const App: React.FC = () => {
       setHistoryIndex(historyIndex + 1);
       setProject(next);
       api.saveLocalProject(next);
+    }
+  };
+
+  const redoCaptions = async () => {
+    if (!project?.id || isAutoProducing) return;
+    setSaveError('');
+    setIsAutoProducing(true);
+    setAutoProduceStatusText('Transcribing and translating the captions again…');
+    setEditorialPlanOpen(false);
+    try {
+      const result = await api.runAutoProduction(project.id, true, 'small', setAutoProduceStatusText, 'captions_only', true);
+      if (result.project) {
+        const next = { ...result.project, video_url: api.getSourceVideoUrl(project.id) };
+        setProject(next);
+        pushHistory(next);
+        setEditorialPlanOpen(true);
+      }
+      if (!result.success) setSaveError(result.error || 'Captions could not be redone.');
+    } finally {
+      setIsAutoProducing(false);
     }
   };
 
@@ -897,8 +935,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9') => {
-    const newProj = await api.createProject(name, ratio);
+  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9', domain: 'general' | 'medical' | 'sports' = 'general') => {
+    const newProj = await api.createProject(name, ratio, undefined, domain);
     setBackendReady(true); setSaveError('');
     const url=new URL(window.location.href);url.searchParams.set('project',newProj.id);url.searchParams.delete('time');window.history.replaceState({},'',url);
     setProject(newProj);
@@ -1087,20 +1125,25 @@ export const App: React.FC = () => {
       <EditorialPlanPanel
         onBusy={setIsAutoProducing}
         projectId={project.id}
+        project={project}
         onSeek={setCurrentTime}
         onUpdated={p=>{const next={...p,video_url:api.getSourceVideoUrl(p.id)};setProject(next);pushHistory(next)}}
         open={editorialPlanOpen}
         onOpenChange={setEditorialPlanOpen}
+        onRedoCaptions={() => { void redoCaptions(); }}
       />
       {saveError && <div role="alert" className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-sm flex items-center gap-3"><span>{saveError}</span><button onClick={()=>setSaveRetry(v=>v+1)} disabled={!backendReady} className="underline">Retry save</button><button onClick={()=>setIsProjectDrawerOpen(true)} className="underline">Open projects</button></div>}
       {!isAutoProducing && project.source_media_path && (() => {
         const englishLines = project.captions.filter(c => /[A-Za-z0-9]/.test(c.translated_text || "")).length;
         const addedVisuals = project.graphics.filter(g => !g.parameters?.retention_camera && !['caption_cover','authored_title'].includes(g.template_id)).length;
         const cameraBeats = project.graphics.filter(g => g.parameters?.retention_camera).length;
-        const needsAttention = Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
+        const captionsOnly = project.ai_ingestion?.summary?.outcome === 'captions_only' || project.ai_ingestion?.auto_produce_mode === 'captions_only';
+        const needsAttention = !captionsOnly && Boolean(project.ai_ingestion?.errors?.length || project.ai_ingestion?.status === 'needs_review');
         const hasGaps = project.ai_ingestion?.status === 'completed_with_gaps';
         const statusFacts = `Video prepared · ${project.captions.length} captions · ${englishLines} English subtitle lines · ${addedVisuals} added visuals${cameraBeats ? ` · ${cameraBeats} camera beats` : ''}`;
-        const actionCopy = needsAttention
+        const actionCopy = captionsOnly
+          ? 'Captions are ready. Open them to read, edit, and save a timeline mapping.'
+          : needsAttention
           ? 'Automatic editing needs attention.'
           : hasGaps
             ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')}`
@@ -1115,20 +1158,43 @@ export const App: React.FC = () => {
                   : 'bg-neutral-50 border-neutral-200 text-neutral-600'
             }`}
           >
-            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="font-medium text-neutral-800 truncate">{statusFacts}</span>
+            <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 select-text">
+              <span className="font-medium text-neutral-800">{statusFacts}</span>
               <span className={needsAttention || hasGaps ? 'font-semibold' : 'text-neutral-500'}>{actionCopy}</span>
             </div>
+            {(needsAttention || hasGaps) && (
+              <button
+                type="button"
+                onClick={() => {
+                  void copyPlainText(`${statusFacts} ${actionCopy}`).then(() => {
+                    setStatusCopied(true);
+                    window.setTimeout(() => setStatusCopied(false), 1500);
+                  });
+                }}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-amber-300 bg-white text-amber-950 hover:bg-amber-100 transition"
+              >
+                {statusCopied ? 'Copied' : 'Copy'}
+              </button>
+            )}
+            {project.captions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { void redoCaptions(); }}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 transition"
+              >
+                Redo captions
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditorialPlanOpen(true)}
               className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition shadow-2xs ${
-                needsAttention || hasGaps
+                needsAttention || hasGaps || captionsOnly
                   ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
                   : 'bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100'
               }`}
             >
-              Review
+              {captionsOnly ? 'View captions' : 'Review'}
             </button>
           </div>
         );

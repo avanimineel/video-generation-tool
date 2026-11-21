@@ -17,7 +17,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 CAPTIONS_ONLY_MESSAGE = (
-    "Captions-only complete; enable Twelve Labs/Gemini/stock for full editorial"
+    "Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline"
 )
 
 
@@ -26,6 +26,22 @@ def _env_flag(name: str, default: bool = True) -> bool:
     if raw is None or not str(raw).strip():
         return default
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def visuals_already_produced(ingestion: Optional[Dict[str, Any]], video_hash: str, force: bool, produce_mode: str) -> bool:
+    """A finished caption pass is not a finished visual timeline."""
+    if force:
+        return False
+    current = ingestion or {}
+    if current.get("status") != "completed" or not current.get("editorial_run"):
+        return False
+    if current.get("video_hash") != video_hash:
+        return False
+    summary = current.get("summary") or {}
+    previous = summary.get("outcome") or current.get("auto_produce_mode")
+    if produce_mode == "full" and previous == "captions_only":
+        return False
+    return True
 
 
 def resolve_auto_produce_mode(request_mode: Optional[str] = None) -> str:
@@ -47,16 +63,15 @@ def feature_flags() -> Dict[str, bool]:
 
 
 def cloud_readiness() -> Tuple[bool, List[str]]:
-    """Whether full editorial can run. Returns (ok, human-readable blockers)."""
+    """Whether the visual timeline can run.
+
+    Twelve Labs is optional video understanding. A missing key does not stop
+    planning: the spoken captions are enough to continue into Gemini and stock.
+    """
     from app.services.editorial_planner import configured_key
 
     flags = feature_flags()
     blockers: List[str] = []
-    if not flags["twelve_labs"]:
-        blockers.append("ENABLE_TWELVE_LABS is off")
-    elif not configured_key("TWELVE_LABS_API_KEY"):
-        blockers.append("TWELVE_LABS_API_KEY is missing or a test placeholder")
-
     if not flags["gemini_editorial"]:
         blockers.append("ENABLE_GEMINI_EDITORIAL is off")
     elif not configured_key("GEMINI_API_KEY"):
