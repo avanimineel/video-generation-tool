@@ -211,6 +211,32 @@ def transcript_rows(captions):
     return [dict(start_sec=c.start,end_sec=c.end,text=c.translated_text or c.text,words=[w.model_dump() for w in c.words]) for c in captions]
 
 
+def segments_from_captions(captions, duration):
+    """Plan from speech when Twelve Labs video understanding is not available."""
+    spoken = [c for c in captions if (c.translated_text or c.text or '').strip()]
+    if not spoken:
+        raise ValueError('No spoken captions to plan visuals from.')
+    start = max(0.0, min(c.start for c in spoken))
+    end = max(c.end for c in spoken)
+    limit = max(float(duration or 0), end)
+    end = min(max(end, start + 0.05), limit)
+    text = ' '.join((c.translated_text or c.text).strip() for c in spoken)
+    return [{
+        'id': 'captions',
+        'start_sec': round(start, 2),
+        'end_sec': round(end, 2),
+        'transcript': text,
+        'semantic_summary': text[:500],
+        'narrative_role': 'EXPLANATION',
+        'current_visual_context': 'speaker on camera',
+        'observations': [],
+        'claims': [],
+        'uncertainties': ['Twelve Labs was not used. The visual plan follows the spoken captions.'],
+        'confidence': 0.45,
+        'visual_opportunity_score': 0.55,
+    }]
+
+
 def normalize_segments(raw,captions,duration):
     if not isinstance(raw,list):raise ValueError('Video understanding must return a segment array')
 
@@ -409,6 +435,9 @@ Spoken Text & Query Precision:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"
             if decisions_list:
                 prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\nMaintain patterns from approved (keep) items and avoid rejected (cut) concepts:\n{json.dumps(decisions_list, ensure_ascii=False)}\n"
+            mappings = feedback.get('caption_mappings') or []
+            if mappings:
+                prompt += "\nEditor caption timeline. Keep these spoken lines at these times instead of a shorter or repeated fragment:\n" + json.dumps(mappings, ensure_ascii=False) + "\n"
         else:
             prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\n{json.dumps(feedback, ensure_ascii=False)}\n"
 
@@ -1097,7 +1126,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
     report_save()
     try:
         if not configured_key('GEMINI_API_KEY'):raise ValueError('GEMINI_API_KEY is missing or a test placeholder. Add a working key in backend settings. No arbitrary stock was inserted.')
-        if not configured_key('TWELVE_LABS_API_KEY'):raise ValueError('TWELVE_LABS_API_KEY is missing. Video understanding cannot run.')
+        from app.services.auto_produce_mode import feature_flags
+        use_twelve = bool(feature_flags().get('twelve_labs') and configured_key('TWELVE_LABS_API_KEY'))
         write_json(run_dir/'00_transcript.json',transcript_rows(state.captions))
         report['stage']='video_understanding';report_save()
         import hashlib
@@ -1127,23 +1157,35 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     transcript_path=prior.parent/'00_transcript.json'
                     try:
                         metadata=json.loads(prior.read_text())
+                        if use_twelve and metadata.get('understanding_source')=='captions':
+                            continue
                         if metadata.get('understanding_schema') in (None, 'finished-reel-observations-v4') and source.stat().st_mtime <= prior.stat().st_mtime and raw_path.exists() and transcript_path.exists() and json.loads(transcript_path.read_text())==transcript:
                             candidate=json.loads(raw_path.read_text())
                             normalize_segments(candidate,state.captions,state.duration_seconds)
                             raw=candidate;report['understanding_reused']=True;break
                     except (ValueError,TypeError):continue
                 if raw is not None: break
-        if raw is None:
+        if raw is None and not use_twelve:
+            plan_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+            raw = segments_from_captions(state.captions, plan_duration)
+            report['understanding_source'] = 'captions'
+            report['twelve_labs'] = 'skipped'
+        elif raw is None:
             result=tl.analyze_video(media_file,state.duration_seconds)
             asset_id=result.get('asset_id')
             if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
             if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
             raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
-        # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
+            report['understanding_source'] = 'twelve_labs'
+        # Keep provider output for diagnosing rejected analysis. Caption-only
+        # understanding is not cached as if the video had been analyzed.
         write_json(run_dir/'01_understanding_raw.json',raw)
-        normalize_segments(raw,state.captions,state.duration_seconds)
-        write_json(cache,raw)
-        segments=normalize_segments(raw,state.captions,state.duration_seconds)
+        if use_twelve and report.get('understanding_source') != 'captions':
+            write_json(cache,raw)
+        understand_duration = state.duration_seconds
+        if report.get('understanding_source')=='captions':
+            understand_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+        segments=normalize_segments(raw,state.captions,understand_duration)
         write_json(run_dir/'01_semantic_timeline.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         from app.services.feedback_service import feedback_service

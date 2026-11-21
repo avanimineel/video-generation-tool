@@ -488,11 +488,13 @@ class AutoProduceRequest(BaseModel):
     # full = Whisper + translation + Twelve Labs/Gemini/stock editorial
     # captions_only = Whisper + translation + layout; skip cloud editorial
     mode: Optional[str] = None
+    # Drop existing captions and saved translations, then transcribe this video again.
+    recaption: bool = False
 
 @router.post("/{project_id}/auto-produce")
 def run_auto_produce_endpoint(project_id: str, req: AutoProduceRequest = AutoProduceRequest()):
     from app.services.auto_jobs import start
-    try:return {'success':True,'job':start(project_id,req.force,req.model_size,mode=req.mode)}
+    try:return {'success':True,'job':start(project_id,req.force,req.model_size,mode=req.mode,recaption=req.recaption)}
     except ValueError as exc:raise HTTPException(status_code=404,detail=str(exc))
 
 @router.get("/{project_id}/auto-produce/status")

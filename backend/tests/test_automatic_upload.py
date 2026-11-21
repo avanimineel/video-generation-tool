@@ -25,7 +25,7 @@ def test_stale_autosave_cannot_erase_generated_captions():
 
 def test_upload_starts_one_server_owned_job_and_preserves_old_media(monkeypatch):
     old=new_project('upload_job_regression');pid=old['id'];started=Event();release=Event();calls=[]
-    def pipeline(project_id,force,model_size):
+    def pipeline(project_id,force,model_size,mode=None,recaption=False):
         calls.append(project_id);started.set();assert release.wait(5)
         p=project_manager.get_project(project_id);p.captions=[CaptionItem(id='generated',start=0,end=1,text='Uploaded speech')];project_manager.save_project(p)
         return {'success':True,'project':p.model_dump()}
@@ -58,7 +58,7 @@ def test_source_zoom_changes_pixels_and_keeps_output_size():
 def test_blocked_graphics_are_not_reported_complete(monkeypatch):
     p=new_project('blocked_graphics_regression')
     result={'success':True,'project':p,'editorial_report':{'status':'blocked','errors':['Planner HTTP 503']}}
-    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *args:result)
+    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *args, **kwargs:result)
     auto_jobs.start(p['id'])
     for _ in range(100):
         job=auto_jobs.status(p['id'])
@@ -192,7 +192,7 @@ def test_corrupt_saved_transcript_retries_stronger_model_before_translation(monk
 
 def test_conflicting_job_is_not_reported_complete(monkeypatch):
     p=new_project('job_conflict')
-    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a:{'success':True,'project':p,'editorial_report':{'status':'conflict','stage':'subtitles','errors':['Timeline changed']}})
+    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a, **k:{'success':True,'project':p,'editorial_report':{'status':'conflict','stage':'subtitles','errors':['Timeline changed']}})
     auto_jobs.start(p['id'])
     for _ in range(100):
         job=auto_jobs.status(p['id'])
@@ -206,7 +206,7 @@ def test_skipped_ideas_do_not_flag_a_successful_edit(monkeypatch):
     outcomes=[]
     for inserted in (4,0):
         report={'status':'complete','stage':'timeline_ready','errors':[],'inserted':inserted,'needs_review':2}
-        monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a,report=report:{'success':True,'project':p,'editorial_report':report})
+        monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a, report=report, **k:{'success':True,'project':p,'editorial_report':report})
         auto_jobs.start(p['id'])
         for _ in range(100):
             job=auto_jobs.status(p['id'])

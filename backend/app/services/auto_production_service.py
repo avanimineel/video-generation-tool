@@ -80,10 +80,10 @@ class AutoProductionService:
             "summary": ingestion.get("summary", {})
         }
 
-    def run_pipeline(self, project_id, force=False, model_size="base", mode=None):
+    def run_pipeline(self, project_id, force=False, model_size="base", mode=None, recaption=False):
         if not self._lock.acquire(blocking=False):
             return {'success':False,'error':'An automatic edit is already running. Wait for it to finish.'}
-        try:return self._run_pipeline(project_id,force,model_size,mode=mode)
+        try:return self._run_pipeline(project_id,force,model_size,mode=mode,recaption=recaption)
         finally:self._lock.release()
 
     def _run_pipeline(
@@ -92,6 +92,7 @@ class AutoProductionService:
         force: bool = False,
         model_size: str = "base",
         mode=None,
+        recaption: bool = False,
     ) -> Dict[str, Any]:
         """
         Executes the zero-click auto-production pipeline:
@@ -107,6 +108,9 @@ class AutoProductionService:
            - Reconstructed article / investigative report screens
         7. Saves project state and marks ingestion completed.
         """
+        if recaption:
+            force = True
+            mode = "captions_only"
         state = project_manager.get_project(project_id)
         if not state:
             return {"success": False, "error": f"Project {project_id} not found"}
@@ -135,9 +139,17 @@ class AutoProductionService:
         if source_role(digest=video_hash)=='finished_reference':
             return {'success':False,'project':state.model_dump(),'error':'113.mov is your finished reference, not raw footage. Upload sub.mov as the source; the finished-reel reference style is already configured. Existing timeline preserved.'}
 
-        # Idempotency check: Skip if already executed for this exact video hash
+        from app.services.auto_produce_mode import (
+            CAPTIONS_ONLY_MESSAGE,
+            cloud_readiness,
+            describe_mode,
+            resolve_auto_produce_mode,
+            visuals_already_produced,
+        )
+        produce_mode = resolve_auto_produce_mode(mode)
+        # Idempotency check: a finished caption pass still allows a later visual run.
         current_ingestion = state.ai_ingestion or {}
-        if not force and current_ingestion.get("status") == "completed" and current_ingestion.get("editorial_run") and current_ingestion.get("video_hash") == video_hash:
+        if visuals_already_produced(current_ingestion, video_hash, force, produce_mode):
             print(f"[AutoProduction] Video {project_id} with hash {video_hash[:8]} already auto-produced. Skipping duplicate run.")
             return {
                 "success": True,
@@ -147,19 +159,24 @@ class AutoProductionService:
                 "ingestion": current_ingestion
             }
 
-        from app.services.auto_produce_mode import (
-            CAPTIONS_ONLY_MESSAGE,
-            cloud_readiness,
-            describe_mode,
-            resolve_auto_produce_mode,
-        )
-        produce_mode = resolve_auto_produce_mode(mode)
         print(f"[AutoProduction] Starting zero-click auto-production pipeline for project '{project_id}' (mode={produce_mode})...")
 
         from app.services.auto_jobs import mark_stage
         from app.services.editorial_planner import write_json
         from uuid import uuid4
         write_json(pdir/'recovery'/('before-auto-'+uuid4().hex+'.json'),state.model_dump())
+
+        if recaption:
+            state.captions = []
+            checkpoint_dir = pdir / "transcription" / "translation_checkpoints"
+            if checkpoint_dir.is_dir():
+                for stale in checkpoint_dir.glob("*.json"):
+                    stale.unlink()
+            state.ai_ingestion = {
+                **(state.ai_ingestion or {}),
+                "caption_layout_pending": True,
+                "status": "running",
+            }
 
         # 0. Ensure duration and proxy exist
         if state.duration_seconds <= 1.0:
@@ -180,7 +197,8 @@ class AutoProductionService:
                     media_file,
                     words_per_caption=3,
                     task="transcribe",
-                    model_size=model_size
+                    model_size=model_size,
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
                 )
             except Exception as e:
                 from app.services.editorial_planner import safe_error, write_json as _write_json
@@ -307,7 +325,8 @@ class AutoProductionService:
                 'captions': [c.model_dump() for c in state.captions]})
             try:
                 repaired_lang, repaired = transcription_service.transcribe_with_whisper(
-                    media_file, words_per_caption=3, task='transcribe', model_size='medium')
+                    media_file, words_per_caption=3, task='transcribe', model_size='medium',
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None))
                 remaining = transcript_issues(repaired)
                 if not repaired or remaining:
                     raise ValueError('; '.join(remaining[:5]) or 'No speech recognized')
@@ -353,12 +372,17 @@ class AutoProductionService:
             or any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
             or any(not (c.translated_text or '').strip() for c in state.captions)
         )
+        def _english_ready(caption) -> bool:
+            english = caption.translated_text or ""
+            return bool(english.strip()) and not translation_service.is_devanagari(english) and not translation_service.is_transliteration_fragment(caption.text, english)
+
         is_already_translated = (
             state.detected_language != 'en'
-            and all((c.translated_text or '').strip() for c in state.captions)
-            and not any(translation_service.is_devanagari(c.translated_text or '') for c in state.captions)
+            and all(_english_ready(c) for c in state.captions)
             and any((c.translated_text or '') != c.text for c in state.captions)
         )
+        if any(translation_service.is_devanagari(c.text) and not _english_ready(c) for c in state.captions):
+            needs_translation = True
         translation_preference = translation_service.translation_backend_preference()
         gemini_key_present = False
         try:
@@ -396,9 +420,17 @@ class AutoProductionService:
                 gemini_key_present=gemini_key_present,
             )
             try:
+                from app.services.caption_mappings import list_mappings
+                state.captions = translation_service.join_hindi_clauses(state.captions)
+                state.captions = translation_service.restore_sentences(
+                    state.captions,
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+                )
+                state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
                 state.captions = translation_service.translate_captions_list(
                     state.captions,
                     checkpoint_dir=pdir / 'transcription' / 'translation_checkpoints',
+                    domain=getattr(getattr(state, "settings", None), "domain_profile", None),
                 )
                 mark_stage(project_id, 'translation', status='complete')
                 _stage_log(
@@ -432,11 +464,14 @@ class AutoProductionService:
             )
 
         if not translation_errors and (state.ai_ingestion or {}).get('caption_layout_pending'):
-            from app.services.automatic_captions import layout_automatic_captions
-            state.captions = layout_automatic_captions(state.captions)
+            from app.services.caption_mappings import list_mappings
+            state.captions = translation_service.restore_sentences(
+                state.captions,
+                domain=getattr(getattr(state, "settings", None), "domain_profile", None),
+            )
+            state.captions = translation_service.apply_saved_edits(state.captions, list_mappings(project_id))
             state.ai_ingestion['caption_layout_pending'] = False
-            if state.captions and len(state.captions[-1].translated_text.split()) != 3:
-                state.ai_ingestion['caption_layout_note'] = 'Final group contains fewer than three words; no speech was invented or removed.'
+            state.ai_ingestion['caption_layout_note'] = 'Captions stay as spoken sentences. Edited lines are kept.'
 
         latest=project_manager.get_project(project_id)
         if not latest or latest.model_dump(include={"source_media_path","captions","graphics","settings"}) != initial_content:

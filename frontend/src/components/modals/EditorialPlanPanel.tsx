@@ -2,25 +2,33 @@ import React, { useEffect, useState } from 'react';
 import { UnderstandingReview } from './UnderstandingReview';
 import { QualityPreview } from './QualityPreview';
 import { api } from '../../services/api';
+import { ProjectState } from '../../types';
+import { CaptionReview } from './CaptionReview';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
+
+const CAPTIONS_ONLY_MESSAGE = 'Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline';
 
 interface EditorialPlanPanelProps {
   projectId: string;
+  project?: ProjectState;
   onSeek: (t: number) => void;
   onUpdated: (p: any) => void;
   onBusy: (b: boolean) => void;
   /** Controlled open — lets the status banner CTA open Review without a second entry point. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onRedoCaptions?: () => void;
 }
 
 export function EditorialPlanPanel({
   projectId,
+  project,
   onSeek,
   onUpdated,
   onBusy,
   open: controlledOpen,
-  onOpenChange
+  onOpenChange,
+  onRedoCaptions,
 }: EditorialPlanPanelProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -103,8 +111,13 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly);
+      const r = await api.runAutoProduction(projectId, planOnly, 'small', undefined, 'full');
       if (!r.success) throw new Error(r.error);
+      const report = r.editorial_report;
+      if (report?.outcome === 'captions_only') {
+        const reasons = (report.errors || []).filter((item: string) => item !== CAPTIONS_ONLY_MESSAGE);
+        throw new Error(reasons.join(' ') || 'Visual planning did not start.');
+      }
       if (r.project) onUpdated(r.project);
       await refresh();
     } catch (e) {
@@ -145,10 +158,12 @@ export function EditorialPlanPanel({
               <div>
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <Brain className="w-5 h-5 text-indigo-600" />
-                  Automatic Editorial Plan & AI Calibration
+                  {project?.ai_ingestion?.summary?.outcome === 'captions_only' ? 'Captions' : 'Automatic Editorial Plan & AI Calibration'}
                 </h2>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Direct the AI's visual density, review rationale, and calibrate decisions with Keep/Cut feedback.
+                  {project?.ai_ingestion?.summary?.outcome === 'captions_only'
+                    ? 'Read each line on the video timeline, correct it, and save that mapping for the next run.'
+                    : "Direct the AI's visual density, review rationale, and calibrate decisions with Keep/Cut feedback."}
                 </p>
               </div>
               <button
@@ -228,6 +243,17 @@ export function EditorialPlanPanel({
               </p>
             )}
 
+            {project && project.captions.length > 0 && (
+              project.ai_ingestion?.summary?.outcome === 'captions_only'
+              || report?.outcome === 'captions_only'
+              || report?.stage === 'captions_only_complete'
+              || (report && !(report.decisions || []).length)
+            ) && (
+              <div className="pt-4">
+                <CaptionReview project={project} onSeek={onSeek} onSaved={onUpdated} onRedoCaptions={onRedoCaptions} />
+              </div>
+            )}
+
             {report && (
               <div className="space-y-4 pt-4">
                 <div className="flex items-center justify-between text-xs">
@@ -249,15 +275,28 @@ export function EditorialPlanPanel({
 
                 {report.status === 'not_run' && (
                   <p className="my-3 text-xs text-neutral-500">
-                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to run Twelve Labs understanding and high-density editorial planning.
+                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to plan graphics from the spoken captions.
                   </p>
                 )}
 
-                {report.errors?.map((e: string, i: number) => (
-                  <p key={i} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
-                    {e}
-                  </p>
-                ))}
+                {(() => {
+                  const captionsOnly = report.outcome === 'captions_only' || report.stage === 'captions_only_complete';
+                  const alerts = (report.errors || []).filter((item: string) => !(captionsOnly && item === CAPTIONS_ONLY_MESSAGE));
+                  return (
+                    <>
+                      {captionsOnly && (
+                        <p className="text-xs text-neutral-600">
+                          Captions are ready. Visual planning stays off until Gemini editorial planning and stock search are enabled.
+                        </p>
+                      )}
+                      {alerts.map((item: string, index: number) => (
+                        <p key={index} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
+                          {item}
+                        </p>
+                      ))}
+                    </>
+                  );
+                })()}
 
                 {/* DECISION CARDS */}
                 <div className="space-y-3 my-2">

@@ -62,7 +62,10 @@ def mark_stage(media_id: str, stage: str, status: str = 'running', **fields: Any
     logger.info('auto_produce_stage', **payload)
 
 
-def start(pid,force=False,model_size='small',mode=None):
+def start(pid,force=False,model_size='small',mode=None,recaption=False):
+    if recaption:
+        force = True
+        mode = 'captions_only'
     if not project_manager.get_project(pid):raise ValueError('Project not found')
     with _lock:
         if _jobs.get(pid,{}).get('status') in ('queued','running'):return dict(_jobs[pid])
@@ -85,7 +88,7 @@ def start(pid,force=False,model_size='small',mode=None):
         produce_mode=resolve_auto_produce_mode(mode)
         _save(pid,status='running',stage='transcription',auto_produce_mode=produce_mode)
         try:
-            result=auto_production_service.run_pipeline(pid,force,model_size,mode=produce_mode)
+            result=auto_production_service.run_pipeline(pid,force,model_size,mode=produce_mode,recaption=recaption)
             report=result.get('editorial_report', {})
             # Captions-only success is complete (not needs_attention) even when the
             # report carries the opt-in reminder in errors[].

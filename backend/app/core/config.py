@@ -20,7 +20,9 @@ _CONFIG_LOCK = threading.RLock()
 
 def usable_key(value):
     value = (value or '').strip()
-    return bool(value) and not any(marker in value.lower() for marker in
+    if len(value) < 8 or set(value) <= {'.', '-'}:
+        return False
+    return not any(marker in value.lower() for marker in
         ('testmock', 'placeholder', 'your_', 'test-key', 'test_key', 'working-fixture'))
 
 @contextmanager
