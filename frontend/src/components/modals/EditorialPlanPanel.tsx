@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { UnderstandingReview } from './UnderstandingReview';
 import { QualityPreview } from './QualityPreview';
 import { api } from '../../services/api';
@@ -47,6 +47,8 @@ interface EditorialPlanPanelProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onRedoCaptions?: () => void;
+  /** Open on the editable caption list. Review leaves this unset. */
+  focus?: 'captions' | 'plan';
 }
 
 export function EditorialPlanPanel({
@@ -58,6 +60,7 @@ export function EditorialPlanPanel({
   open: controlledOpen,
   onOpenChange,
   onRedoCaptions,
+  focus = 'plan',
 }: EditorialPlanPanelProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -76,6 +79,10 @@ export function EditorialPlanPanel({
   const [stages, setStages] = useState<any>(null);
   const [confirmStage, setConfirmStage] = useState<any>(null);
   const [changingOption, setChangingOption] = useState('');
+  const captionRef = useRef<HTMLDivElement>(null);
+  const captionsOnly = project?.ai_ingestion?.summary?.outcome === 'captions_only'
+    || project?.ai_ingestion?.auto_produce_mode === 'captions_only';
+  const showCaptionEditor = focus === 'captions' || captionsOnly;
 
   async function useStockOption(decision: any, option: any) {
     if (!project || !decision.graphic_id) return;
@@ -124,6 +131,11 @@ export function EditorialPlanPanel({
       setError(String(e));
     }
   }
+
+  useEffect(() => {
+    if (!open || !showCaptionEditor) return;
+    captionRef.current?.scrollIntoView({ block: 'start' });
+  }, [open, showCaptionEditor, project?.captions.length, report]);
 
   useEffect(() => {
     setReport(null);
@@ -228,10 +240,10 @@ export function EditorialPlanPanel({
               <div>
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <Brain className="w-5 h-5 text-indigo-600" />
-                  {project?.ai_ingestion?.summary?.outcome === 'captions_only' ? 'Captions' : 'Automatic Editorial Plan & AI Calibration'}
+                  {showCaptionEditor ? 'Captions' : 'Automatic Editorial Plan & AI Calibration'}
                 </h2>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  {project?.ai_ingestion?.summary?.outcome === 'captions_only'
+                  {showCaptionEditor
                     ? 'Read each line on the video timeline, correct it, and save that mapping for the next run.'
                     : "Direct the AI's visual density, review rationale, and calibrate decisions with Keep/Cut feedback."}
                 </p>
@@ -362,12 +374,7 @@ export function EditorialPlanPanel({
             )}
 
             {project && project.captions.length > 0 && (
-              project.ai_ingestion?.summary?.outcome === 'captions_only'
-              || report?.outcome === 'captions_only'
-              || report?.stage === 'captions_only_complete'
-              || (report && !(report.decisions || []).length)
-            ) && (
-              <div className="pt-4">
+              <div ref={captionRef} className="pt-4">
                 <CaptionReview project={project} onSeek={onSeek} onSaved={onUpdated} onRedoCaptions={onRedoCaptions} />
               </div>
             )}

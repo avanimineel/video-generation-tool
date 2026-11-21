@@ -108,6 +108,7 @@ export const App: React.FC = () => {
     return true;
   });
   const [editorialPlanOpen, setEditorialPlanOpen] = useState(false);
+  const [editorialFocus, setEditorialFocus] = useState<'captions' | 'plan'>('plan');
 
   const toggleRightSidebar = () => {
     setIsRightSidebarCollapsed((prev) => {
@@ -160,6 +161,7 @@ export const App: React.FC = () => {
         const next = { ...result.project, video_url: api.getSourceVideoUrl(project.id) };
         setProject(next);
         pushHistory(next);
+        setEditorialFocus('captions');
         setEditorialPlanOpen(true);
       }
       if (!result.success) setSaveError(result.error || 'Captions could not be redone.');
@@ -1131,6 +1133,7 @@ export const App: React.FC = () => {
         open={editorialPlanOpen}
         onOpenChange={setEditorialPlanOpen}
         onRedoCaptions={() => { void redoCaptions(); }}
+        focus={editorialFocus}
       />
       {saveError && <div role="alert" className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-sm flex items-center gap-3"><span>{saveError}</span><button onClick={()=>setSaveRetry(v=>v+1)} disabled={!backendReady} className="underline">Retry save</button><button onClick={()=>setIsProjectDrawerOpen(true)} className="underline">Open projects</button></div>}
       {!isAutoProducing && project.source_media_path && (() => {
@@ -1206,17 +1209,28 @@ export const App: React.FC = () => {
                 Redo captions
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setEditorialPlanOpen(true)}
-              className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition shadow-2xs ${
-                needsAttention || hasGaps || captionsOnly
-                  ? 'bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800'
-                  : 'bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100'
-              }`}
-            >
-              {captionsOnly ? 'View captions' : 'Review'}
-            </button>
+            {project.captions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { setEditorialFocus('captions'); setEditorialPlanOpen(true); }}
+                className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800 transition shadow-2xs"
+              >
+                View captions
+              </button>
+            )}
+            {!captionsOnly && (
+              <button
+                type="button"
+                onClick={() => { setEditorialFocus('plan'); setEditorialPlanOpen(true); }}
+                className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition shadow-2xs ${
+                  needsAttention || hasGaps
+                    ? 'bg-white text-neutral-900 border-neutral-300 hover:bg-neutral-100'
+                    : 'bg-white text-neutral-800 border-neutral-300 hover:bg-neutral-100'
+                }`}
+              >
+                Review
+              </button>
+            )}
           </div>
         );
       })()}
