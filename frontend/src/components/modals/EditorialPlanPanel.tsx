@@ -6,7 +6,7 @@ import { ProjectState } from '../../types';
 import { CaptionReview } from './CaptionReview';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
 
-const CAPTIONS_ONLY_MESSAGE = 'Captions-only complete; enable Twelve Labs/Gemini/stock for full editorial';
+const CAPTIONS_ONLY_MESSAGE = 'Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline';
 
 interface EditorialPlanPanelProps {
   projectId: string;
@@ -275,7 +275,7 @@ export function EditorialPlanPanel({
 
                 {report.status === 'not_run' && (
                   <p className="my-3 text-xs text-neutral-500">
-                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to run Twelve Labs understanding and high-density editorial planning.
+                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to plan graphics from the spoken captions.
                   </p>
                 )}
 
@@ -286,7 +286,7 @@ export function EditorialPlanPanel({
                     <>
                       {captionsOnly && (
                         <p className="text-xs text-neutral-600">
-                          Captions are ready. Visual planning stays off until Twelve Labs, Gemini, and stock search are enabled.
+                          Captions are ready. Visual planning stays off until Gemini editorial planning and stock search are enabled.
                         </p>
                       )}
                       {alerts.map((item: string, index: number) => (

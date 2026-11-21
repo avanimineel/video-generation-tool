@@ -17,7 +17,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 CAPTIONS_ONLY_MESSAGE = (
-    "Captions-only complete; enable Twelve Labs/Gemini/stock for full editorial"
+    "Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline"
 )
 
 
@@ -63,16 +63,15 @@ def feature_flags() -> Dict[str, bool]:
 
 
 def cloud_readiness() -> Tuple[bool, List[str]]:
-    """Whether full editorial can run. Returns (ok, human-readable blockers)."""
+    """Whether the visual timeline can run.
+
+    Twelve Labs is optional video understanding. A missing key does not stop
+    planning: the spoken captions are enough to continue into Gemini and stock.
+    """
     from app.services.editorial_planner import configured_key
 
     flags = feature_flags()
     blockers: List[str] = []
-    if not flags["twelve_labs"]:
-        blockers.append("ENABLE_TWELVE_LABS is off")
-    elif not configured_key("TWELVE_LABS_API_KEY"):
-        blockers.append("TWELVE_LABS_API_KEY is missing or a test placeholder")
-
     if not flags["gemini_editorial"]:
         blockers.append("ENABLE_GEMINI_EDITORIAL is off")
     elif not configured_key("GEMINI_API_KEY"):

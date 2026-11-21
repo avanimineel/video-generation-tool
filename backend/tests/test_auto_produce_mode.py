@@ -68,7 +68,7 @@ def test_cloud_readiness_reports_blockers(monkeypatch):
     )
     ok, blockers = cloud_readiness()
     assert ok is False
-    assert any("TWELVE_LABS" in b for b in blockers)
+    assert not any("TWELVE_LABS" in b for b in blockers)
     assert any("GEMINI" in b for b in blockers)
 
 
@@ -123,6 +123,31 @@ def test_captions_only_pipeline_skips_editorial(monkeypatch, tmp_path):
     assert result["ingestion"]["status"] == "completed"
     assert result["ingestion"]["summary"]["auto_produce_mode"] == "captions_only"
     assert result["project"]["captions"][0]["text"] == "Hello world"
+
+
+def test_missing_twelve_labs_key_still_plans_visuals(monkeypatch, tmp_path):
+    from app.core.models import CaptionItem
+    from app.services.auto_production_service import auto_production_service
+    from app.services.editorial_planner import normalize_segments, segments_from_captions
+    from app.services.transcription_service import transcription_service
+    from app.services import editorial_planner
+
+    state = _seed_project(monkeypatch, tmp_path, "full_without_twelve")
+    spoken = [CaptionItem(id="spoken", start=0, end=2, text="Lung cancer screening", translated_text="Lung cancer screening")]
+    monkeypatch.setattr(transcription_service, "transcribe_with_whisper", lambda *a, **k: ("en", spoken))
+    monkeypatch.setattr(
+        "app.services.editorial_planner.configured_key",
+        lambda name: "fixture-credential-value" if name == "GEMINI_API_KEY" else "",
+    )
+    calls = []
+    monkeypatch.setattr(editorial_planner, "run_editorial", lambda *a, **k: calls.append(True) or ([], [], {"status": "complete", "run_id": "planned", "errors": [], "inserted": 0, "outcome": "complete_with_gaps"}))
+
+    covered = normalize_segments(segments_from_captions(spoken, 5), spoken, 5)
+    assert covered[0].transcript == "Lung cancer screening"
+
+    result = auto_production_service.run_pipeline(state.id, mode="full")
+    assert calls == [True]
+    assert result["editorial_report"]["run_id"] == "planned"
 
 
 def test_full_mode_without_cloud_finishes_captions_clearly(monkeypatch, tmp_path):
