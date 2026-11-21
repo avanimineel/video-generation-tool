@@ -264,6 +264,60 @@ def test_gemini_json_retries_on_503_and_falls_back(monkeypatch):
     assert len(call_log) == 3
 
 
+QUOTA_BODY = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for metric: generate_content_free_tier_requests. Please retry in 17h59m48s."}}'
+
+
+def test_daily_quota_uses_cursor_and_skips_later_gemini_models(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: calls.append(1) or SimpleNamespace(status_code=429, text=QUOTA_BODY))
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: {'ok': True, 'via': 'cursor'})
+    assert e.gemini_json('plan this') == {'ok': True, 'via': 'cursor'}
+    assert len(calls) == 1
+
+
+def test_picture_review_stays_on_gemini_when_the_daily_quota_is_spent(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: SimpleNamespace(status_code=429, text=QUOTA_BODY))
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(AssertionError('picture review must stay on Gemini')))
+    with pytest.raises(ValueError, match='AI providers unavailable') as caught:
+        e.gemini_json('review', image_parts=[{'inline_data': {'data': 'abc'}}])
+    assert 'cursor:' not in str(caught.value)
+
+
+def test_cursor_failure_keeps_the_gemini_quota_error(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: SimpleNamespace(status_code=429, text=QUOTA_BODY))
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(ValueError('CURSOR_API_KEY is missing.')))
+    with pytest.raises(ValueError, match='free_tier_requests') as caught:
+        e.gemini_json('plan this')
+    assert 'CURSOR_API_KEY is missing' in str(caught.value)
+
+
+def test_brief_rate_limit_stays_on_gemini(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            return SimpleNamespace(status_code=429, text='{"error":{"code":429,"message":"Rate limit. Please retry in 2s."}}')
+        return SimpleNamespace(status_code=200, text='', json=lambda: {'candidates': [{'content': {'parts': [{'text': '{"ok": true}'}]}}]})
+
+    monkeypatch.setattr(e.requests, 'post', post)
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(AssertionError('brief 429 stays on Gemini')))
+    assert e.gemini_json('plan this') == {'ok': True}
+    assert len(calls) == 2
+
+
+def test_json_from_model_text_reads_a_fenced_object():
+    assert e.json_from_model_text('Here is the object:\n```json\n{"ok": true}\n```') == {'ok': True}
+
+
 
 def test_kept_generated_graphic_survives_next_iteration(monkeypatch,tmp_path):
     from app.core.config import settings

@@ -5,6 +5,8 @@ import json
 import math
 import os
 import re
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -165,6 +167,73 @@ def configured_key(name):
     return get_provider_key(name)
 
 
+def gemini_daily_quota(status, body):
+    """True when Gemini's daily free-tier cap is spent, not a brief rate limit."""
+    if status != 429:
+        return False
+    text = (body or '').casefold()
+    if any(marker in text for marker in ('quota', 'resource_exhausted', 'free tier', 'free_tier')):
+        return True
+    return re.search(r'retry in \d+\s*h', text) is not None
+
+
+def json_from_model_text(text):
+    raw = (text or '').strip()
+    raw = re.sub(r'^```[a-zA-Z0-9]*\s*', '', raw)
+    raw = re.sub(r'\s*```\s*$', '', raw).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start = min((index for index in (raw.find('{'), raw.find('[')) if index >= 0), default=-1)
+        if start < 0:
+            raise ValueError('Cursor model did not return JSON.')
+        value, _ = json.JSONDecoder().raw_decode(raw[start:])
+        return value
+
+
+def cursor_json(prompt, schema=None, timeout=120):
+    """Ask a Cursor model for one JSON object. No project files are offered as tools."""
+    from app.core.config import reload_env
+    reload_env()
+    key = os.getenv('CURSOR_API_KEY', '').strip()
+    if len(key) < 8:
+        raise ValueError('CURSOR_API_KEY is missing.')
+    model = os.getenv('CURSOR_MODEL', 'composer-2.5').strip() or 'composer-2.5'
+    message = 'Reply with one JSON object only. No markdown and no explanation.'
+    if schema:
+        message += '\nJSON schema:\n' + json.dumps(schema)
+    message += '\n\n' + prompt
+    from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
+    with tempfile.TemporaryDirectory(prefix='cursor-json-') as cwd:
+        options = AgentOptions(
+            api_key=key,
+            model=model,
+            tools=[],
+            local=LocalAgentOptions(cwd=cwd),
+        )
+        holder = {}
+
+        def run():
+            try:
+                holder['result'] = Agent.prompt(message, options)
+            except Exception as exc:
+                holder['error'] = exc
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            raise TimeoutError('Cursor model ' + model + ' timed out after ' + str(int(timeout)) + 's')
+        if holder.get('error'):
+            raise holder['error']
+        result = holder.get('result')
+    status = getattr(result, 'status', None)
+    if status != 'finished':
+        detail = getattr(result, 'error_message', None) or getattr(result, 'result', '')
+        raise ValueError('Cursor model ' + model + ' status ' + str(status) + ': ' + safe_error(detail))
+    return json_from_model_text(getattr(result, 'result', ''))
+
+
 def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=None):
     key=configured_key('GEMINI_API_KEY')
     if not key:raise ValueError('GEMINI_API_KEY is missing or is a test placeholder.')
@@ -179,6 +248,7 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
     ]))
     errors=[]
     requests_made=0
+    quota_hit=False
     for model in models:
         for attempt in range(2):
             if max_requests is not None and requests_made >= max_requests:
@@ -188,6 +258,10 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]+(image_parts or [])}],'generationConfig':config},timeout=(10,timeout))
                 if response.status_code!=200:
                     err_msg = f'{model} HTTP {response.status_code}: {safe_error(response.text)}'
+                    if gemini_daily_quota(response.status_code, response.text):
+                        errors.append(err_msg)
+                        quota_hit=True
+                        break
                     if response.status_code in (429, 503, 504) and attempt == 0:
                         time.sleep(1.5)
                         continue
@@ -204,6 +278,13 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                     continue
                 errors.append(model+': '+safe_error(exc))
                 break
+        if quota_hit:
+            break
+    if quota_hit and not image_parts:
+        try:
+            return cursor_json(prompt, schema, timeout=max(int(timeout or 75), 90))
+        except Exception as exc:
+            errors.append('cursor: ' + safe_error(exc))
     raise ValueError('AI providers unavailable: '+' | '.join(errors))
 
 
