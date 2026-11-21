@@ -64,7 +64,7 @@ Inspect: `backend/projects/<id>/editorial/<run>/02_editorial_decisions.json`, `0
 
 - Prefer medical keyword buckets for auto-produce queries.
 - Reorder Wikimedia ahead of Pexels/Pixabay.
-- Fall back to Candidate #1 under strict vision.
+- Fall back to Candidate #1 under strict vision. A picture review that approves a hit keeps that hit. When review cannot approve one (unreadable thumbnails, a rejected subject, or a failed review), place the highest utility option — word overlap with the retrieval query, then frame size — and store the other options with their scores so Review can switch the placed picture. Equal scores may break the tie by search order. Do not label that placement as a vision approval.
 - Document stage as `stock_search` or vision timeout as 6s.
 - Retry rejected stock with looser substitute pools that approve unrelated media.
 - Hardcode a country or city list in asset review. A place or person is required only when this video's brief marks the visual as identity or evidence and names that subject. The project domain and the spoken line decide the brief.

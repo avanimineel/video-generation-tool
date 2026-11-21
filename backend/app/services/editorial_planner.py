@@ -1038,6 +1038,57 @@ def persist_evaluation_decisions(state, run_id, rows, model_name=None, prompt_ve
     return eval_file, records
 
 
+def _as_int(value):
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def option_utility(candidate, queries):
+    """How well a stock hit matches the search words. Larger frames score a little higher."""
+    blob = ' '.join(str(candidate.get(k) or '') for k in ('title', 'description')).casefold()
+    words = list(dict.fromkeys(w for w in re.findall(r'[a-z0-9]+', ' '.join(queries).casefold()) if len(w) > 2))
+    overlap = (sum(1 for word in words if word in blob) / len(words)) if words else 0
+    pixels = float(candidate.get('width') or 0) * float(candidate.get('height') or 0)
+    size = min(pixels / float(1920 * 1080), 1.0) if pixels else 0
+    return round(0.85 * overlap + 0.15 * size, 4)
+
+
+def stock_options(candidates, queries):
+    """Ranked choices for one cue. The same picture is kept once."""
+    options = []
+    seen = set()
+    for candidate in candidates:
+        identity = candidate.get('url') or candidate.get('id')
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        options.append({
+            'id': str(candidate.get('id') or ''),
+            'title': candidate.get('title') or '',
+            'provider': candidate.get('provider') or '',
+            'url': candidate.get('url') or '',
+            'download_url': candidate.get('download_url') or candidate.get('url') or '',
+            'thumb_url': candidate.get('thumb_url') or candidate.get('preview_url') or '',
+            'media_type': candidate.get('media_type') or 'image',
+            'author': candidate.get('author') or '',
+            'author_url': candidate.get('author_url') or '',
+            'license': candidate.get('license') or '',
+            'source_credit': candidate.get('source_credit') or '',
+            'width': _as_int(candidate.get('width')),
+            'height': _as_int(candidate.get('height')),
+            'utility': option_utility(candidate, queries),
+            '_candidate': candidate,
+        })
+    options.sort(key=lambda item: (-item['utility'], item['title']))
+    return options
+
+
+def public_stock_option(option):
+    return {key: value for key, value in option.items() if key != '_candidate'}
+
+
 def retrieve_asset(row,project_id,used):
     from app.services.media_search_service import media_search_service as media
     from app.services.asset_downloader import asset_downloader
@@ -1067,6 +1118,7 @@ def retrieve_asset(row,project_id,used):
     provider_order = ('pexels', 'pixabay', 'wikimedia')
 
     attempts=[]
+    fallback=[]
     domain='general'
     from app.services.project_manager import project_manager
     state=project_manager.get_project(project_id)
@@ -1108,6 +1160,7 @@ def retrieve_asset(row,project_id,used):
                 if len(pool)>=8:break
             if len(pool)>=8:break
         if not pool:continue
+        fallback.extend(pool)
         try:
             selected,reason=media.rerank_candidates_with_vision(pool,context,' | '.join(final_queries),strict=True)
             for attempt in attempts:
@@ -1118,9 +1171,24 @@ def retrieve_asset(row,project_id,used):
             saved=asset_downloader.download_asset(project_id,selected)
             if not saved.get('success') or not Path(saved['local_path']).is_file():raise ValueError('Downloaded asset is not available locally')
             used.add(selected['url'])
-            return dict(selected,local=saved),attempts
+            options=stock_options(pool, final_queries)
+            return dict(selected,local=saved,stock_options=[public_stock_option(item) for item in options]),attempts
         except Exception as exc:attempts.append({'provider':provider,'error':safe_error(exc)})
 
+    # Review did not approve a picture, or the thumbnails could not be read.
+    # Place the closest match and keep the other choices for the editor to change.
+    for option in stock_options(fallback, final_queries):
+        candidate=option['_candidate']
+        if candidate.get('url') in used:continue
+        try:
+            saved=asset_downloader.download_asset(project_id,candidate)
+            if not saved.get('success') or not Path(saved['local_path']).is_file():continue
+            used.add(candidate.get('url'))
+            options=[public_stock_option(item) for item in stock_options(fallback, final_queries)]
+            attempts.append({'provider':candidate.get('provider'),'review':'Placed the highest utility option because picture review did not approve one.','selected':candidate.get('id'),'utility':option['utility']})
+            return dict(candidate,local=saved,stock_options=options,provisional=True),attempts
+        except Exception as exc:
+            attempts.append({'provider':candidate.get('provider'),'error':safe_error(exc)})
     return None,attempts
 
 
@@ -1181,8 +1249,12 @@ def execute_plan(state,rows,run_dir):
             full=row['composition']['layout']=='fullscreen'
             template='youtube_insert' if full else 'split_screen_vertical'
             url=selected['local']['media_url']
-            row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or ''}
-            params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none')
+            options=selected.get('stock_options') or []
+            row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or '','options':options,'provisional':bool(selected.get('provisional'))}
+            if selected.get('provisional'):
+                score=next((item.get('utility') for item in options if str(item.get('id'))==str(selected.get('id'))), options[0].get('utility') if options else '')
+                row['decision_reason']=f'Placed the highest-scoring option ({score}). Change it in Review if another picture fits better.'
+            params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none',stock_options=options,provisional_choice=bool(selected.get('provisional')),selected_stock_id=str(selected.get('id') or ''))
             row['realized_composition']={'layout':'fullscreen' if full else 'split_screen','transition':'cut','entrance_animation':'none','exit_animation':'none','image_motion':'slow_zoom_in'}
             # Centre the cutaway's subject in the vertical crop instead of always cropping the middle.
             from app.services.subject_layers import media_focus
@@ -1218,7 +1290,9 @@ def execute_plan(state,rows,run_dir):
             selected,attempts=retrieve_asset(row,state.id,used)
             if selected:
                 url=selected['local']['media_url']
-                params.update(media_url=url,media_type=selected['media_type'],split_ratio=.5,animation='none')
+                options=selected.get('stock_options') or []
+                row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or '','options':options,'provisional':bool(selected.get('provisional'))}
+                params.update(media_url=url,media_type=selected['media_type'],split_ratio=.5,animation='none',stock_options=options,provisional_choice=bool(selected.get('provisional')),selected_stock_id=str(selected.get('id') or ''))
                 row['realized_composition']={'layout':'split_screen','transition':'cut'}
                 g=MotionGraphicItem(id=f'editorial_{run_dir.name}_{i}',start=row['start_sec'],end=row['end_sec'],template_id='split_screen_vertical',title=row['asset']['semantic_target'] or row['display_text'],parameters=params,media_url=url,media_type=selected['media_type'],placement_mode='overlay')
             else:

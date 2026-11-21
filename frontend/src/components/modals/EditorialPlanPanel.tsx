@@ -15,20 +15,26 @@ function picturesForDecision(d: any, project?: ProjectState, report?: any) {
   const review = Array.isArray(reviews) ? reviews.find((row: any) => row.segment_id === d.segment_id) : null;
   const selected = review?.selected;
   const used = graphic?.media_url || saved.media_url || selected?.local?.media_url || selected?.thumb_url || selected?.preview_url || '';
-  if (used) {
-    return { used, title: graphic?.title || saved.title || selected?.title || 'Image used', candidates: [] as { src: string; title: string }[] };
+  const raw = saved.options || graphic?.parameters?.stock_options || [];
+  const options = (Array.isArray(raw) ? raw : []).map((item: any) => ({
+    ...item,
+    src: item.thumb_url || item.preview_url || item.media_url || '',
+    utility: typeof item.utility === 'number' ? item.utility : null,
+  })).filter((item: any) => item.src || item.url);
+  if (options.length) {
+    return { used, title: graphic?.title || saved.title || selected?.title || 'Image used', options };
   }
-  const candidates: { src: string; title: string }[] = [];
+  const candidates: any[] = [];
   const push = (src?: string, title?: string) => {
     if (src && !candidates.some((item) => item.src === src) && candidates.length < 3) {
-      candidates.push({ src, title: title || 'Reviewed candidate' });
+      candidates.push({ src, title: title || 'Reviewed candidate', utility: null });
     }
   };
   for (const item of saved.candidates || []) push(item.thumb_url || item.preview_url, item.title);
   for (const attempt of review?.attempts || []) {
     for (const candidate of attempt.candidates || []) push(candidate.thumb_url || candidate.preview_url, candidate.title);
   }
-  return { used: '', title: '', candidates };
+  return { used, title: graphic?.title || saved.title || '', options: candidates };
 }
 
 interface EditorialPlanPanelProps {
@@ -69,6 +75,43 @@ export function EditorialPlanPanel({
   const [loggingDecision, setLoggingDecision] = useState<Record<string, boolean>>({});
   const [stages, setStages] = useState<any>(null);
   const [confirmStage, setConfirmStage] = useState<any>(null);
+  const [changingOption, setChangingOption] = useState('');
+
+  async function useStockOption(decision: any, option: any) {
+    if (!project || !decision.graphic_id) return;
+    const key = `${decision.graphic_id}:${option.id || option.url}`;
+    setChangingOption(key);
+    setError('');
+    try {
+      const saved = await api.downloadAsset(projectId, option);
+      if (!saved?.success || !saved.media_url) throw new Error('The picture could not be saved on this video.');
+      const graphics = project.graphics.map((graphic) => graphic.id === decision.graphic_id ? {
+        ...graphic,
+        media_url: saved.media_url,
+        media_type: saved.media_type || option.media_type || graphic.media_type,
+        title: option.title || graphic.title,
+        source_name: option.provider || graphic.source_name,
+        source_url: option.url || graphic.source_url,
+        author: option.author || graphic.author,
+        license: option.license || graphic.license,
+        parameters: {
+          ...graphic.parameters,
+          media_url: saved.media_url,
+          media_type: saved.media_type || option.media_type,
+          source_citation: option.source_credit || graphic.parameters?.source_citation,
+          provisional_choice: false,
+          selected_stock_id: String(option.id || ''),
+        },
+      } : graphic);
+      const next = { ...project, graphics };
+      await api.saveProject(projectId, next);
+      onUpdated(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setChangingOption('');
+    }
+  }
 
   async function refresh() {
     try {
@@ -447,21 +490,39 @@ export function EditorialPlanPanel({
 
                         {(() => {
                           const pictures = picturesForDecision(d, project, report);
-                          if (!pictures.used && pictures.candidates.length === 0) return null;
+                          if (!pictures.used && pictures.options.length === 0) return null;
+                          const graphic = project?.graphics?.find((item) => item.id === d.graphic_id);
+                          const chosenId = String(graphic?.parameters?.selected_stock_id || '');
+                          const alternatives = pictures.options.filter((option) => option.src && String(option.id || '') !== chosenId && option.url !== graphic?.source_url);
                           return (
-                            <div className="flex gap-2 items-end">
+                            <div className="flex gap-2 items-end overflow-x-auto">
                               {pictures.used && (
                                 <figure className="shrink-0">
-                                  <img src={pictures.used} alt={pictures.title || 'Image used'} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
-                                  <figcaption className="mt-1 text-[10px] text-neutral-500">Image used</figcaption>
+                                  <img src={pictures.used} alt={pictures.title || 'Image used'} className="h-28 w-20 object-cover rounded border border-neutral-900 bg-neutral-100" />
+                                  <figcaption className="mt-1 text-[10px] text-neutral-800">Image used</figcaption>
                                 </figure>
                               )}
-                              {pictures.candidates.map((candidate) => (
-                                <figure key={candidate.src} className="shrink-0">
-                                  <img src={candidate.src} alt={candidate.title} title={candidate.title} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
-                                  <figcaption className="mt-1 text-[10px] text-neutral-500">Reviewed, not used</figcaption>
-                                </figure>
-                              ))}
+                              {alternatives.map((option) => {
+                                const key = `${d.graphic_id}:${option.id || option.url}`;
+                                return (
+                                  <figure key={key} className="shrink-0 w-24">
+                                    <img src={option.src} alt={option.title || 'Another option'} title={option.title} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
+                                    <figcaption className="mt-1 text-[10px] text-neutral-500">
+                                      {typeof option.utility === 'number' ? `Score ${option.utility.toFixed(2)}` : 'Other option'}
+                                    </figcaption>
+                                    {d.graphic_id && option.url && (
+                                      <button
+                                        type="button"
+                                        disabled={changingOption === key}
+                                        onClick={() => { void useStockOption(d, option); }}
+                                        className="mt-1 px-1.5 py-0.5 rounded border border-neutral-300 bg-white text-[10px] font-semibold text-neutral-800 hover:bg-neutral-100 disabled:opacity-50"
+                                      >
+                                        {changingOption === key ? 'Saving…' : 'Use this'}
+                                      </button>
+                                    )}
+                                  </figure>
+                                );
+                              })}
                             </div>
                           );
                         })()}

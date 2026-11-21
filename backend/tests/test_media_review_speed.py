@@ -24,6 +24,49 @@ def test_alternate_queries_use_one_review_per_provider(monkeypatch,tmp_path):
     assert len(reviews[0])==8
 
 
+def test_unapproved_review_places_the_highest_utility_option(monkeypatch, tmp_path):
+    from app.services.media_search_service import media_search_service as media
+    from app.services.asset_downloader import asset_downloader
+    def search(query, **kw):
+        if kw['provider'] != 'pexels':
+            return []
+        return [
+            dict(id='wrong', url='https://example.test/wrong', title='Bangladesh river map', description='a river delta', width=1920, height=1080, media_type='image', provider='pexels'),
+            dict(id='right', url='https://example.test/right', title='India political map', description='map of India', width=1280, height=720, media_type='image', provider='pexels'),
+        ]
+    monkeypatch.setattr(media, 'search_media', search)
+    monkeypatch.setattr(media, 'rerank_candidates_with_vision', lambda *a, **k: ({}, 'No decodable thumbnails available for visual review.'))
+    asset = tmp_path / 'local.jpg'
+    asset.write_bytes(b'asset')
+    monkeypatch.setattr(asset_downloader, 'download_asset', lambda *a: dict(success=True, local_path=str(asset), media_url='/local.jpg'))
+    row = dict(strategy='STOCK_IMAGE', intent='ILLUSTRATE', rationale='India map', asset=dict(retrieval_query='India map', alternate_queries=[], required_entities=[]))
+    selected, _attempts = e.retrieve_asset(row, 'test', set())
+    assert selected['id'] == 'right' and selected['provisional'] is True
+    assert [item['id'] for item in selected['stock_options']] == ['right', 'wrong']
+    assert selected['stock_options'][0]['utility'] > selected['stock_options'][1]['utility']
+
+
+def test_approved_review_keeps_its_pick_and_keeps_the_other_options(monkeypatch, tmp_path):
+    from app.services.media_search_service import media_search_service as media
+    from app.services.asset_downloader import asset_downloader
+    def search(query, **kw):
+        if kw['provider'] != 'pexels':
+            return []
+        return [
+            dict(id='wrong', url='https://example.test/wrong', title='Bangladesh river map', description='a river delta', width=1920, height=1080, media_type='image', provider='pexels'),
+            dict(id='right', url='https://example.test/right', title='India political map', description='map of India', width=1280, height=720, media_type='image', provider='pexels'),
+        ]
+    monkeypatch.setattr(media, 'search_media', search)
+    monkeypatch.setattr(media, 'rerank_candidates_with_vision', lambda pool, *a, **k: (pool[0], 'matches'))
+    asset = tmp_path / 'local.jpg'
+    asset.write_bytes(b'asset')
+    monkeypatch.setattr(asset_downloader, 'download_asset', lambda *a: dict(success=True, local_path=str(asset), media_url='/local.jpg'))
+    row = dict(strategy='STOCK_IMAGE', intent='ILLUSTRATE', rationale='India map', asset=dict(retrieval_query='India map', alternate_queries=[], required_entities=[]))
+    selected, _attempts = e.retrieve_asset(row, 'test', set())
+    assert selected['id'] == 'wrong' and not selected.get('provisional')
+    assert {item['id'] for item in selected['stock_options']} == {'wrong', 'right'}
+
+
 def test_visual_review_request_budget(monkeypatch):
     monkeypatch.setattr(e,'configured_key',lambda *a:'fixture-credential')
     monkeypatch.setattr(e.time,'sleep',lambda *a:None)
