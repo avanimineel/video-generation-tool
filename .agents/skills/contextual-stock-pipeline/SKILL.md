@@ -67,6 +67,7 @@ Inspect: `backend/projects/<id>/editorial/<run>/02_editorial_decisions.json`, `0
 - Fall back to Candidate #1 under strict vision.
 - Document stage as `stock_search` or vision timeout as 6s.
 - Retry rejected stock with looser substitute pools that approve unrelated media.
+- Hardcode a country or city list in asset review. A place or person is required only when this video's brief marks the visual as identity or evidence and names that subject. The project domain and the spoken line decide the brief.
 
 ## Env
 

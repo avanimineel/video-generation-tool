@@ -966,7 +966,20 @@ def retrieve_asset(row,project_id,used):
     provider_order = ('pexels', 'pixabay', 'wikimedia')
 
     attempts=[]
-    context=json.dumps({'identity_rule': 'A matching name is not sufficient: verify profession, biography, relationships and era in source metadata against the semantic context. Reject namesakes. A contemporary pageant ambassador cannot depict a deceased actress mentioned as a specific spouse. If context cannot establish identity, reject.', 'geographic_rule': 'When dialogue specifies India, require source metadata confirming an Indian location/context. Never infer nationality from appearance. ASHA workers, polio campaigns and named people need specific documented source identity; generic doctors or vaccination shots are not substitutes.', 'editor_feedback':row.get('editor_feedback', {}),'intent':row['intent'],'rationale':row['rationale'],'asset':asset,'semantic_context':row.get('semantic_context',{})},ensure_ascii=False)
+    domain='general'
+    from app.services.project_manager import project_manager
+    state=project_manager.get_project(project_id)
+    if state is not None:
+        domain=getattr(getattr(state,'settings',None),'domain_profile',None) or 'general'
+    context=json.dumps({
+        'domain':domain,
+        'review_rule':'Judge the picture against this video only. Use the project domain, the spoken line, and the visual brief. Require a person, institution, or place only when the brief names it as a required entity or required environment and the visual is identity or evidence. A country or city mentioned in nearby speech does not apply to every illustration. Do not infer nationality from appearance. A matching name is not enough when the source metadata contradicts the spoken line.',
+        'editor_feedback':row.get('editor_feedback', {}),
+        'intent':row['intent'],
+        'rationale':row['rationale'],
+        'asset':asset,
+        'semantic_context':row.get('semantic_context',{}),
+    },ensure_ascii=False)
     for provider in provider_order:
         adapter=getattr(media,provider)
         # Review the alternate queries together, rather than paying one model
