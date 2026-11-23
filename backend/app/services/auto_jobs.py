@@ -62,13 +62,21 @@ def mark_stage(media_id: str, stage: str, status: str = 'running', **fields: Any
     logger.info('auto_produce_stage', **payload)
 
 
-def start(pid,force=False,model_size='small',mode=None):
+def start(pid,force=False,model_size='small',mode=None,recaption=False,from_stage=None):
+    from app.services.pipeline_stages import normalize_from_stage
+    start_at=normalize_from_stage(from_stage)
+    if recaption:
+        force = True
+        mode = 'captions_only'
+        start_at = start_at or 'captions'
+    elif start_at:
+        force = True
     if not project_manager.get_project(pid):raise ValueError('Project not found')
     with _lock:
         if _jobs.get(pid,{}).get('status') in ('queued','running'):return dict(_jobs[pid])
         from app.services.auto_produce_mode import resolve_auto_produce_mode
         produce_mode=resolve_auto_produce_mode(mode)
-        _jobs[pid]={'status':'queued','stage':'waiting','auto_produce_mode':produce_mode,'started_epoch':datetime.now(timezone.utc).timestamp()}
+        _jobs[pid]={'status':'queued','stage':'waiting','auto_produce_mode':produce_mode,'from_stage':start_at,'started_epoch':datetime.now(timezone.utc).timestamp()}
         write_json(_path(pid),_jobs[pid])
     logger.info(
         'auto_produce_started',
@@ -85,7 +93,7 @@ def start(pid,force=False,model_size='small',mode=None):
         produce_mode=resolve_auto_produce_mode(mode)
         _save(pid,status='running',stage='transcription',auto_produce_mode=produce_mode)
         try:
-            result=auto_production_service.run_pipeline(pid,force,model_size,mode=produce_mode)
+            result=auto_production_service.run_pipeline(pid,force,model_size,mode=produce_mode,recaption=recaption,from_stage=start_at)
             report=result.get('editorial_report', {})
             # Captions-only success is complete (not needs_attention) even when the
             # report carries the opt-in reminder in errors[].

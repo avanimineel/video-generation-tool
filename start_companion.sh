@@ -61,11 +61,13 @@ export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME}"
 mkdir -p "$HF_HOME"
 
 # Local-first captions defaults (EC2 / Podcast). Override any var before running this script.
+# auto: use the GPU when CUDA and cuBLAS are present, otherwise CPU.
 export WHISPER_DEVICE="${WHISPER_DEVICE:-auto}"
-export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-float16}"
+# Leave compute type unset. The GPU uses float16 first. CPU fallback uses int8.
 export FFMPEG_VIDEO_ENCODER="${FFMPEG_VIDEO_ENCODER:-auto}"
-# EC2 default: local NLLB (override with TRANSLATION_BACKEND=auto if desired)
-export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-local}"
+# Hindi uses Gemini when GEMINI_API_KEY is set. NLLB-600M is only the offline fallback.
+# Set TRANSLATION_BACKEND=local to keep English lines on NLLB; Hindi still uses Gemini when a key exists.
+export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-auto}"
 export LOCAL_TRANSLATION_MODEL="${LOCAL_TRANSLATION_MODEL:-facebook/nllb-200-distilled-600M}"
 export AUTO_PRODUCE_MODE="${AUTO_PRODUCE_MODE:-captions_only}"
 export LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
@@ -133,4 +135,9 @@ cleanup() {
   kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-wait
+# Stay in the foreground. A service manager restarts this script if either side exits.
+while kill -0 "$BACKEND_PID" 2>/dev/null && kill -0 "$FRONTEND_PID" 2>/dev/null; do
+  sleep 2
+done
+echo "Companion process exited; stopping the other side."
+exit 1

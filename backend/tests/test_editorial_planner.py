@@ -264,6 +264,86 @@ def test_gemini_json_retries_on_503_and_falls_back(monkeypatch):
     assert len(call_log) == 3
 
 
+QUOTA_BODY = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for metric: generate_content_free_tier_requests. Please retry in 17h59m48s."}}'
+
+
+def test_gemini_outage_uses_cursor_after_the_model_list(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.delenv('EDITORIAL_MODEL', raising=False)
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+    monkeypatch.setattr(
+        e.requests,
+        'post',
+        lambda *a, **k: calls.append(1) or SimpleNamespace(
+            status_code=503,
+            text='{"error":{"code":503,"message":"This model is currently experiencing high demand."}}',
+        ),
+    )
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: {'ok': True, 'via': 'cursor'})
+    assert e.gemini_json('plan this') == {'ok': True, 'via': 'cursor'}
+    # Each listed model is retried once before the backup model is asked.
+    assert len(calls) == 8
+
+
+def test_daily_quota_uses_cursor_and_skips_later_gemini_models(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: calls.append(1) or SimpleNamespace(status_code=429, text=QUOTA_BODY))
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: {'ok': True, 'via': 'cursor'})
+    assert e.gemini_json('plan this') == {'ok': True, 'via': 'cursor'}
+    assert len(calls) == 1
+
+
+def test_picture_review_uses_cursor_when_the_daily_quota_is_spent(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+    seen = {}
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: calls.append(1) or SimpleNamespace(status_code=429, text=QUOTA_BODY))
+
+    def cursor(prompt, schema=None, timeout=120, image_parts=None):
+        seen['images'] = image_parts
+        return {'selected_index': 0}
+
+    monkeypatch.setattr(e, 'cursor_json', cursor)
+    parts = [{'inline_data': {'data': 'abc', 'mime_type': 'image/jpeg'}}]
+    assert e.gemini_json('review', image_parts=parts) == {'selected_index': 0}
+    assert len(calls) == 1 and seen['images'] == parts
+
+
+def test_cursor_failure_keeps_the_gemini_quota_error(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    monkeypatch.setattr(e.requests, 'post', lambda *a, **k: SimpleNamespace(status_code=429, text=QUOTA_BODY))
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(ValueError('CURSOR_API_KEY is missing.')))
+    with pytest.raises(ValueError, match='free_tier_requests') as caught:
+        e.gemini_json('plan this')
+    assert 'CURSOR_API_KEY is missing' in str(caught.value)
+
+
+def test_brief_rate_limit_stays_on_gemini(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            return SimpleNamespace(status_code=429, text='{"error":{"code":429,"message":"Rate limit. Please retry in 2s."}}')
+        return SimpleNamespace(status_code=200, text='', json=lambda: {'candidates': [{'content': {'parts': [{'text': '{"ok": true}'}]}}]})
+
+    monkeypatch.setattr(e.requests, 'post', post)
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: (_ for _ in ()).throw(AssertionError('brief 429 stays on Gemini')))
+    assert e.gemini_json('plan this') == {'ok': True}
+    assert len(calls) == 2
+
+
+def test_json_from_model_text_reads_a_fenced_object():
+    assert e.json_from_model_text('Here is the object:\n```json\n{"ok": true}\n```') == {'ok': True}
+
+
 
 def test_kept_generated_graphic_survives_next_iteration(monkeypatch,tmp_path):
     from app.core.config import settings
@@ -567,6 +647,32 @@ def spoken(text,**overrides):
     words=[WordTiming(word=w,start=i*.5,end=i*.5+.5) for i,w in enumerate(text.split())]
     seg=e.Segment(id='segment-1',start_sec=0,end_sec=10,transcript=text,semantic_summary='Test')
     return [seg],[decision(end=10,**overrides)],[CaptionItem(id='c',start=0,end=10,text=text,words=words)]
+
+
+def test_contextualize_visual_role_is_read_as_an_illustration():
+    decision = e.Decision.model_validate({
+        'segment_id': 'segment-1',
+        'intervene': True,
+        'rationale': 'Set the scene',
+        'visual_role': 'contextualize',
+        'intent': 'CONTEXTUALIZE',
+        'strategy': 'STOCK_IMAGE',
+        'start_sec': 1,
+        'end_sec': 3,
+        'scores': {name: 0.5 for name in e.Scores.model_fields},
+    })
+    assert decision.visual_role == 'illustration'
+    kept = e.Decision.model_validate({
+        'segment_id': 'segment-1',
+        'intervene': True,
+        'rationale': 'Named subject',
+        'visual_role': 'Evidence',
+        'strategy': 'STOCK_IMAGE',
+        'start_sec': 1,
+        'end_sec': 3,
+        'scores': {name: 0.5 for name in e.Scores.model_fields},
+    })
+    assert kept.visual_role == 'evidence'
 
 
 def test_number_forms_are_the_same_spoken_text():

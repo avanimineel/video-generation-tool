@@ -2,10 +2,16 @@ from app.services.media_constraints import evidence_rejection
 from app.services.title_styles import choose_title_style
 from app.core.models import MotionGraphicItem
 
-def test_india_requires_metadata_not_search_keyword():
-    row={'asset':{'retrieval_query':'India polio camp'}}
-    assert evidence_rejection({'title':'Nurse in an American hospital'},row)
-    assert evidence_rejection({'title':'Vaccination camp in Delhi, India'},row) is None
+def test_a_search_query_does_not_impose_a_country():
+    row={'visual_role':'illustration','semantic_context':{'transcript':'in India lung cancer is not detected'},'asset':{'retrieval_query':'India polio camp','semantic_target':'chest x-ray'}}
+    assert evidence_rejection({'title':'Nurse in an American hospital'}, row) is None
+    assert evidence_rejection({'title':'Chest x-ray of lungs'}, row) is None
+
+
+def test_evidence_requires_the_subject_named_by_this_video():
+    row={'visual_role':'evidence','asset':{'required_entities':['Delhi']}}
+    assert evidence_rejection({'title':'Nurse in an American hospital'}, row)
+    assert evidence_rejection({'title':'Clinic in Delhi'}, row) is None
 
 def test_named_person_not_replaced_with_generic_portrait():
     row={'intent':'IDENTIFY','asset':{'required_entities':['Lisa Ray']}}

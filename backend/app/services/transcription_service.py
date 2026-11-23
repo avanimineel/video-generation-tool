@@ -15,6 +15,23 @@ from app.services.whisper_device import (
 
 logger = get_logger(__name__)
 
+CAPTION_PROMPTS = {
+    "general": "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms.",
+    "finance": "Finance discussion. Transcribe money, tax, insurance, investing and prices faithfully. Keep terms such as interest, loan, premium, return, budget and tax.",
+    "medical": "Clinical discussion. Transcribe the diagnosis, symptoms, treatment and anatomy faithfully. Keep terms such as cancer, tumour, biopsy, chemotherapy, patient, lung, scan and x-ray.",
+    "real_estate": "Property discussion. Transcribe the home, price, location and deal faithfully. Keep terms such as mortgage, rent, listing, buyer and seller.",
+    "education": "Teaching. Transcribe the lesson, subject and steps faithfully. Keep terms such as course, exam, student, chapter and example.",
+    "legal": "Legal discussion. Transcribe the right, claim, court and agreement faithfully. Keep terms such as contract, client, clause, liability and settlement.",
+    "business": "Business discussion. Transcribe the company, product, customer and numbers faithfully. Keep terms such as revenue, customer, startup, pricing and team.",
+    "fitness": "Fitness discussion. Transcribe the exercise, body and routine faithfully. Keep terms such as workout, coach, muscle, diet and recovery.",
+    "sports": "Sports commentary. Transcribe the match, players, score and action faithfully. Keep terms such as goal, ball, coach, tournament, injury and team.",
+}
+
+
+def caption_prompt(domain: Optional[str]) -> str:
+    from app.services.project_manager import project_domain
+    return CAPTION_PROMPTS[project_domain(domain or "")]
+
 def join_number_fragments(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Whisper times "3,000" as two words ("3" and ",000"). Rejoin them so a
     # number is never split across subtitle boxes; no spoken text is changed.
@@ -234,13 +251,15 @@ class TranscriptionService:
     def get_whisper_model(cls, model_size: Optional[str] = None, *, force_device: Optional[str] = None):
         target_size = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
         preference = force_device or None
-        intended_device, intended_compute, _ = resolve_whisper_device(preference)
-        cache_key = whisper_cache_key(target_size, intended_device, intended_compute)
-        if cache_key in cls._whisper_models:
-            return cls._whisper_models[cache_key]
-        cpu_key = whisper_cache_key(target_size, 'cpu', resolve_whisper_device('cpu')[1])
-        if intended_device == 'cuda' and cpu_key in cls._whisper_models and force_device != 'cuda':
-            return cls._whisper_models[cpu_key]
+        intended_device, _intended_compute, _ = resolve_whisper_device(preference)
+        cached = cls._cached_model_for(target_size, intended_device)
+        if cached is not None:
+            return cached
+        # A GPU that already failed stays on the CPU model for this process.
+        if intended_device == 'cuda' and force_device != 'cuda':
+            cached_cpu = cls._cached_model_for(target_size, 'cpu')
+            if cached_cpu is not None:
+                return cached_cpu
 
         os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
         try:
@@ -261,6 +280,14 @@ class TranscriptionService:
             return None
 
     @classmethod
+    def _cached_model_for(cls, model_size: str, device: str):
+        prefix = f"{model_size}:{device}:"
+        for key, model in cls._whisper_models.items():
+            if key.startswith(prefix):
+                return model
+        return None
+
+    @classmethod
     def _cached_model_device(cls, model: Any) -> Optional[str]:
         for key, cached in cls._whisper_models.items():
             if cached is model:
@@ -276,12 +303,32 @@ class TranscriptionService:
         size = max(1, min(20, words_per_caption))
         return [words[i:i + size] for i in range(0, len(words), size)]
 
+    def chunk_spoken_phrases(self, words: List[Dict[str, Any]], max_words: int = 14, pause: float = 0.45) -> List[List[Dict[str, Any]]]:
+        """Keep a Hindi clause together so it can be translated before it is used."""
+        if not words:
+            return []
+        chunks: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        limit = max(4, min(18, max_words))
+        for word in words:
+            if current:
+                gap = float(word.get("start") or 0) - float(current[-1].get("end") or 0)
+                ended = str(current[-1].get("word") or "").rstrip().endswith((".", "?", "!", "।"))
+                if gap >= pause or ended or len(current) >= limit:
+                    chunks.append(current)
+                    current = []
+            current.append(word)
+        if current:
+            chunks.append(current)
+        return chunks
+
     def transcribe_with_whisper(
         self,
         media_path: str,
         words_per_caption: int = 3,
         task: str = 'translate',
-        model_size: Optional[str] = None
+        model_size: Optional[str] = None,
+        domain: Optional[str] = None,
     ) -> Tuple[str, List[CaptionItem]]:
         target_model = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
         model = self.get_whisper_model(target_model)
@@ -290,7 +337,8 @@ class TranscriptionService:
 
         # Default to 'translate' for high-accuracy English subtitles from Hindi/Hinglish speech
         whisper_task = task if task in ['transcribe', 'translate'] else 'translate'
-        prompt = "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms."
+        from app.services.caption_mappings import transcription_prompt
+        prompt = transcription_prompt(caption_prompt(domain))
 
         # Fast 16kHz mono audio extraction: avoids slow video container demuxing in Python
         audio_target = media_path
@@ -391,8 +439,9 @@ class TranscriptionService:
             if not seg_words:
                 continue
 
-            # Break segment into sentence-aware 3-5 word subtitle chunks
-            chunks = self.chunk_segment_words(seg_words, words_per_caption)
+            # Keep a spoken clause together. Three-word boxes are restored only
+            # for the legacy layout helper, not for the captions the editor reads.
+            chunks = self.chunk_spoken_phrases(seg_words, max_words=18)
 
             for chunk in chunks:
                 if not chunk:

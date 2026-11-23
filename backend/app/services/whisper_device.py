@@ -80,11 +80,34 @@ def cuda_device_count(probe: Optional[Callable[[], int]] = None) -> int:
 
 
 def default_compute_type(device: str) -> str:
-    """float16 on CUDA, int8 on CPU — overridable via WHISPER_COMPUTE_TYPE."""
+    """float16 on CUDA, int8 on CPU — overridable via WHISPER_COMPUTE_TYPE.
+
+    float16 is a GPU type. A global float16 setting must not be applied on CPU,
+    where CTranslate2 rejects it.
+    """
     override = (os.getenv("WHISPER_COMPUTE_TYPE") or "").strip()
-    if override:
+    if override and not (device != "cuda" and override == "float16"):
         return override
     return "float16" if device == "cuda" else "int8"
+
+
+def float16_rejected(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "float16" in text and ("not support" in text or "efficient" in text or "compute type" in text)
+
+
+def compute_attempts(device: str) -> list:
+    """Types to try on one device. GPU starts at float16 and can step down."""
+    preferred = default_compute_type(device)
+    if device == "cuda":
+        order = (preferred, "float16", "int8_float16", "int8")
+    else:
+        order = ("int8" if preferred == "float16" else preferred, "int8")
+    attempts = []
+    for item in order:
+        if item and item not in attempts:
+            attempts.append(item)
+    return attempts
 
 
 def resolve_whisper_device(
@@ -95,6 +118,10 @@ def resolve_whisper_device(
     cublas_ok: Optional[bool] = None,
 ) -> Tuple[str, str, Optional[str]]:
     """Pick Whisper device and compute type.
+
+    A GPU is the first choice whenever CUDA and cuBLAS are available.
+    CPU is used only when no GPU is present, the GPU libraries are missing,
+    or the caller asked for CPU.
 
     Returns ``(device, compute_type, fallback_reason)``.
     ``fallback_reason`` is set when CUDA was desired but CPU is used instead.
@@ -168,7 +195,11 @@ def load_whisper_model(
     model_factory: Optional[Callable[..., Any]] = None,
     cpu_threads: Optional[int] = None,
 ) -> Tuple[Any, str, str, Optional[str]]:
-    """Construct a WhisperModel with CUDA→CPU fallback.
+    """Construct a WhisperModel, preferring the GPU and falling back to CPU.
+
+    On a GPU, float16 is tried first. A GPU that rejects float16 stays on the
+    GPU with the next supported type. CPU int8 is used when no GPU is present
+    or every GPU attempt fails.
 
     Returns ``(model, device, compute_type, fallback_reason)``.
     ``model_factory`` defaults to ``faster_whisper.WhisperModel`` (injectable for tests).
@@ -188,11 +219,24 @@ def load_whisper_model(
             kwargs["cpu_threads"] = threads
         return factory(model_size, **kwargs)
 
+    def _load_on(dev: str) -> Tuple[Any, str]:
+        attempts = compute_attempts(dev)
+        last_exc: Optional[BaseException] = None
+        for index, ctype in enumerate(attempts):
+            try:
+                return _construct(dev, ctype), ctype
+            except Exception as exc:
+                last_exc = exc
+                if index + 1 < len(attempts) and float16_rejected(exc):
+                    continue
+                raise
+        raise last_exc or RuntimeError("Speech model could not load.")
+
     if reason == "missing_libcublas":
         log_cuda_fallback(model_size, "cpu", compute_type, "missing_libcublas")
 
     try:
-        model = _construct(device, compute_type)
+        model, compute_type = _load_on(device)
         if logger:
             logger.info(
                 "whisper_device_selected",
@@ -207,8 +251,10 @@ def load_whisper_model(
     except Exception as exc:
         if device != "cuda":
             raise
-        fallback_reason = classify_cuda_fallback(exc)
+        fallback_reason = "float16_unsupported" if float16_rejected(exc) else classify_cuda_fallback(exc)
         cpu_device, cpu_compute, _ = resolve_whisper_device("cpu")
+        if cpu_compute == "float16":
+            cpu_compute = "int8"
         log_cuda_fallback(model_size, cpu_device, cpu_compute, fallback_reason, exc)
         model = _construct(cpu_device, cpu_compute)
         if logger:

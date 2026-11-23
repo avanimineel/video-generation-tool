@@ -5,6 +5,8 @@ import json
 import math
 import os
 import re
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -123,6 +125,19 @@ class Decision(BaseModel):
     editorial_need: str = ''
     viewer_need: str = ''
     visual_role: Literal['identity','evidence','illustration','demonstration','emphasis','checklist','cta','outro','presenter'] = 'illustration'
+
+    @field_validator('visual_role', mode='before')
+    @classmethod
+    def normalize_visual_role(cls, value):
+        if value is None or value == '':
+            return 'illustration'
+        if not isinstance(value, str):
+            return value
+        normalized = re.sub(r'[\s-]+', '_', value.strip()).casefold()
+        allowed = {'identity', 'evidence', 'illustration', 'demonstration', 'emphasis', 'checklist', 'cta', 'outro', 'presenter'}
+        # A model sometimes copies the intent, such as contextualize, into this field.
+        return normalized if normalized in allowed else 'illustration'
+
     existing_treatment_action: Literal['preserve','augment','replace','none'] = 'none'
     source_requirement: str = ''
     alternatives_considered: list[str] = Field(default_factory=list)
@@ -165,6 +180,93 @@ def configured_key(name):
     return get_provider_key(name)
 
 
+def gemini_daily_quota(status, body):
+    """True when Gemini's daily free-tier cap is spent, not a brief rate limit."""
+    if status != 429:
+        return False
+    text = (body or '').casefold()
+    if any(marker in text for marker in ('quota', 'resource_exhausted', 'free tier', 'free_tier')):
+        return True
+    return re.search(r'retry in \d+\s*h', text) is not None
+
+
+def json_from_model_text(text):
+    raw = (text or '').strip()
+    raw = re.sub(r'^```[a-zA-Z0-9]*\s*', '', raw)
+    raw = re.sub(r'\s*```\s*$', '', raw).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start = min((index for index in (raw.find('{'), raw.find('[')) if index >= 0), default=-1)
+        if start < 0:
+            raise ValueError('Cursor model did not return JSON.')
+        value, _ = json.JSONDecoder().raw_decode(raw[start:])
+        return value
+
+
+def cursor_message(prompt, schema=None, image_parts=None):
+    """Text plus any thumbnail parts. Gemini inline images become Cursor images."""
+    from cursor_sdk import SDKImage, UserMessage
+    message = 'Reply with one JSON object only. No markdown and no explanation.'
+    if schema:
+        message += '\nJSON schema:\n' + json.dumps(schema)
+    message += '\n\n' + prompt
+    images = []
+    for part in image_parts or []:
+        if not isinstance(part, dict):
+            continue
+        if part.get('text'):
+            message += '\n' + str(part['text'])
+            continue
+        inline = part.get('inlineData') or part.get('inline_data') or {}
+        data = inline.get('data')
+        if not data:
+            continue
+        mime = inline.get('mimeType') or inline.get('mime_type') or 'image/jpeg'
+        images.append(SDKImage.from_data(data, mime))
+    return UserMessage(text=message, images=tuple(images) or None)
+
+
+def cursor_json(prompt, schema=None, timeout=120, image_parts=None):
+    """Ask a Cursor model for one JSON object. No project files are offered as tools."""
+    from app.core.config import reload_env
+    reload_env()
+    key = os.getenv('CURSOR_API_KEY', '').strip()
+    if len(key) < 8:
+        raise ValueError('CURSOR_API_KEY is missing.')
+    model = os.getenv('CURSOR_MODEL', 'composer-2.5').strip() or 'composer-2.5'
+    message = cursor_message(prompt, schema, image_parts)
+    from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
+    with tempfile.TemporaryDirectory(prefix='cursor-json-') as cwd:
+        options = AgentOptions(
+            api_key=key,
+            model=model,
+            tools=[],
+            local=LocalAgentOptions(cwd=cwd),
+        )
+        holder = {}
+
+        def run():
+            try:
+                holder['result'] = Agent.prompt(message, options)
+            except Exception as exc:
+                holder['error'] = exc
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            raise TimeoutError('Cursor model ' + model + ' timed out after ' + str(int(timeout)) + 's')
+        if holder.get('error'):
+            raise holder['error']
+        result = holder.get('result')
+    status = getattr(result, 'status', None)
+    if status != 'finished':
+        detail = getattr(result, 'error_message', None) or getattr(result, 'result', '')
+        raise ValueError('Cursor model ' + model + ' status ' + str(status) + ': ' + safe_error(detail))
+    return json_from_model_text(getattr(result, 'result', ''))
+
+
 def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=None):
     key=configured_key('GEMINI_API_KEY')
     if not key:raise ValueError('GEMINI_API_KEY is missing or is a test placeholder.')
@@ -179,6 +281,10 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
     ]))
     errors=[]
     requests_made=0
+    quota_hit=False
+    # 502/503/504 and a spent rate limit mean Gemini cannot plan this call.
+    # Walk the model list first. If every model is unavailable, use Cursor.
+    outage=False
     for model in models:
         for attempt in range(2):
             if max_requests is not None and requests_made >= max_requests:
@@ -188,10 +294,16 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 response=requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]+(image_parts or [])}],'generationConfig':config},timeout=(10,timeout))
                 if response.status_code!=200:
                     err_msg = f'{model} HTTP {response.status_code}: {safe_error(response.text)}'
+                    if gemini_daily_quota(response.status_code, response.text):
+                        errors.append(err_msg)
+                        quota_hit=True
+                        break
                     if response.status_code in (429, 503, 504) and attempt == 0:
                         time.sleep(1.5)
                         continue
                     errors.append(err_msg)
+                    if response.status_code in (429, 500, 502, 503, 504):
+                        outage = True
                     if response.status_code in (404,429,500,502,503,504):break
                     raise ValueError(errors[-1])
                 data=response.json()
@@ -204,11 +316,44 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                     continue
                 errors.append(model+': '+safe_error(exc))
                 break
+        if quota_hit:
+            break
+    if quota_hit or outage:
+        try:
+            return cursor_json(prompt, schema, timeout=max(int(timeout or 75), 90), image_parts=image_parts)
+        except Exception as exc:
+            errors.append('cursor: ' + safe_error(exc))
     raise ValueError('AI providers unavailable: '+' | '.join(errors))
 
 
 def transcript_rows(captions):
     return [dict(start_sec=c.start,end_sec=c.end,text=c.translated_text or c.text,words=[w.model_dump() for w in c.words]) for c in captions]
+
+
+def segments_from_captions(captions, duration):
+    """Plan from speech when Twelve Labs video understanding is not available."""
+    spoken = [c for c in captions if (c.translated_text or c.text or '').strip()]
+    if not spoken:
+        raise ValueError('No spoken captions to plan visuals from.')
+    start = max(0.0, min(c.start for c in spoken))
+    end = max(c.end for c in spoken)
+    limit = max(float(duration or 0), end)
+    end = min(max(end, start + 0.05), limit)
+    text = ' '.join((c.translated_text or c.text).strip() for c in spoken)
+    return [{
+        'id': 'captions',
+        'start_sec': round(start, 2),
+        'end_sec': round(end, 2),
+        'transcript': text,
+        'semantic_summary': text[:500],
+        'narrative_role': 'EXPLANATION',
+        'current_visual_context': 'speaker on camera',
+        'observations': [],
+        'claims': [],
+        'uncertainties': ['Twelve Labs was not used. The visual plan follows the spoken captions.'],
+        'confidence': 0.45,
+        'visual_opportunity_score': 0.55,
+    }]
 
 
 def normalize_segments(raw,captions,duration):
@@ -394,7 +539,7 @@ Spoken Text & Query Precision:
 '''
     from app.services.finished_reel_understanding import profile_prompt
     prompt += '\n' + profile_prompt()
-    prompt += '\nFor EACH decision fill viewer_need, visual_role, existing_treatment_action and source_requirement BEFORE choosing strategy. A checklist is CHECKLIST and a branded closing is BRANDED_OUTRO; report these even if rendering requires follow-up. Never label generic stock as identity or evidence. Use preserve/NO_INTERVENTION for adequate existing treatments.\n'
+    prompt += '\nFor EACH decision fill viewer_need, visual_role, existing_treatment_action and source_requirement BEFORE choosing strategy. visual_role is only identity, evidence, illustration, demonstration, emphasis, checklist, cta, outro, or presenter. CONTEXTUALIZE belongs in intent, not visual_role. A checklist is CHECKLIST and a branded closing is BRANDED_OUTRO; report these even if rendering requires follow-up. Never label generic stock as identity or evidence. Use preserve/NO_INTERVENTION for adequate existing treatments.\n'
     if finish_brief:
         prompt += '\nFinished-reel understanding brief:\n' + json.dumps(finish_brief,ensure_ascii=False)
     if feedback:
@@ -409,6 +554,9 @@ Spoken Text & Query Precision:
                 prompt += f"\n### USER EDITORIAL DIRECTIVES (HIGHEST PRIORITY):\nFollow the editor's direct style instructions:\n\"{guidance}\"\n"
             if decisions_list:
                 prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\nMaintain patterns from approved (keep) items and avoid rejected (cut) concepts:\n{json.dumps(decisions_list, ensure_ascii=False)}\n"
+            mappings = feedback.get('caption_mappings') or []
+            if mappings:
+                prompt += "\nEditor caption timeline. Keep these spoken lines at these times instead of a shorter or repeated fragment:\n" + json.dumps(mappings, ensure_ascii=False) + "\n"
         else:
             prompt += f"\n### PREVIOUS HUMAN EDITORIAL FEEDBACK:\n{json.dumps(feedback, ensure_ascii=False)}\n"
 
@@ -908,6 +1056,57 @@ def persist_evaluation_decisions(state, run_id, rows, model_name=None, prompt_ve
     return eval_file, records
 
 
+def _as_int(value):
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def option_utility(candidate, queries):
+    """How well a stock hit matches the search words. Larger frames score a little higher."""
+    blob = ' '.join(str(candidate.get(k) or '') for k in ('title', 'description')).casefold()
+    words = list(dict.fromkeys(w for w in re.findall(r'[a-z0-9]+', ' '.join(queries).casefold()) if len(w) > 2))
+    overlap = (sum(1 for word in words if word in blob) / len(words)) if words else 0
+    pixels = float(candidate.get('width') or 0) * float(candidate.get('height') or 0)
+    size = min(pixels / float(1920 * 1080), 1.0) if pixels else 0
+    return round(0.85 * overlap + 0.15 * size, 4)
+
+
+def stock_options(candidates, queries):
+    """Ranked choices for one cue. The same picture is kept once."""
+    options = []
+    seen = set()
+    for candidate in candidates:
+        identity = candidate.get('url') or candidate.get('id')
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        options.append({
+            'id': str(candidate.get('id') or ''),
+            'title': candidate.get('title') or '',
+            'provider': candidate.get('provider') or '',
+            'url': candidate.get('url') or '',
+            'download_url': candidate.get('download_url') or candidate.get('url') or '',
+            'thumb_url': candidate.get('thumb_url') or candidate.get('preview_url') or '',
+            'media_type': candidate.get('media_type') or 'image',
+            'author': candidate.get('author') or '',
+            'author_url': candidate.get('author_url') or '',
+            'license': candidate.get('license') or '',
+            'source_credit': candidate.get('source_credit') or '',
+            'width': _as_int(candidate.get('width')),
+            'height': _as_int(candidate.get('height')),
+            'utility': option_utility(candidate, queries),
+            '_candidate': candidate,
+        })
+    options.sort(key=lambda item: (-item['utility'], item['title']))
+    return options
+
+
+def public_stock_option(option):
+    return {key: value for key, value in option.items() if key != '_candidate'}
+
+
 def retrieve_asset(row,project_id,used):
     from app.services.media_search_service import media_search_service as media
     from app.services.asset_downloader import asset_downloader
@@ -937,7 +1136,21 @@ def retrieve_asset(row,project_id,used):
     provider_order = ('pexels', 'pixabay', 'wikimedia')
 
     attempts=[]
-    context=json.dumps({'identity_rule': 'A matching name is not sufficient: verify profession, biography, relationships and era in source metadata against the semantic context. Reject namesakes. A contemporary pageant ambassador cannot depict a deceased actress mentioned as a specific spouse. If context cannot establish identity, reject.', 'geographic_rule': 'When dialogue specifies India, require source metadata confirming an Indian location/context. Never infer nationality from appearance. ASHA workers, polio campaigns and named people need specific documented source identity; generic doctors or vaccination shots are not substitutes.', 'editor_feedback':row.get('editor_feedback', {}),'intent':row['intent'],'rationale':row['rationale'],'asset':asset,'semantic_context':row.get('semantic_context',{})},ensure_ascii=False)
+    fallback=[]
+    domain='general'
+    from app.services.project_manager import project_manager
+    state=project_manager.get_project(project_id)
+    if state is not None:
+        domain=getattr(getattr(state,'settings',None),'domain_profile',None) or 'general'
+    context=json.dumps({
+        'domain':domain,
+        'review_rule':'Judge the picture against this video only. Use the project domain, the spoken line, and the visual brief. Require a person, institution, or place only when the brief names it as a required entity or required environment and the visual is identity or evidence. A country or city mentioned in nearby speech does not apply to every illustration. Do not infer nationality from appearance. A matching name is not enough when the source metadata contradicts the spoken line.',
+        'editor_feedback':row.get('editor_feedback', {}),
+        'intent':row['intent'],
+        'rationale':row['rationale'],
+        'asset':asset,
+        'semantic_context':row.get('semantic_context',{}),
+    },ensure_ascii=False)
     for provider in provider_order:
         adapter=getattr(media,provider)
         # Review the alternate queries together, rather than paying one model
@@ -965,6 +1178,7 @@ def retrieve_asset(row,project_id,used):
                 if len(pool)>=8:break
             if len(pool)>=8:break
         if not pool:continue
+        fallback.extend(pool)
         try:
             selected,reason=media.rerank_candidates_with_vision(pool,context,' | '.join(final_queries),strict=True)
             for attempt in attempts:
@@ -975,9 +1189,24 @@ def retrieve_asset(row,project_id,used):
             saved=asset_downloader.download_asset(project_id,selected)
             if not saved.get('success') or not Path(saved['local_path']).is_file():raise ValueError('Downloaded asset is not available locally')
             used.add(selected['url'])
-            return dict(selected,local=saved),attempts
+            options=stock_options(pool, final_queries)
+            return dict(selected,local=saved,stock_options=[public_stock_option(item) for item in options]),attempts
         except Exception as exc:attempts.append({'provider':provider,'error':safe_error(exc)})
 
+    # Review did not approve a picture, or the thumbnails could not be read.
+    # Place the closest match and keep the other choices for the editor to change.
+    for option in stock_options(fallback, final_queries):
+        candidate=option['_candidate']
+        if candidate.get('url') in used:continue
+        try:
+            saved=asset_downloader.download_asset(project_id,candidate)
+            if not saved.get('success') or not Path(saved['local_path']).is_file():continue
+            used.add(candidate.get('url'))
+            options=[public_stock_option(item) for item in stock_options(fallback, final_queries)]
+            attempts.append({'provider':candidate.get('provider'),'review':'Placed the highest utility option because picture review did not approve one.','selected':candidate.get('id'),'utility':option['utility']})
+            return dict(candidate,local=saved,stock_options=options,provisional=True),attempts
+        except Exception as exc:
+            attempts.append({'provider':candidate.get('provider'),'error':safe_error(exc)})
     return None,attempts
 
 
@@ -1021,11 +1250,29 @@ def execute_plan(state,rows,run_dir):
             if not selected:
                 # A rejected search is not retried with looser terms: a second,
                 # weaker pool is how unrelated stock used to get approved.
-                row.update(status='rejected_assets',decision_reason='No candidate passed visual review and local download. Presenter retained.');continue
+                detail=next((a.get('review') for a in reversed(attempts) if a.get('review')), '')
+                reason='No candidate passed visual review and local download. Presenter retained.'
+                if detail:
+                    reason=detail if len(detail)<=240 else reason+' '+detail[:180]
+                thumbs=[]
+                for attempt in attempts:
+                    for candidate in attempt.get('candidates') or []:
+                        src=candidate.get('thumb_url') or candidate.get('preview_url')
+                        if src:
+                            thumbs.append({'thumb_url':src,'title':candidate.get('title') or ''})
+                        if len(thumbs)>=3:break
+                    if len(thumbs)>=3:break
+                row['used_image']={'candidates':thumbs,'review':detail[:500]}
+                row.update(status='rejected_assets',decision_reason=reason);continue
             full=row['composition']['layout']=='fullscreen'
             template='youtube_insert' if full else 'split_screen_vertical'
             url=selected['local']['media_url']
-            params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none')
+            options=selected.get('stock_options') or []
+            row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or '','options':options,'provisional':bool(selected.get('provisional'))}
+            if selected.get('provisional'):
+                score=next((item.get('utility') for item in options if str(item.get('id'))==str(selected.get('id'))), options[0].get('utility') if options else '')
+                row['decision_reason']=f'Placed the highest-scoring option ({score}). Change it in Review if another picture fits better.'
+            params.update(media_url=url,media_type=selected['media_type'],source_citation=selected.get('source_credit',''),broll_title='',scanlines=False,split_ratio=.33 if selected['media_type']=='video' else .5,animation='slow_zoom_in' if full else 'none',stock_options=options,provisional_choice=bool(selected.get('provisional')),selected_stock_id=str(selected.get('id') or ''))
             row['realized_composition']={'layout':'fullscreen' if full else 'split_screen','transition':'cut','entrance_animation':'none','exit_animation':'none','image_motion':'slow_zoom_in'}
             # Centre the cutaway's subject in the vertical crop instead of always cropping the middle.
             from app.services.subject_layers import media_focus
@@ -1061,7 +1308,9 @@ def execute_plan(state,rows,run_dir):
             selected,attempts=retrieve_asset(row,state.id,used)
             if selected:
                 url=selected['local']['media_url']
-                params.update(media_url=url,media_type=selected['media_type'],split_ratio=.5,animation='none')
+                options=selected.get('stock_options') or []
+                row['used_image']={'media_url':url,'thumb_url':selected.get('thumb_url') or selected.get('preview_url') or '','title':selected.get('title') or '','provider':selected.get('provider') or '','options':options,'provisional':bool(selected.get('provisional'))}
+                params.update(media_url=url,media_type=selected['media_type'],split_ratio=.5,animation='none',stock_options=options,provisional_choice=bool(selected.get('provisional')),selected_stock_id=str(selected.get('id') or ''))
                 row['realized_composition']={'layout':'split_screen','transition':'cut'}
                 g=MotionGraphicItem(id=f'editorial_{run_dir.name}_{i}',start=row['start_sec'],end=row['end_sec'],template_id='split_screen_vertical',title=row['asset']['semantic_target'] or row['display_text'],parameters=params,media_url=url,media_type=selected['media_type'],placement_mode='overlay')
             else:
@@ -1083,7 +1332,104 @@ def execute_plan(state,rows,run_dir):
     return graphics,logs
 
 
-def run_editorial(state,media_file,protected=(),plan_only=False):
+def _latest_editorial_file(project_id, name):
+    from app.core.config import settings
+    found=sorted((settings.projects_dir/project_id/'editorial').glob('*/'+name))
+    return found[-1] if found else None
+
+
+def _saved_transcript_matches(state, run_dir):
+    path=run_dir/'00_transcript.json'
+    if not path.is_file():
+        return True
+    try:
+        saved=json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    current=transcript_rows(state.captions)
+    def brief(rows):
+        return [(round(float(r.get('start_sec',0)),2), round(float(r.get('end_sec',0)),2), (r.get('text') or '').strip()) for r in rows]
+    return brief(saved)==brief(current)
+
+
+def _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only):
+    """Place a saved or new schedule and close the editorial report."""
+    from app.services.finished_reel_understanding import audit_plan
+    write_json(run_dir/'03_schedule.json', rows)
+    model_name=os.getenv('EDITORIAL_MODEL', 'gemini-3-flash-preview')
+    if plan_only:
+        report.update(status='review_ready', stage='understanding_ready', decisions=rows, mode='analysis_only')
+        report_save()
+        persist_evaluation_decisions(state, report['run_id'], rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)
+        return [], [], report
+    report['stage']='asset_review'
+    report_save()
+    graphics, logs=execute_plan(state, rows, run_dir)
+    camera={'punch_ins':0, 'cut_times':[]}
+    report['camera']=camera
+    report['finished_reel_audit']=audit_plan(rows, getattr(state,'duration_seconds',0), camera['cut_times'])
+    report['scorecard']=report['finished_reel_audit']['scorecard']
+    report['outcome']=report['scorecard']['outcome']
+    write_json(run_dir/'07_finished_reel_audit.json', report['finished_reel_audit'])
+    report.update(status='complete', stage='timeline_ready', decisions=rows, inserted=len(graphics), retained_speaker=sum(r['status']=='no_intervention' for r in rows), needs_review=sum(r['status'] not in ('inserted','no_intervention') for r in rows))
+    report_save()
+    persist_evaluation_decisions(state, report['run_id'], rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)
+    return graphics, logs, report
+
+
+def resume_saved_stage(state, protected, plan_only, start_at, run_dir, report, report_save):
+    """Reuse a saved plan when the editor starts at plan, pictures, or timeline.
+
+    Returns None when the saved files are missing or the captions have changed,
+    so the caller runs understanding again.
+    """
+    from app.core.models import MotionGraphicItem
+    if start_at=='timeline':
+        path=_latest_editorial_file(state.id, '06_timeline.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            graphics=[MotionGraphicItem.model_validate(row) for row in json.loads(path.read_text())]
+        except (OSError, ValueError):
+            return None
+        report.update(status='complete', stage='timeline_ready', decisions=[], inserted=len(graphics), outcome='complete', resumed_from='timeline')
+        report_save()
+        return graphics, [], report
+    if start_at=='pictures':
+        path=_latest_editorial_file(state.id, '03_schedule.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            rows=json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        for row in rows:
+            if row.get('status')!='no_intervention':
+                row['status']='planned'
+        report['resumed_from']='pictures'
+        return _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only)
+    if start_at=='plan':
+        path=_latest_editorial_file(state.id, '01_planning_windows.json')
+        if path is None or not _saved_transcript_matches(state, path.parent):
+            return None
+        try:
+            segments=[Segment.model_validate(row) for row in json.loads(path.read_text())]
+        except (OSError, ValueError):
+            return None
+        from app.services.feedback_service import feedback_service
+        feedback=feedback_service.planning_feedback(state.id)
+        decisions=editorial_decisions(segments, feedback, None)
+        decisions=preserve_number_enumerations(segments, decisions)
+        decisions=add_spoken_figures(segments, decisions, state.captions)
+        decisions=repair_sparse_schedule(segments, decisions, state.captions, list(protected))
+        write_json(run_dir/'02_editorial_decisions.json', [d.model_dump() for d in decisions])
+        rows=schedule(segments, decisions, state.captions, list(protected))
+        report['resumed_from']='plan'
+        return _finish_rows(state, rows, run_dir, report, report_save, protected, plan_only)
+    return None
+
+
+def run_editorial(state,media_file,protected=(),plan_only=False,start_at='understanding'):
     from datetime import datetime
     from uuid import uuid4
     from app.core.config import settings
@@ -1097,7 +1443,12 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
     report_save()
     try:
         if not configured_key('GEMINI_API_KEY'):raise ValueError('GEMINI_API_KEY is missing or a test placeholder. Add a working key in backend settings. No arbitrary stock was inserted.')
-        if not configured_key('TWELVE_LABS_API_KEY'):raise ValueError('TWELVE_LABS_API_KEY is missing. Video understanding cannot run.')
+        if start_at in ('plan','pictures','timeline'):
+            resumed=resume_saved_stage(state, protected, plan_only, start_at, run_dir, report, report_save)
+            if resumed is not None:
+                return resumed
+        from app.services.auto_produce_mode import feature_flags
+        use_twelve = bool(feature_flags().get('twelve_labs') and configured_key('TWELVE_LABS_API_KEY'))
         write_json(run_dir/'00_transcript.json',transcript_rows(state.captions))
         report['stage']='video_understanding';report_save()
         import hashlib
@@ -1127,23 +1478,35 @@ def run_editorial(state,media_file,protected=(),plan_only=False):
                     transcript_path=prior.parent/'00_transcript.json'
                     try:
                         metadata=json.loads(prior.read_text())
+                        if use_twelve and metadata.get('understanding_source')=='captions':
+                            continue
                         if metadata.get('understanding_schema') in (None, 'finished-reel-observations-v4') and source.stat().st_mtime <= prior.stat().st_mtime and raw_path.exists() and transcript_path.exists() and json.loads(transcript_path.read_text())==transcript:
                             candidate=json.loads(raw_path.read_text())
                             normalize_segments(candidate,state.captions,state.duration_seconds)
                             raw=candidate;report['understanding_reused']=True;break
                     except (ValueError,TypeError):continue
                 if raw is not None: break
-        if raw is None:
+        if raw is None and not use_twelve:
+            plan_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+            raw = segments_from_captions(state.captions, plan_duration)
+            report['understanding_source'] = 'captions'
+            report['twelve_labs'] = 'skipped'
+        elif raw is None:
             result=tl.analyze_video(media_file,state.duration_seconds)
             asset_id=result.get('asset_id')
             if result.get('status')!='ready':asset_id=tl.wait_for_task_ready(result.get('task_id'),timeout_sec=360,poll_interval=5) if result.get('task_id') else None
             if not asset_id:raise ValueError('Twelve Labs indexing did not become ready: '+safe_error(result.get('error') or result.get('status')))
             raw=tl.get_semantic_timeline(asset_id,json.dumps(transcript,ensure_ascii=False))
-        # Keep provider output for diagnosing rejected analysis, never as an accepted cache.
+            report['understanding_source'] = 'twelve_labs'
+        # Keep provider output for diagnosing rejected analysis. Caption-only
+        # understanding is not cached as if the video had been analyzed.
         write_json(run_dir/'01_understanding_raw.json',raw)
-        normalize_segments(raw,state.captions,state.duration_seconds)
-        write_json(cache,raw)
-        segments=normalize_segments(raw,state.captions,state.duration_seconds)
+        if use_twelve and report.get('understanding_source') != 'captions':
+            write_json(cache,raw)
+        understand_duration = state.duration_seconds
+        if report.get('understanding_source')=='captions':
+            understand_duration = max(float(state.duration_seconds or 0), max((c.end for c in state.captions), default=0))
+        segments=normalize_segments(raw,state.captions,understand_duration)
         write_json(run_dir/'01_semantic_timeline.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         from app.services.feedback_service import feedback_service

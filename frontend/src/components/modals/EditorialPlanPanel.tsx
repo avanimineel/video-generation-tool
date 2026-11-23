@@ -1,26 +1,66 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { UnderstandingReview } from './UnderstandingReview';
 import { QualityPreview } from './QualityPreview';
 import { api } from '../../services/api';
+import { ProjectState } from '../../types';
+import { CaptionReview } from './CaptionReview';
 import { Check, Trash2, Brain, Sparkles, Save, RefreshCw } from 'lucide-react';
+
+const CAPTIONS_ONLY_MESSAGE = 'Captions-only complete; enable Gemini editorial planning and stock search for the visual timeline';
+
+function picturesForDecision(d: any, project?: ProjectState, report?: any) {
+  const graphic = project?.graphics?.find((g) => g.id === d.graphic_id);
+  const saved = d.used_image || {};
+  const reviews = report?.stages?.['04_asset_review'];
+  const review = Array.isArray(reviews) ? reviews.find((row: any) => row.segment_id === d.segment_id) : null;
+  const selected = review?.selected;
+  const used = graphic?.media_url || saved.media_url || selected?.local?.media_url || selected?.thumb_url || selected?.preview_url || '';
+  const raw = saved.options || graphic?.parameters?.stock_options || [];
+  const options = (Array.isArray(raw) ? raw : []).map((item: any) => ({
+    ...item,
+    src: item.thumb_url || item.preview_url || item.media_url || '',
+    utility: typeof item.utility === 'number' ? item.utility : null,
+  })).filter((item: any) => item.src || item.url);
+  if (options.length) {
+    return { used, title: graphic?.title || saved.title || selected?.title || 'Image used', options };
+  }
+  const candidates: any[] = [];
+  const push = (src?: string, title?: string) => {
+    if (src && !candidates.some((item) => item.src === src) && candidates.length < 3) {
+      candidates.push({ src, title: title || 'Reviewed candidate', utility: null });
+    }
+  };
+  for (const item of saved.candidates || []) push(item.thumb_url || item.preview_url, item.title);
+  for (const attempt of review?.attempts || []) {
+    for (const candidate of attempt.candidates || []) push(candidate.thumb_url || candidate.preview_url, candidate.title);
+  }
+  return { used, title: graphic?.title || saved.title || '', options: candidates };
+}
 
 interface EditorialPlanPanelProps {
   projectId: string;
+  project?: ProjectState;
   onSeek: (t: number) => void;
   onUpdated: (p: any) => void;
   onBusy: (b: boolean) => void;
   /** Controlled open — lets the status banner CTA open Review without a second entry point. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onRedoCaptions?: () => void;
+  /** Open on the editable caption list. Review leaves this unset. */
+  focus?: 'captions' | 'plan';
 }
 
 export function EditorialPlanPanel({
   projectId,
+  project,
   onSeek,
   onUpdated,
   onBusy,
   open: controlledOpen,
-  onOpenChange
+  onOpenChange,
+  onRedoCaptions,
+  focus = 'plan',
 }: EditorialPlanPanelProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -36,10 +76,54 @@ export function EditorialPlanPanel({
   const [guidanceSaved, setGuidanceSaved] = useState(false);
   const [decisionFeedback, setDecisionFeedback] = useState<Record<string, 'keep' | 'cut' | 'swap'>>({});
   const [loggingDecision, setLoggingDecision] = useState<Record<string, boolean>>({});
+  const [stages, setStages] = useState<any>(null);
+  const [confirmStage, setConfirmStage] = useState<any>(null);
+  const [changingOption, setChangingOption] = useState('');
+  const captionRef = useRef<HTMLDivElement>(null);
+  const captionsOnly = project?.ai_ingestion?.summary?.outcome === 'captions_only'
+    || project?.ai_ingestion?.auto_produce_mode === 'captions_only';
+  const showCaptionEditor = focus === 'captions' || captionsOnly;
+
+  async function useStockOption(decision: any, option: any) {
+    if (!project || !decision.graphic_id) return;
+    const key = `${decision.graphic_id}:${option.id || option.url}`;
+    setChangingOption(key);
+    setError('');
+    try {
+      const saved = await api.downloadAsset(projectId, option);
+      if (!saved?.success || !saved.media_url) throw new Error('The picture could not be saved on this video.');
+      const graphics = project.graphics.map((graphic) => graphic.id === decision.graphic_id ? {
+        ...graphic,
+        media_url: saved.media_url,
+        media_type: saved.media_type || option.media_type || graphic.media_type,
+        title: option.title || graphic.title,
+        source_name: option.provider || graphic.source_name,
+        source_url: option.url || graphic.source_url,
+        author: option.author || graphic.author,
+        license: option.license || graphic.license,
+        parameters: {
+          ...graphic.parameters,
+          media_url: saved.media_url,
+          media_type: saved.media_type || option.media_type,
+          source_citation: option.source_credit || graphic.parameters?.source_citation,
+          provisional_choice: false,
+          selected_stock_id: String(option.id || ''),
+        },
+      } : graphic);
+      const next = { ...project, graphics };
+      await api.saveProject(projectId, next);
+      onUpdated(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setChangingOption('');
+    }
+  }
 
   async function refresh() {
     try {
       setReport(await api.getEditorialReport(projectId));
+      setStages(await api.pipelineStages(projectId));
       const g = await api.getProjectGuidance(projectId);
       setGuidance(g || '');
       setError('');
@@ -47,6 +131,11 @@ export function EditorialPlanPanel({
       setError(String(e));
     }
   }
+
+  useEffect(() => {
+    if (!open || !showCaptionEditor) return;
+    captionRef.current?.scrollIntoView({ block: 'start' });
+  }, [open, showCaptionEditor, project?.captions.length, report]);
 
   useEffect(() => {
     setReport(null);
@@ -95,7 +184,8 @@ export function EditorialPlanPanel({
     }
   }
 
-  async function run(planOnly = false) {
+  async function runFrom(stage?: string) {
+    setConfirmStage(null);
     setBusy(true);
     onBusy(true);
     setError('');
@@ -103,8 +193,13 @@ export function EditorialPlanPanel({
       if (guidance.trim()) {
         await api.saveProjectGuidance(projectId, guidance);
       }
-      const r = await api.runAutoProduction(projectId, planOnly);
+      const r = await api.runAutoProduction(projectId, true, 'small', undefined, 'full', false, stage);
       if (!r.success) throw new Error(r.error);
+      const report = r.editorial_report;
+      if (report?.outcome === 'captions_only') {
+        const reasons = (report.errors || []).filter((item: string) => item !== CAPTIONS_ONLY_MESSAGE);
+        throw new Error(reasons.join(' ') || 'Visual planning did not start.');
+      }
       if (r.project) onUpdated(r.project);
       await refresh();
     } catch (e) {
@@ -139,16 +234,18 @@ export function EditorialPlanPanel({
           <section
             role="dialog"
             aria-label="Editorial plan"
-            className="bg-white text-neutral-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 flex flex-col"
+            className="bg-white text-neutral-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 flex flex-col select-text"
           >
             <header className="flex justify-between items-center pb-3 border-b border-neutral-200">
               <div>
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <Brain className="w-5 h-5 text-indigo-600" />
-                  Automatic Editorial Plan & AI Calibration
+                  {showCaptionEditor ? 'Captions' : 'Automatic Editorial Plan & AI Calibration'}
                 </h2>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Direct the AI's visual density, review rationale, and calibrate decisions with Keep/Cut feedback.
+                  {showCaptionEditor
+                    ? 'Read each line on the video timeline, correct it, and save that mapping for the next run.'
+                    : "Direct the AI's visual density, review rationale, and calibrate decisions with Keep/Cut feedback."}
                 </p>
               </div>
               <button
@@ -196,36 +293,90 @@ export function EditorialPlanPanel({
               </div>
             </div>
 
-            {/* ACTION CONTROLS */}
-            <div className="flex items-center gap-3 pb-4 border-b border-neutral-200">
-              <button
-                disabled={busy}
-                onClick={() => run(false)}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs shadow-sm disabled:opacity-50 transition flex items-center gap-1.5"
-              >
-                <Sparkles className="w-4 h-4" />
-                {busy ? 'Producing Visuals…' : 'Produce Visuals & Timeline'}
-              </button>
-              <button
-                disabled={busy}
-                onClick={() => run(true)}
-                className="px-3 py-2 rounded-lg bg-white hover:bg-neutral-50 border border-neutral-300 text-neutral-700 font-medium text-xs transition"
-              >
-                Plan Visuals Only (Preview)
-              </button>
+            {/* STAGE CONTROLS */}
+            <div className="pb-4 border-b border-neutral-200 space-y-3">
+              <div className="flex items-center gap-3">
+                {stages?.next_stage && (
+                  <button
+                    disabled={busy}
+                    onClick={() => runFrom(stages.next_stage)}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs shadow-sm disabled:opacity-50 transition flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {busy ? 'Running…' : stages.continue_label}
+                  </button>
+                )}
+                {onRedoCaptions && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onRedoCaptions}
+                    className="px-3 py-2 rounded-lg bg-white hover:bg-neutral-50 border border-neutral-300 text-neutral-700 font-medium text-xs transition"
+                  >
+                    Redo captions only
+                  </button>
+                )}
+              </div>
+              {stages?.continue_note && (
+                <p className="text-[11px] text-neutral-600 select-text">{stages.continue_note}</p>
+              )}
+              <ol className="space-y-2">
+                {(stages?.stages || []).map((stage: any) => (
+                  <li key={stage.id} className="flex items-start justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                          stage.state === 'done' ? 'bg-emerald-50 text-emerald-800' :
+                          stage.state === 'next' ? 'bg-indigo-50 text-indigo-800' :
+                          stage.state === 'out_of_date' ? 'bg-amber-50 text-amber-900' :
+                          'bg-neutral-100 text-neutral-600'
+                        }`}>{String(stage.state).replace(/_/g, ' ')}</span>
+                        <span className="text-xs font-semibold text-neutral-900">{stage.label}</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-1 select-text">{stage.summary}</p>
+                    </div>
+                    {stage.state !== 'not_run' && stage.state !== 'next' && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setConfirmStage(stage)}
+                        className="shrink-0 px-2.5 py-1 rounded-md border border-neutral-300 bg-white text-[11px] font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50"
+                      >
+                        Run again from here
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ol>
               <button
                 onClick={refresh}
-                className="px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-xs font-medium ml-auto flex items-center gap-1.5 transition"
+                className="px-3 py-2 border border-neutral-200 rounded-lg hover:bg-neutral-50 text-neutral-600 text-xs font-medium flex items-center gap-1.5 transition"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Refresh Status
               </button>
             </div>
+            {confirmStage && (
+              <div className="my-3 p-3 rounded-lg border border-amber-200 bg-amber-50 space-y-2">
+                <p className="text-xs font-semibold text-amber-950">Run again from {confirmStage.label}?</p>
+                <p className="text-[11px] text-amber-900 select-text">{confirmStage.replace_note}</p>
+                <div className="flex gap-2">
+                  <button type="button" disabled={busy} onClick={() => runFrom(confirmStage.id)} className="px-3 py-1.5 rounded-md bg-neutral-900 text-white text-[11px] font-semibold">Replace and continue</button>
+                  <button type="button" onClick={() => setConfirmStage(null)} className="px-3 py-1.5 rounded-md border border-neutral-300 bg-white text-[11px] font-semibold text-neutral-800">Cancel</button>
+                </div>
+              </div>
+            )}
 
             {error && (
               <p role="alert" className="p-3 my-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
                 {error}
               </p>
+            )}
+
+            {project && project.captions.length > 0 && (
+              <div ref={captionRef} className="pt-4">
+                <CaptionReview project={project} onSeek={onSeek} onSaved={onUpdated} onRedoCaptions={onRedoCaptions} />
+              </div>
             )}
 
             {report && (
@@ -249,15 +400,28 @@ export function EditorialPlanPanel({
 
                 {report.status === 'not_run' && (
                   <p className="my-3 text-xs text-neutral-500">
-                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to run Twelve Labs understanding and high-density editorial planning.
+                    No editorial plan generated yet. Click "Produce Visuals & Timeline" to plan graphics from the spoken captions.
                   </p>
                 )}
 
-                {report.errors?.map((e: string, i: number) => (
-                  <p key={i} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
-                    {e}
-                  </p>
-                ))}
+                {(() => {
+                  const captionsOnly = report.outcome === 'captions_only' || report.stage === 'captions_only_complete';
+                  const alerts = (report.errors || []).filter((item: string) => !(captionsOnly && item === CAPTIONS_ONLY_MESSAGE));
+                  return (
+                    <>
+                      {captionsOnly && (
+                        <p className="text-xs text-neutral-600">
+                          Captions are ready. Visual planning stays off until Gemini editorial planning and stock search are enabled.
+                        </p>
+                      )}
+                      {alerts.map((item: string, index: number) => (
+                        <p key={index} role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">
+                          {item}
+                        </p>
+                      ))}
+                    </>
+                  );
+                })()}
 
                 {/* DECISION CARDS */}
                 <div className="space-y-3 my-2">
@@ -327,9 +491,48 @@ export function EditorialPlanPanel({
                           </div>
                         </div>
 
-                        <p className="text-xs text-neutral-700 leading-relaxed">
+                        <p className="text-xs text-neutral-700 leading-relaxed select-text">
                           {d.decision_reason || d.rationale}
                         </p>
+
+                        {(() => {
+                          const pictures = picturesForDecision(d, project, report);
+                          if (!pictures.used && pictures.options.length === 0) return null;
+                          const graphic = project?.graphics?.find((item) => item.id === d.graphic_id);
+                          const chosenId = String(graphic?.parameters?.selected_stock_id || '');
+                          const alternatives = pictures.options.filter((option) => option.src && String(option.id || '') !== chosenId && option.url !== graphic?.source_url);
+                          return (
+                            <div className="flex gap-2 items-end overflow-x-auto">
+                              {pictures.used && (
+                                <figure className="shrink-0">
+                                  <img src={pictures.used} alt={pictures.title || 'Image used'} className="h-28 w-20 object-cover rounded border border-neutral-900 bg-neutral-100" />
+                                  <figcaption className="mt-1 text-[10px] text-neutral-800">Image used</figcaption>
+                                </figure>
+                              )}
+                              {alternatives.map((option) => {
+                                const key = `${d.graphic_id}:${option.id || option.url}`;
+                                return (
+                                  <figure key={key} className="shrink-0 w-24">
+                                    <img src={option.src} alt={option.title || 'Another option'} title={option.title} className="h-28 w-20 object-cover rounded border border-neutral-200 bg-neutral-100" />
+                                    <figcaption className="mt-1 text-[10px] text-neutral-500">
+                                      {typeof option.utility === 'number' ? `Score ${option.utility.toFixed(2)}` : 'Other option'}
+                                    </figcaption>
+                                    {d.graphic_id && option.url && (
+                                      <button
+                                        type="button"
+                                        disabled={changingOption === key}
+                                        onClick={() => { void useStockOption(d, option); }}
+                                        className="mt-1 px-1.5 py-0.5 rounded border border-neutral-300 bg-white text-[10px] font-semibold text-neutral-800 hover:bg-neutral-100 disabled:opacity-50"
+                                      >
+                                        {changingOption === key ? 'Saving…' : 'Use this'}
+                                      </button>
+                                    )}
+                                  </figure>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex items-center justify-between text-[11px] text-neutral-500 pt-1 border-t border-neutral-100">
                           <span>Timing: {d.timing_method}</span>

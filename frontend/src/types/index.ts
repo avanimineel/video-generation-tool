@@ -60,6 +60,7 @@ export interface CaptionItem {
   style: CaptionStyle;
   source_language: string;
   translated_text?: string | null;
+  editor_locked?: boolean;
 }
 
 export interface MotionGraphicItem {
@@ -96,6 +97,25 @@ export interface ProjectSettings {
   davinci_project_name?: string | null;
   davinci_timeline_name?: string | null;
   sub_lines_mode?: 1 | 2;
+  domain_profile?: ProjectDomain;
+}
+
+export const PROJECT_DOMAINS = [
+  { id: 'general', label: 'General' },
+  { id: 'finance', label: 'Finance' },
+  { id: 'medical', label: 'Medical' },
+  { id: 'real_estate', label: 'Real estate' },
+  { id: 'education', label: 'Education' },
+  { id: 'legal', label: 'Legal' },
+  { id: 'business', label: 'Business' },
+  { id: 'fitness', label: 'Fitness' },
+  { id: 'sports', label: 'Sports' },
+] as const;
+
+export type ProjectDomain = (typeof PROJECT_DOMAINS)[number]['id'];
+
+export function domainLabel(domain?: string): string {
+  return PROJECT_DOMAINS.find((item) => item.id === domain)?.label || (domain || 'General').replace(/_/g, ' ');
 }
 
 export interface AudioTrackItem {
@@ -139,6 +159,7 @@ export interface ProjectSummary {
   updated_at: string;
   duration_seconds: number;
   aspect_ratio: string;
+  domain_profile?: string;
   caption_count: number;
   graphic_count: number;
   source_media_path?: string | null;

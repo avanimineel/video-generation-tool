@@ -1,0 +1,23 @@
+---
+description: Hindi/Hinglish captions, Gemini-first translation, NLLB fallback, and medical meaning checks. Load on every session in this repo; deepen via skill caption-transcription.
+alwaysApply: true
+---
+
+# Caption transcription (always on)
+
+Before changing Whisper, translation, NLLB, caption layout, Join sentences, Redo captions, Save edit, or Save mapping, read `.agents/skills/caption-transcription/SKILL.md`.
+
+## Invariants
+
+- Speech sets the words and the times. English is a label on that span. The picture is not used to decide the words.
+- Domain is `general`, `medical`, or `sports`. Whisper uses `caption_prompt(domain)`.
+- Captions stay spoken clauses (`chunk_spoken_phrases`). Do not send the editor 3-word boxes. `layout_automatic_captions` is a legacy helper only.
+- Hindi uses Gemini when a key exists. NLLB `facebook/nllb-200-distilled-600M` is the fallback. English lines stay local.
+- Reject Latin spellings (“Adelog”) and fluent wrong meanings (“thief” / “television” / “TV-like” for TB, “cough” for lung cancer, a dropped negation). A fixed sentence is only for an exact pattern: TB medicine, no medicine for a lung infection, patients without pain, or breathing. Naming lung cancer does not become “The disease is lung cancer.”
+- Translate the source line before any medical sentence. Joining clauses does not write English. If the first English drops the claim, translate that line once more. A caption already on the video stays until the editor picks a reading.
+- A TB-versus-television decision uses `RunningInferences`: the current line first, then earlier lines in the same video and the medical domain. `टीवी पर` stays television.
+- A correct sentence stays. Opening a project does not replace stored English. Teach a line only from **Update this video and the model**.
+- Same video and new video run together. This video restores saved captions by time. An accepted line is also appended to `accepted_translation_pairs.jsonl` for a later training run.
+- **Save mapping for training** stores the line and time for this video’s next prompt. It does not change model weights inside the caption pass.
+- **Redo captions** reruns the same video. It clears captions and `translation_checkpoints`, then the medical rules and any saved line that still passes are applied again.
+- Do not write Gemini or editor text into NLLB or Whisper weights during a caption pass. A new trainer implements `Trainer` and `LineModel` in `translation_training.py`. It is promoted only when held-out accepted lines are not worse. Until then, new videos use the medical rules.

@@ -25,7 +25,7 @@ def test_stale_autosave_cannot_erase_generated_captions():
 
 def test_upload_starts_one_server_owned_job_and_preserves_old_media(monkeypatch):
     old=new_project('upload_job_regression');pid=old['id'];started=Event();release=Event();calls=[]
-    def pipeline(project_id,force,model_size):
+    def pipeline(project_id,force,model_size,mode=None,recaption=False,from_stage=None):
         calls.append(project_id);started.set();assert release.wait(5)
         p=project_manager.get_project(project_id);p.captions=[CaptionItem(id='generated',start=0,end=1,text='Uploaded speech')];project_manager.save_project(p)
         return {'success':True,'project':p.model_dump()}
@@ -58,7 +58,7 @@ def test_source_zoom_changes_pixels_and_keeps_output_size():
 def test_blocked_graphics_are_not_reported_complete(monkeypatch):
     p=new_project('blocked_graphics_regression')
     result={'success':True,'project':p,'editorial_report':{'status':'blocked','errors':['Planner HTTP 503']}}
-    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *args:result)
+    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *args, **kwargs:result)
     auto_jobs.start(p['id'])
     for _ in range(100):
         job=auto_jobs.status(p['id'])
@@ -130,7 +130,7 @@ def test_feedback_cut_during_generation_is_not_overwritten(monkeypatch, tmp_path
     state.captions=[CaptionItem(id='spoken',start=0,end=5,text='Actual English speech',translated_text='Actual English speech')]
     state.graphics=[MotionGraphicItem(id='old-generated',start=1,end=3,template_id='kinetic_typography',title='Actual English speech',parameters={'editorial_generated':True})]
     project_manager.save_project(state)
-    def plan(*args):
+    def plan(*args, **kwargs):
         latest=project_manager.get_project(state.id)
         latest.graphics=[]  # User cuts an AI item while the new job is running.
         project_manager.save_project(latest)
@@ -183,7 +183,7 @@ def test_corrupt_saved_transcript_retries_stronger_model_before_translation(monk
     monkeypatch.setattr(transcription_service,'transcribe_with_whisper',transcribe)
     monkeypatch.setattr(translation_service,'translate_captions_list',translate)
     monkeypatch.setattr('app.services.auto_produce_mode.cloud_readiness',lambda:(True,[]))
-    monkeypatch.setattr(editorial_planner,'run_editorial',lambda *a:([],[],{'status':'blocked','run_id':'offline-test','errors':['Cloud unavailable']}))
+    monkeypatch.setattr(editorial_planner,'run_editorial',lambda *a, **k:([],[],{'status':'blocked','run_id':'offline-test','errors':['Cloud unavailable']}))
     result=auto_production_service.run_pipeline(state.id)
     assert calls==['medium']
     assert result['project']['captions'][0]['translated_text']=='Treatment for cancer'
@@ -192,7 +192,7 @@ def test_corrupt_saved_transcript_retries_stronger_model_before_translation(monk
 
 def test_conflicting_job_is_not_reported_complete(monkeypatch):
     p=new_project('job_conflict')
-    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a:{'success':True,'project':p,'editorial_report':{'status':'conflict','stage':'subtitles','errors':['Timeline changed']}})
+    monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a, **k:{'success':True,'project':p,'editorial_report':{'status':'conflict','stage':'subtitles','errors':['Timeline changed']}})
     auto_jobs.start(p['id'])
     for _ in range(100):
         job=auto_jobs.status(p['id'])
@@ -206,7 +206,7 @@ def test_skipped_ideas_do_not_flag_a_successful_edit(monkeypatch):
     outcomes=[]
     for inserted in (4,0):
         report={'status':'complete','stage':'timeline_ready','errors':[],'inserted':inserted,'needs_review':2}
-        monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a,report=report:{'success':True,'project':p,'editorial_report':report})
+        monkeypatch.setattr(auto_production_service,'run_pipeline',lambda *a, report=report, **k:{'success':True,'project':p,'editorial_report':report})
         auto_jobs.start(p['id'])
         for _ in range(100):
             job=auto_jobs.status(p['id'])
