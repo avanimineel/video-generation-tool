@@ -282,6 +282,9 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
     errors=[]
     requests_made=0
     quota_hit=False
+    # 502/503/504 and a spent rate limit mean Gemini cannot plan this call.
+    # Walk the model list first. If every model is unavailable, use Cursor.
+    outage=False
     for model in models:
         for attempt in range(2):
             if max_requests is not None and requests_made >= max_requests:
@@ -299,6 +302,8 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                         time.sleep(1.5)
                         continue
                     errors.append(err_msg)
+                    if response.status_code in (429, 500, 502, 503, 504):
+                        outage = True
                     if response.status_code in (404,429,500,502,503,504):break
                     raise ValueError(errors[-1])
                 data=response.json()
@@ -313,7 +318,7 @@ def gemini_json(prompt, schema=None, timeout=75, image_parts=None, max_requests=
                 break
         if quota_hit:
             break
-    if quota_hit:
+    if quota_hit or outage:
         try:
             return cursor_json(prompt, schema, timeout=max(int(timeout or 75), 90), image_parts=image_parts)
         except Exception as exc:

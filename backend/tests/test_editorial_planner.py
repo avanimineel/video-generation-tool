@@ -267,6 +267,25 @@ def test_gemini_json_retries_on_503_and_falls_back(monkeypatch):
 QUOTA_BODY = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for metric: generate_content_free_tier_requests. Please retry in 17h59m48s."}}'
 
 
+def test_gemini_outage_uses_cursor_after_the_model_list(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
+    monkeypatch.delenv('EDITORIAL_MODEL', raising=False)
+    monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
+    calls = []
+    monkeypatch.setattr(
+        e.requests,
+        'post',
+        lambda *a, **k: calls.append(1) or SimpleNamespace(
+            status_code=503,
+            text='{"error":{"code":503,"message":"This model is currently experiencing high demand."}}',
+        ),
+    )
+    monkeypatch.setattr(e, 'cursor_json', lambda *a, **k: {'ok': True, 'via': 'cursor'})
+    assert e.gemini_json('plan this') == {'ok': True, 'via': 'cursor'}
+    # Each listed model is retried once before the backup model is asked.
+    assert len(calls) == 8
+
+
 def test_daily_quota_uses_cursor_and_skips_later_gemini_models(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'fixture-credential-abc123')
     monkeypatch.setattr(e.time, 'sleep', lambda *_: None)
