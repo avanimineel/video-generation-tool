@@ -1,0 +1,18 @@
+[Unit]
+Description=DaVinci Resolve AI Editing Companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/data/developer/oonex/video-generation-tool
+# Keep the service off the interactive shell PATH so npm uses /usr/bin/node.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/data/developer/oonex/video-generation-tool/start_companion.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

@@ -134,4 +134,9 @@ cleanup() {
   kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-wait
+# Stay in the foreground. A service manager restarts this script if either side exits.
+while kill -0 "$BACKEND_PID" 2>/dev/null && kill -0 "$FRONTEND_PID" 2>/dev/null; do
+  sleep 2
+done
+echo "Companion process exited; stopping the other side."
+exit 1
