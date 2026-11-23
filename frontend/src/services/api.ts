@@ -511,8 +511,9 @@ export function saveLocalProjectsList(list: ProjectSummary[]) {
   }
 }
 
-// Direct loopback avoids inherited network restrictions in older Vite processes.
-export const BACKEND_ORIGIN = typeof window !== 'undefined' && ['5173','5174'].includes(window.location.port) ? `${window.location.protocol}//${window.location.hostname}:8003` : '';
+// Stay on the page origin. The dev server proxies /api to the local backend,
+// so a remote browser only needs the frontend port.
+export const BACKEND_ORIGIN = '';
 const API_BASE = `${BACKEND_ORIGIN}/api`;
 
 const savedRevisions = new Map<string,{base:string,current:string}>();

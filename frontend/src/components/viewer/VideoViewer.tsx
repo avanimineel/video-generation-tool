@@ -155,7 +155,6 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
         {/* Top 50% Archival B-Roll Container (when 50/50 Vertical Split is active) */}
         {activeVerticalSplit && (() => {
           const rawMediaUrl = activeVerticalSplit.parameters?.media_url || activeVerticalSplit.media_url;
-          // Direct backend port resolution to bypass any dev-server proxy restrictions
           const mediaUrl = rawMediaUrl?.startsWith('/api') 
             ? `${BACKEND_ORIGIN}${rawMediaUrl}`
             : rawMediaUrl;
