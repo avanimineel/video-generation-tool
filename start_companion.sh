@@ -61,8 +61,9 @@ export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME}"
 mkdir -p "$HF_HOME"
 
 # Local-first captions defaults (EC2 / Podcast). Override any var before running this script.
+# auto: use the GPU when CUDA and cuBLAS are present, otherwise CPU.
 export WHISPER_DEVICE="${WHISPER_DEVICE:-auto}"
-# Leave compute type unset. The app uses float16 on a GPU and int8 on CPU.
+# Leave compute type unset. The GPU uses float16 first. CPU fallback uses int8.
 export FFMPEG_VIDEO_ENCODER="${FFMPEG_VIDEO_ENCODER:-auto}"
 # Hindi uses Gemini when GEMINI_API_KEY is set. NLLB-600M is only the offline fallback.
 # Set TRANSLATION_BACKEND=local to keep English lines on NLLB; Hindi still uses Gemini when a key exists.

@@ -251,13 +251,15 @@ class TranscriptionService:
     def get_whisper_model(cls, model_size: Optional[str] = None, *, force_device: Optional[str] = None):
         target_size = model_size or os.getenv('WHISPER_MODEL_SIZE', 'base')
         preference = force_device or None
-        intended_device, intended_compute, _ = resolve_whisper_device(preference)
-        cache_key = whisper_cache_key(target_size, intended_device, intended_compute)
-        if cache_key in cls._whisper_models:
-            return cls._whisper_models[cache_key]
-        cpu_key = whisper_cache_key(target_size, 'cpu', resolve_whisper_device('cpu')[1])
-        if intended_device == 'cuda' and cpu_key in cls._whisper_models and force_device != 'cuda':
-            return cls._whisper_models[cpu_key]
+        intended_device, _intended_compute, _ = resolve_whisper_device(preference)
+        cached = cls._cached_model_for(target_size, intended_device)
+        if cached is not None:
+            return cached
+        # A GPU that already failed stays on the CPU model for this process.
+        if intended_device == 'cuda' and force_device != 'cuda':
+            cached_cpu = cls._cached_model_for(target_size, 'cpu')
+            if cached_cpu is not None:
+                return cached_cpu
 
         os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
         try:
@@ -276,6 +278,14 @@ class TranscriptionService:
             if target_size != 'base':
                 return cls.get_whisper_model('base', force_device=force_device)
             return None
+
+    @classmethod
+    def _cached_model_for(cls, model_size: str, device: str):
+        prefix = f"{model_size}:{device}:"
+        for key, model in cls._whisper_models.items():
+            if key.startswith(prefix):
+                return model
+        return None
 
     @classmethod
     def _cached_model_device(cls, model: Any) -> Optional[str]:

@@ -135,6 +135,100 @@ def test_resolve_skips_cuda_when_cublas_missing_before_construct(monkeypatch):
     assert compute == "int8"
 
 
+def test_gpu_is_used_when_present(monkeypatch):
+    from app.services.whisper_device import load_whisper_model
+
+    monkeypatch.delenv("WHISPER_COMPUTE_TYPE", raising=False)
+    loads = []
+
+    class FakeModel:
+        def __init__(self, size, **kwargs):
+            loads.append(dict(kwargs))
+
+    _model, device, compute, reason = load_whisper_model(
+        "base",
+        preference="auto",
+        cuda_count=1,
+        cublas_ok=True,
+        model_factory=FakeModel,
+    )
+    assert device == "cuda"
+    assert compute == "float16"
+    assert reason is None
+    assert [item["device"] for item in loads] == ["cuda"]
+
+
+def test_gpu_float16_rejection_stays_on_the_gpu(monkeypatch):
+    from app.services.whisper_device import load_whisper_model
+
+    monkeypatch.delenv("WHISPER_COMPUTE_TYPE", raising=False)
+    loads = []
+
+    class FakeModel:
+        def __init__(self, size, **kwargs):
+            loads.append(dict(kwargs))
+            if kwargs.get("compute_type") == "float16":
+                raise ValueError(
+                    "Requested float16 compute type, but the target device or backend "
+                    "do not support efficient float16 computation."
+                )
+
+    _model, device, compute, reason = load_whisper_model(
+        "base",
+        preference="auto",
+        cuda_count=1,
+        cublas_ok=True,
+        model_factory=FakeModel,
+    )
+    assert device == "cuda"
+    assert compute == "int8_float16"
+    assert reason is None
+    assert [item["compute_type"] for item in loads] == ["float16", "int8_float16"]
+    assert all(item["device"] == "cuda" for item in loads)
+
+
+def test_no_gpu_uses_cpu_even_when_float16_is_set(monkeypatch):
+    from app.services.whisper_device import load_whisper_model
+
+    monkeypatch.setenv("WHISPER_COMPUTE_TYPE", "float16")
+    loads = []
+
+    class FakeModel:
+        def __init__(self, size, **kwargs):
+            loads.append(dict(kwargs))
+
+    _model, device, compute, reason = load_whisper_model(
+        "base",
+        preference="auto",
+        cuda_count=0,
+        cublas_ok=False,
+        model_factory=FakeModel,
+    )
+    assert device == "cpu"
+    assert compute == "int8"
+    assert reason == "no_cuda_devices"
+    assert [item["device"] for item in loads] == ["cpu"]
+    assert loads[0]["compute_type"] == "int8"
+
+
+def test_cached_gpu_model_is_reused_ahead_of_cpu(monkeypatch):
+    from app.services.transcription_service import TranscriptionService
+
+    monkeypatch.setattr(
+        "app.services.transcription_service.resolve_whisper_device",
+        lambda preference=None, **kwargs: ("cuda", "float16", None),
+    )
+    TranscriptionService.clear_whisper_model_cache()
+    gpu = object()
+    cpu = object()
+    TranscriptionService._whisper_models["small:cuda:int8_float16"] = gpu
+    TranscriptionService._whisper_models["small:cpu:int8"] = cpu
+    TranscriptionService._whisper_model_devices["small:cuda:int8_float16"] = "cuda"
+    TranscriptionService._whisper_model_devices["small:cpu:int8"] = "cpu"
+    assert TranscriptionService.get_whisper_model("small") is gpu
+    TranscriptionService.clear_whisper_model_cache()
+
+
 def test_whisper_cache_key_includes_device_and_compute():
     assert whisper_cache_key("small", "cuda", "float16") == "small:cuda:float16"
     assert whisper_cache_key("small", "cpu", "int8") != whisper_cache_key("small", "cuda", "float16")
