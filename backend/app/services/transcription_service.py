@@ -17,7 +17,13 @@ logger = get_logger(__name__)
 
 CAPTION_PROMPTS = {
     "general": "Transcribe the spoken dialogue faithfully, preserving names, numbers and technical terms.",
+    "finance": "Finance discussion. Transcribe money, tax, insurance, investing and prices faithfully. Keep terms such as interest, loan, premium, return, budget and tax.",
     "medical": "Clinical discussion. Transcribe the diagnosis, symptoms, treatment and anatomy faithfully. Keep terms such as cancer, tumour, biopsy, chemotherapy, patient, lung, scan and x-ray.",
+    "real_estate": "Property discussion. Transcribe the home, price, location and deal faithfully. Keep terms such as mortgage, rent, listing, buyer and seller.",
+    "education": "Teaching. Transcribe the lesson, subject and steps faithfully. Keep terms such as course, exam, student, chapter and example.",
+    "legal": "Legal discussion. Transcribe the right, claim, court and agreement faithfully. Keep terms such as contract, client, clause, liability and settlement.",
+    "business": "Business discussion. Transcribe the company, product, customer and numbers faithfully. Keep terms such as revenue, customer, startup, pricing and team.",
+    "fitness": "Fitness discussion. Transcribe the exercise, body and routine faithfully. Keep terms such as workout, coach, muscle, diet and recovery.",
     "sports": "Sports commentary. Transcribe the match, players, score and action faithfully. Keep terms such as goal, ball, coach, tournament, injury and team.",
 }
 

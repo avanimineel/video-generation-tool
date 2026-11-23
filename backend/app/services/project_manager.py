@@ -9,9 +9,22 @@ from uuid import uuid4
 class ProjectConflict(ValueError):
     pass
 
+# Talking-head businesses that pay for edited video. Unknown names stay general.
+DOMAINS = (
+    "general",
+    "finance",
+    "medical",
+    "real_estate",
+    "education",
+    "legal",
+    "business",
+    "fitness",
+    "sports",
+)
+
 def project_domain(value: str) -> str:
-    key = (value or "").strip().lower()
-    return key if key in {"general", "medical", "sports"} else "general"
+    key = (value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return key if key in DOMAINS else "general"
 
 def same_project_content(left, right):
     return left.model_dump(exclude={"updated_at"}) == right.model_dump(exclude={"updated_at"})

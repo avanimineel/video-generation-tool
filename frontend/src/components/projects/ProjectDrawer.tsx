@@ -1,7 +1,7 @@
 import { BACKEND_ORIGIN } from '../../services/api';
 import React, { useState, useRef } from 'react';
 import { X, Plus, FolderOpen, Link2, Check, Clock, FileVideo, Trash2, AlertTriangle, Loader2, CheckSquare, Square } from 'lucide-react';
-import { ProjectSummary } from '../../types';
+import { domainLabel, PROJECT_DOMAINS, ProjectDomain, ProjectSummary } from '../../types';
 
 interface ProjectDrawerProps {
   isOpen: boolean;
@@ -9,7 +9,7 @@ interface ProjectDrawerProps {
   activeProjectId: string;
   onClose: () => void;
   onSelectProject: (id: string) => void;
-  onCreateProject: (name: string, aspectRatio: '9:16' | '16:9', domain: 'general' | 'medical' | 'sports') => void;
+  onCreateProject: (name: string, aspectRatio: '9:16' | '16:9', domain: ProjectDomain) => void;
   onRelinkMedia: (projectId: string, newPath: string) => void;
   onDeleteProject: (projectId: string) => Promise<void>;
   onBulkDeleteProjects?: (projectIds: string[]) => Promise<void>;
@@ -28,7 +28,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
 }) => {
   const [newProjectName, setNewProjectName] = useState('');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
-  const [domain, setDomain] = useState<'general' | 'medical' | 'sports'>('general');
+  const [domain, setDomain] = useState<ProjectDomain>('general');
   const [relinkId, setRelinkId] = useState<string | null>(null);
   const [relinkPath, setRelinkPath] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -163,15 +163,15 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
           </div>
           <div className="flex items-center gap-2 text-xs">
             <span className="text-neutral-500 shrink-0">Domain</span>
-            <div className="flex bg-neutral-100 rounded-lg p-0.5 border border-neutral-200 font-medium">
-              {(['general', 'medical', 'sports'] as const).map((item) => (
+            <div className="flex flex-wrap bg-neutral-100 rounded-lg p-0.5 border border-neutral-200 font-medium">
+              {PROJECT_DOMAINS.map((item) => (
                 <button
-                  key={item}
+                  key={item.id}
                   type="button"
-                  onClick={() => setDomain(item)}
-                  className={`px-2.5 py-1 rounded capitalize transition ${domain === item ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-500'}`}
+                  onClick={() => setDomain(item.id)}
+                  className={`px-2.5 py-1 rounded transition ${domain === item.id ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-500'}`}
                 >
-                  {item}
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -258,7 +258,7 @@ export const ProjectDrawer: React.FC<ProjectDrawerProps> = ({
                       </span>
                       {p.domain_profile && (
                         <span className="text-[10px] capitalize px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
-                          {p.domain_profile}
+                          {domainLabel(p.domain_profile)}
                         </span>
                       )}
                     </div>

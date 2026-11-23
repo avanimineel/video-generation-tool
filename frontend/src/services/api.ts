@@ -1,4 +1,4 @@
-import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, CaptionStyle, MotionGraphicItem, DynamicGraphicSample, DynamicSamplesResponse, TwelveLabsCredits, EditorialDecision, FeedbackStats, FewShotExportResponse } from '../types';
+import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, CaptionStyle, MotionGraphicItem, DynamicGraphicSample, DynamicSamplesResponse, TwelveLabsCredits, EditorialDecision, FeedbackStats, FewShotExportResponse, ProjectDomain } from '../types';
 
 export const DEFAULT_STYLE: CaptionStyle = {
   font_family: 'Montserrat',
@@ -577,7 +577,7 @@ export const api = {
     return getInitialProjectsList();
   },
 
-  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string, domain: 'general' | 'medical' | 'sports' = 'general'): Promise<ProjectState> {
+  async createProject(name: string, aspectRatio: string = '9:16', sourcePath?: string, domain: ProjectDomain = 'general'): Promise<ProjectState> {
     const res=await fetch(`${API_BASE}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,aspect_ratio:aspectRatio,source_media_path:sourcePath,domain_profile:domain})});
     if(!res.ok)throw new Error(`Could not create project (${res.status}).`);
     const data=await res.json();saveLocalProject(data);return data;

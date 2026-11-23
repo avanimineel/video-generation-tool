@@ -12,7 +12,7 @@ import { EditorialFeedbackModal } from './components/modals/EditorialFeedbackMod
 import { BrandVideoModal } from './components/modals/BrandVideoModal';
 import { Studio } from './components/studio/Studio';
 import { api, DEFAULT_TEMPLATES, VisualReasoningItem } from './services/api';
-import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, MotionGraphicItem, FeedbackStats } from './types';
+import { ProjectState, ProjectSummary, DaVinciStatus, GraphicTemplate, CaptionItem, MotionGraphicItem, FeedbackStats, ProjectDomain } from './types';
 
 function copyPlainText(text: string) {
   if (navigator.clipboard?.writeText && window.isSecureContext) {
@@ -937,7 +937,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9', domain: 'general' | 'medical' | 'sports' = 'general') => {
+  const handleCreateProject = async (name: string, ratio: '9:16' | '16:9', domain: ProjectDomain = 'general') => {
     const newProj = await api.createProject(name, ratio, undefined, domain);
     setBackendReady(true); setSaveError('');
     const url=new URL(window.location.href);url.searchParams.set('project',newProj.id);url.searchParams.delete('time');window.history.replaceState({},'',url);
