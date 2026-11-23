@@ -62,7 +62,7 @@ mkdir -p "$HF_HOME"
 
 # Local-first captions defaults (EC2 / Podcast). Override any var before running this script.
 export WHISPER_DEVICE="${WHISPER_DEVICE:-auto}"
-export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-float16}"
+# Leave compute type unset. The app uses float16 on a GPU and int8 on CPU.
 export FFMPEG_VIDEO_ENCODER="${FFMPEG_VIDEO_ENCODER:-auto}"
 # Hindi uses Gemini when GEMINI_API_KEY is set. NLLB-600M is only the offline fallback.
 # Set TRANSLATION_BACKEND=local to keep English lines on NLLB; Hindi still uses Gemini when a key exists.

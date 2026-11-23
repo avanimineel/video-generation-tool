@@ -80,9 +80,13 @@ def cuda_device_count(probe: Optional[Callable[[], int]] = None) -> int:
 
 
 def default_compute_type(device: str) -> str:
-    """float16 on CUDA, int8 on CPU — overridable via WHISPER_COMPUTE_TYPE."""
+    """float16 on CUDA, int8 on CPU — overridable via WHISPER_COMPUTE_TYPE.
+
+    float16 is a GPU type. A global float16 setting must not be applied on CPU,
+    where CTranslate2 rejects it.
+    """
     override = (os.getenv("WHISPER_COMPUTE_TYPE") or "").strip()
-    if override:
+    if override and not (device != "cuda" and override == "float16"):
         return override
     return "float16" if device == "cuda" else "int8"
 
@@ -192,7 +196,14 @@ def load_whisper_model(
         log_cuda_fallback(model_size, "cpu", compute_type, "missing_libcublas")
 
     try:
-        model = _construct(device, compute_type)
+        try:
+            model = _construct(device, compute_type)
+        except Exception as exc:
+            if device == "cuda" or "float16" not in str(exc).lower():
+                raise
+            compute_type = "int8"
+            reason = reason or "float16_unsupported"
+            model = _construct(device, compute_type)
         if logger:
             logger.info(
                 "whisper_device_selected",

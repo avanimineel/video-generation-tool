@@ -45,6 +45,12 @@ def test_whisper_compute_type_env_override(monkeypatch):
     assert default_compute_type("cpu") == "int8_float16"
 
 
+def test_float16_setting_stays_on_the_gpu(monkeypatch):
+    monkeypatch.setenv("WHISPER_COMPUTE_TYPE", "float16")
+    assert default_compute_type("cuda") == "float16"
+    assert default_compute_type("cpu") == "int8"
+
+
 def test_libcublas_probe_uses_loader(monkeypatch):
     calls = []
 
