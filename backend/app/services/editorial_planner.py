@@ -1544,6 +1544,7 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         write_json(run_dir/'01_planning_windows.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
         from app.services.overlay_styles import (
+            add_look_overlays,
             add_punch_ins,
             apply_kinetic_captions,
             constrain_decisions,
@@ -1573,6 +1574,7 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         report['stage']='asset_review';report_save()
         graphics,logs=execute_plan(state,rows,run_dir)
         graphics=add_punch_ins(state, graphics, chosen, choice_made)
+        graphics=add_look_overlays(state, graphics, chosen, choice_made)
         mark_sound_hits(graphics, chosen, choice_made)
         # User explicitly rejected automatic camera movement as density filler.
         camera={'punch_ins':0,'cut_times':[]}

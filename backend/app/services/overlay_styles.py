@@ -42,7 +42,80 @@ OVERLAYS: List[Dict[str, object]] = [
         "detail": "When a product is named, the picture looks for a hand or person holding that product.",
         "recommended": ("business", "fitness"),
     },
+    {
+        "id": "camera",
+        "label": "Camera effect",
+        "detail": "A viewfinder frame and focus marks sit on the picture, like a second camera.",
+        "recommended": ("general", "business", "fitness", "sports", "real_estate", "education"),
+    },
+    {
+        "id": "confetti",
+        "label": "Confetti and glitter",
+        "detail": "Short bursts of confetti and glitter on a win, a launch, or a result.",
+        "recommended": ("general", "business", "fitness", "sports"),
+    },
+    {
+        "id": "paper",
+        "label": "Crumpled paper",
+        "detail": "A paper texture and crease lines, for a document, report, or letter.",
+        "recommended": ("general", "finance", "education", "legal", "business"),
+    },
+    {
+        "id": "fog",
+        "label": "Fog and smoke",
+        "detail": "A soft fog bank rises through the lower half of the frame.",
+        "recommended": ("general", "fitness", "sports"),
+    },
+    {
+        "id": "film",
+        "label": "Film",
+        "detail": "Letterbox bars and light grain, like a filmed reel.",
+        "recommended": ("general", "education", "business", "real_estate", "legal", "medical"),
+    },
+    {
+        "id": "streaming",
+        "label": "Streaming",
+        "detail": "A live frame and a lower bar, like a stream or a webinar.",
+        "recommended": ("general", "business", "education", "fitness", "sports"),
+    },
+    {
+        "id": "glitch",
+        "label": "Glitch",
+        "detail": "Short horizontal tears and color shifts on a digital or high-energy line.",
+        "recommended": ("general", "business", "fitness", "sports"),
+    },
+    {
+        "id": "storm",
+        "label": "Lightning and rain",
+        "detail": "Rain streaks and a brief lightning flash for a dramatic line.",
+        "recommended": ("general", "fitness", "sports"),
+    },
+    {
+        "id": "light_leak",
+        "label": "Light leak",
+        "detail": "A warm flare leaks in from the corner of the frame.",
+        "recommended": ("general", "business", "real_estate", "education", "fitness"),
+    },
+    {
+        "id": "space",
+        "label": "Space",
+        "detail": "A dark sky and stars, for a big idea, a future, or a science line.",
+        "recommended": ("general", "education", "business"),
+    },
 ]
+
+LOOK_ORDER = (
+    "camera",
+    "confetti",
+    "paper",
+    "fog",
+    "film",
+    "streaming",
+    "glitch",
+    "storm",
+    "light_leak",
+    "space",
+)
 
 _BY_ID = {str(item["id"]): item for item in OVERLAYS}
 
@@ -113,6 +186,10 @@ def instruction(chosen: List[str], note: str = "") -> str:
     if "product_swap" in chosen:
         product = note or "the named product"
         lines.append(f"When a product is named, search stock for a hand holding {product}. Do not invent a brand screen.")
+    looks = [key for key in LOOK_ORDER if key in chosen]
+    if looks:
+        names = ", ".join(str(_BY_ID[key]["label"]) for key in looks)
+        lines.append(f"Picture looks already placed on the timeline: {names}. Do not search stock for those textures.")
     lines.append("Leave out any overlay type that was not chosen.")
     return "\n".join(lines)
 
@@ -207,3 +284,130 @@ def mark_sound_hits(graphics, chosen: List[str], choice_made: bool) -> None:
             graphic.parameters["title_style"] = "bold_pop"
         if graphic.template_id == "source_reframe":
             graphic.parameters["motion_curve"] = "hold"
+
+
+def add_look_overlays(state, graphics, chosen: List[str], choice_made: bool):
+    """Place each selected picture look on its own short span. Unselected looks stay off."""
+    graphics = [g for g in graphics if getattr(g, "template_id", "") != "look_effect"]
+    selected = [key for key in LOOK_ORDER if key in chosen]
+    if not choice_made or not selected:
+        return graphics
+    from app.core.models import MotionGraphicItem
+    duration = float(getattr(state, "duration_seconds", 0) or 0)
+    captions = getattr(state, "captions", None) or []
+    if duration < 1 and captions:
+        duration = max(float(getattr(caption, "end", 0) or 0) for caption in captions)
+    duration = max(duration, 4.0)
+    beat = 2.2
+    gap = 1.4
+    cursor = 0.6
+    plan = selected + selected
+    placed = 0
+    for effect in plan:
+        end = min(duration - 0.15, cursor + beat)
+        if end - cursor < 1.0 or cursor >= duration - 1.1:
+            break
+        label = str(_BY_ID[effect]["label"])
+        graphics.append(MotionGraphicItem(
+            id=f"look_{effect}_{placed}",
+            start=round(cursor, 2),
+            end=round(end, 2),
+            template_id="look_effect",
+            title=label,
+            parameters={"editorial_generated": True, "effect": effect, "look_overlay": True},
+        ))
+        placed += 1
+        cursor = end + gap
+        if placed >= len(selected) and cursor > duration * 0.72:
+            break
+    return graphics
+
+
+def paint_look_effect(image, effect: str, t: float):
+    """Draw one picture look onto an RGB frame. The speaker stays visible underneath."""
+    import random
+    from PIL import Image, ImageDraw
+    effect = effect if effect in LOOK_ORDER else "film"
+    width, height = image.size
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    if effect == "camera":
+        margin = max(8, int(min(width, height) * 0.045))
+        arm = max(16, int(min(width, height) * 0.07))
+        ink = (255, 255, 255, 210)
+        for x, y, sx, sy in (
+            (margin, margin, 1, 1),
+            (width - margin, margin, -1, 1),
+            (margin, height - margin, 1, -1),
+            (width - margin, height - margin, -1, -1),
+        ):
+            draw.line((x, y, x + sx * arm, y), fill=ink, width=3)
+            draw.line((x, y, x, y + sy * arm), fill=ink, width=3)
+        cx, cy = width // 2, height // 2
+        draw.ellipse((cx - 16, cy - 16, cx + 16, cy + 16), outline=(255, 255, 255, 160))
+        draw.ellipse((margin, margin + 8, margin + 14, margin + 22), fill=(230, 40, 40, 230))
+    elif effect == "confetti":
+        rng = random.Random(int(t * 4))
+        colors = ((255, 214, 10, 210), (255, 64, 129, 200), (64, 196, 255, 200), (140, 255, 160, 200), (255, 255, 255, 230))
+        for _ in range(34):
+            x = rng.randrange(width)
+            y = (rng.randrange(height) + int(t * 36)) % height
+            draw.rectangle((x, y, x + rng.choice((4, 7, 10)), y + rng.choice((8, 12, 6))), fill=rng.choice(colors))
+        for _ in range(16):
+            x, y = rng.randrange(width), rng.randrange(height)
+            draw.ellipse((x, y, x + 3, y + 3), fill=(255, 255, 255, 230))
+    elif effect == "paper":
+        draw.rectangle((0, 0, width, height), fill=(214, 196, 160, 56))
+        for step in range(1, 8):
+            y = int(height * step / 8)
+            draw.line((0, y, width, y + (8 if step % 2 else -8)), fill=(120, 90, 50, 80), width=2)
+        draw.line((0, int(height * 0.22), width, int(height * 0.48)), fill=(255, 255, 255, 50), width=3)
+    elif effect == "fog":
+        for band in range(8):
+            top = int(height * (0.42 + band * 0.07))
+            draw.rectangle((0, top, width, top + int(height * 0.1)), fill=(226, 232, 236, 16 + band * 12))
+    elif effect == "film":
+        bar = max(10, int(height * 0.07))
+        draw.rectangle((0, 0, width, bar), fill=(0, 0, 0, 220))
+        draw.rectangle((0, height - bar, width, height), fill=(0, 0, 0, 220))
+        rng = random.Random(int(t * 12))
+        for _ in range(70):
+            draw.point((rng.randrange(width), rng.randrange(height)), fill=(255, 255, 255, rng.randint(50, 140)))
+    elif effect == "streaming":
+        draw.rectangle((6, 6, width - 6, height - 6), outline=(255, 255, 255, 180), width=max(3, width // 100))
+        draw.rectangle((int(width * 0.06), int(height * 0.05), int(width * 0.24), int(height * 0.1)), fill=(210, 28, 36, 230))
+        draw.rectangle((0, int(height * 0.84), int(width * 0.58), int(height * 0.92)), fill=(0, 0, 0, 150))
+        draw.text((int(width * 0.08), int(height * 0.055)), "LIVE", fill=(255, 255, 255, 255))
+    elif effect == "glitch":
+        rng = random.Random(int(t * 8))
+        for _ in range(6):
+            y = rng.randrange(max(1, height - 8))
+            band = rng.randint(3, 14)
+            color = rng.choice(((255, 0, 90, 100), (0, 230, 255, 90), (255, 255, 255, 60)))
+            draw.rectangle((0, y, width, min(height, y + band)), fill=color)
+    elif effect == "storm":
+        draw.rectangle((0, 0, width, int(height * 0.32)), fill=(8, 14, 32, 100))
+        rng = random.Random(int(t * 10))
+        for _ in range(36):
+            x, y = rng.randrange(width), rng.randrange(height)
+            draw.line((x, y, x - 10, y + 26), fill=(190, 210, 255, 120), width=1)
+        if int(t * 3) % 5 == 0:
+            x = int(width * 0.64)
+            draw.line(
+                (x, 0, x - int(width * 0.04), int(height * 0.22), x + int(width * 0.03), int(height * 0.4), x - int(width * 0.06), int(height * 0.62)),
+                fill=(255, 255, 255, 220),
+                width=3,
+            )
+    elif effect == "light_leak":
+        draw.ellipse((-int(width * 0.15), -int(height * 0.1), int(width * 0.55), int(height * 0.42)), fill=(255, 140, 40, 78))
+        draw.ellipse((int(width * 0.45), int(height * 0.58), int(width * 1.15), int(height * 1.1)), fill=(255, 50, 90, 48))
+    else:
+        draw.rectangle((0, 0, width, height), fill=(6, 8, 28, 70))
+        rng = random.Random(11)
+        for _ in range(60):
+            x, y = rng.randrange(width), rng.randrange(height)
+            twinkle = 200 if (int(t * 2) + x) % 5 else 70
+            draw.ellipse((x, y, x + 2, y + 2), fill=(255, 255, 255, twinkle))
+    composed = Image.alpha_composite(image.convert("RGBA"), layer)
+    image.paste(composed.convert(image.mode))
+    return image

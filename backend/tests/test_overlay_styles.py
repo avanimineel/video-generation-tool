@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
 from app.services.overlay_styles import (
+    add_look_overlays,
     add_punch_ins,
     apply_kinetic_captions,
     constrain_decisions,
+    paint_look_effect,
     recommended_ids,
     styles_for_domain,
 )
@@ -40,6 +42,35 @@ def test_kinetic_choice_highlights_the_spoken_word():
     assert style.has_highlight is True
     assert style.highlight_bounce is True
     assert style.highlight_active_color == "#F5E642"
+
+
+def test_looks_stay_separate_and_follow_the_domain():
+    ids = {row["id"] for row in styles_for_domain("general")}
+    for key in ("camera", "confetti", "paper", "fog", "film", "streaming", "glitch", "storm", "light_leak", "space"):
+        assert key in ids
+    assert "look_effects" not in ids
+    finance = set(recommended_ids("finance"))
+    sports = set(recommended_ids("sports"))
+    education = set(recommended_ids("education"))
+    assert "paper" in finance and "confetti" not in finance
+    assert "storm" in sports and "confetti" in sports
+    assert "space" in education and "glitch" not in education
+
+
+def test_each_selected_look_is_its_own_overlay():
+    state = SimpleNamespace(duration_seconds=24, captions=[])
+    graphics = add_look_overlays(state, [], ["film", "camera"], True)
+    assert [item.parameters["effect"] for item in graphics[:2]] == ["camera", "film"]
+    assert all(item.template_id == "look_effect" for item in graphics)
+    kept = add_look_overlays(state, graphics, ["camera"], True)
+    assert {item.parameters["effect"] for item in kept} == {"camera"}
+
+
+def test_a_look_paints_onto_the_frame():
+    from PIL import Image
+    image = Image.new("RGB", (64, 96), (8, 8, 8))
+    paint_look_effect(image, "light_leak", 1.0)
+    assert image.getpixel((4, 4)) != (8, 8, 8)
 
 
 def test_punch_in_adds_a_short_zoom_on_a_number():

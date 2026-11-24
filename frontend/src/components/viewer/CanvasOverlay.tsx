@@ -1,4 +1,5 @@
 import { BehindSpeakerTitle } from "./BehindSpeakerTitle";
+import { LookEffect } from "./LookEffect";
 import { CardsBrollTitle } from "./CardsBrollTitle";
 import { StaircaseTitle } from "./StaircaseTitle";
 import { BACKEND_ORIGIN } from "../../services/api";
@@ -211,6 +212,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
           return <div key={graphic.id} style={{position:'absolute',left:0,top:top*referenceHeight,width:referenceWidth,height:height*referenceHeight,background:graphic.parameters.color||'#111315',zIndex:15,pointerEvents:'none'}} />;
         }
         if (graphic.template_id === 'authored_title') return null;
+        if (graphic.template_id === 'look_effect') {
+          return <LookEffect key={graphic.id} effect={String(graphic.parameters.effect || 'film')} width={referenceWidth} height={referenceHeight} time={currentTime} />;
+        }
 
         // Same camera maths as the export (burnin_renderer.camera_pose): scale, shift (fraction of frame), rotation.
         const cameraPose = (animation: string, p: number, seconds: number): [number, number, number, number] => {
