@@ -98,6 +98,7 @@ export interface ProjectSettings {
   davinci_timeline_name?: string | null;
   sub_lines_mode?: 1 | 2;
   domain_profile?: ProjectDomain;
+  caption_overlay?: boolean;
 }
 
 export const PROJECT_DOMAINS = [

@@ -356,7 +356,8 @@ export const DEFAULT_PROJECT: ProjectState = {
     center_snapping: true,
     default_brand_preset: 'podcast_lime',
     davinci_project_name: 'Podcast_Shorts',
-    davinci_timeline_name: 'Reels_Cut_01'
+    davinci_timeline_name: 'Reels_Cut_01',
+    caption_overlay: true
   },
   captions: [
     {

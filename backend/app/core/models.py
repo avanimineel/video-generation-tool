@@ -123,6 +123,7 @@ class ProjectSettings(BaseModel):
     davinci_timeline_name: Optional[str] = None
     sub_lines_mode: int = 1
     domain_profile: str = "general"
+    caption_overlay: bool = True
 
 # --- Full Project State (Saved to project.json & SQLite) ---
 
