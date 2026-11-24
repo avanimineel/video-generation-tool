@@ -121,6 +121,50 @@ export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, t
       <div style={{ ...box, background: 'radial-gradient(circle at 8% 0%, rgba(255,150,40,0.55), transparent 42%), radial-gradient(circle at 100% 100%, rgba(255,50,90,0.35), transparent 46%)' }} />
     );
   }
+  if (effect === 'flat_vector') {
+    const rise = (time * 8) % 8;
+    return (
+      <div style={{ ...box, background: 'rgba(236,228,210,0.35)' }}>
+        <div style={{ position: 'absolute', left: width * 0.1, top: height * 0.2 + rise, width: width * 0.16, height: width * 0.16, borderRadius: '50%', background: '#148c96' }} />
+        <div style={{ position: 'absolute', left: width * 0.32, top: height * 0.24, width: width * 0.24, height: height * 0.1, background: '#e65a46' }} />
+        {[0.22, 0.38, 0.16].map((level, index) => (
+          <div key={level} style={{ position: 'absolute', left: width * (0.66 + index * 0.08), top: height * (0.42 - level), width: width * 0.06, height: height * level, background: '#1e325a' }} />
+        ))}
+      </div>
+    );
+  }
+  if (effect === 'scrapbook') {
+    return (
+      <div style={box}>
+        <div style={{ position: 'absolute', left: width * 0.08, top: height * 0.14, width: width * 0.48, height: height * 0.46, background: '#fffdf6', boxShadow: '6px 8px 0 rgba(40,30,20,0.25)' }} />
+        <div style={{ position: 'absolute', left: width * 0.14, top: height * 0.22, width: width * 0.36, height: height * 0.28, background: '#b4c8be' }} />
+        <div style={{ position: 'absolute', left: width * 0.16, top: height * 0.1, width: width * 0.16, height: height * 0.045, background: 'rgba(170,210,160,0.85)' }} />
+        <div style={{ position: 'absolute', left: width * 0.58, top: height * 0.62, width: width * 0.2, height: height * 0.08, background: '#ffd678', transform: 'rotate(8deg)' }} />
+      </div>
+    );
+  }
+  if (effect === 'flat_infographic') {
+    return (
+      <div style={box}>
+        <div style={{ position: 'absolute', left: width * 0.42, top: height * 0.16, width: width * 0.5, height: height * 0.6, background: 'rgba(255,255,255,0.92)' }}>
+          <div style={{ position: 'absolute', left: width * 0.04, top: height * 0.06, width: width * 0.08, height: width * 0.08, borderRadius: '50%', background: '#148c96' }} />
+          {[0.34, 0.22, 0.28].map((span, index) => (
+            <div key={span} style={{ position: 'absolute', left: width * 0.04, top: height * (0.2 + index * 0.1), width: width * span, height: height * 0.045, background: ['#e65a46', '#1e325a', '#f0b428'][index] }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (effect === 'paper_craft') {
+    return (
+      <div style={box}>
+        <div style={{ position: 'absolute', left: width * 0.24, top: height * 0.3, width: width * 0.48, height: height * 0.42, borderRadius: '46% 54% 48% 52%', background: 'rgba(40,30,20,0.28)' }} />
+        <div style={{ position: 'absolute', left: width * 0.22, top: height * 0.28, width: width * 0.48, height: height * 0.42, borderRadius: '46% 54% 48% 52%', background: '#e8d6b8' }} />
+        <div style={{ position: 'absolute', left: width * 0.34, top: height * 0.32, width: 0, height: 0, borderLeft: `${width * 0.12}px solid transparent`, borderRight: `${width * 0.12}px solid transparent`, borderBottom: `${height * 0.14}px solid #c45c4a` }} />
+        <div style={{ position: 'absolute', left: width * 0.4, top: height * 0.48, width: width * 0.12, height: height * 0.16, background: '#46828c' }} />
+      </div>
+    );
+  }
   return (
     <div style={{ ...box, background: 'radial-gradient(circle at 50% 40%, rgba(8,10,30,0.15), rgba(6,8,28,0.55))' }}>
       {BITS.map((seed, index) => (

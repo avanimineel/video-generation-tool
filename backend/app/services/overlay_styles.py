@@ -102,6 +102,30 @@ OVERLAYS: List[Dict[str, object]] = [
         "detail": "A dark sky and stars, for a big idea, a future, or a science line.",
         "recommended": ("general", "education", "business"),
     },
+    {
+        "id": "flat_vector",
+        "label": "Flat vector with paper",
+        "detail": "Flat shapes and simple bars on a paper ground, like a vector explainer.",
+        "recommended": ("general", "finance", "education", "business", "medical"),
+    },
+    {
+        "id": "scrapbook",
+        "label": "Scrapbook explainer",
+        "detail": "Tape, a photo card, and paper scraps, like a scrapbook explainer.",
+        "recommended": ("general", "education", "real_estate", "business", "fitness"),
+    },
+    {
+        "id": "flat_infographic",
+        "label": "Editorial flat infographic",
+        "detail": "A flat card with bars and a marker, as an animated infographic cutaway.",
+        "recommended": ("general", "finance", "education", "business", "medical", "legal", "sports"),
+    },
+    {
+        "id": "paper_craft",
+        "label": "Cutout paper-craft",
+        "detail": "Layered paper shapes with a shadow, like a handmade paper cutout.",
+        "recommended": ("general", "education", "real_estate", "business", "fitness"),
+    },
 ]
 
 LOOK_ORDER = (
@@ -115,6 +139,10 @@ LOOK_ORDER = (
     "storm",
     "light_leak",
     "space",
+    "flat_vector",
+    "scrapbook",
+    "flat_infographic",
+    "paper_craft",
 )
 
 _BY_ID = {str(item["id"]): item for item in OVERLAYS}
@@ -401,6 +429,43 @@ def paint_look_effect(image, effect: str, t: float):
     elif effect == "light_leak":
         draw.ellipse((-int(width * 0.15), -int(height * 0.1), int(width * 0.55), int(height * 0.42)), fill=(255, 140, 40, 78))
         draw.ellipse((int(width * 0.45), int(height * 0.58), int(width * 1.15), int(height * 1.1)), fill=(255, 50, 90, 48))
+    elif effect == "flat_vector":
+        draw.rectangle((0, 0, width, height), fill=(236, 228, 210, 70))
+        shift = int((t * 12) % 10)
+        draw.ellipse((int(width * 0.08), int(height * 0.18) + shift, int(width * 0.28), int(height * 0.34) + shift), fill=(20, 140, 150, 210))
+        draw.rectangle((int(width * 0.34), int(height * 0.22), int(width * 0.62), int(height * 0.34)), fill=(230, 90, 70, 210))
+        for index, level in enumerate((0.28, 0.46, 0.18)):
+            left = int(width * (0.68 + index * 0.08))
+            top = int(height * (0.42 - level))
+            draw.rectangle((left, top, left + int(width * 0.06), int(height * 0.42)), fill=(30, 50, 90, 220))
+    elif effect == "scrapbook":
+        draw.rectangle((int(width * 0.1), int(height * 0.16), int(width * 0.58), int(height * 0.62)), fill=(40, 30, 20, 50))
+        draw.rectangle((int(width * 0.08), int(height * 0.14), int(width * 0.56), int(height * 0.6)), fill=(255, 252, 245, 230))
+        draw.rectangle((int(width * 0.14), int(height * 0.22), int(width * 0.5), int(height * 0.5)), fill=(180, 200, 190, 180))
+        draw.rectangle((int(width * 0.16), int(height * 0.1), int(width * 0.34), int(height * 0.16)), fill=(190, 220, 170, 180))
+        scrap = Image.new("RGBA", (max(8, int(width * 0.22)), max(8, int(height * 0.1))), (255, 214, 120, 230))
+        scrap = scrap.rotate(8, expand=True)
+        layer.alpha_composite(scrap, (int(width * 0.58), int(height * 0.62)))
+    elif effect == "flat_infographic":
+        card_left = int(width * 0.42)
+        draw.rectangle((card_left, int(height * 0.16), int(width * 0.94), int(height * 0.78)), fill=(255, 255, 255, 225))
+        draw.ellipse((card_left + int(width * 0.04), int(height * 0.22), card_left + int(width * 0.14), int(height * 0.3)), fill=(20, 140, 150, 230))
+        for index, span in enumerate((0.34, 0.22, 0.28)):
+            top = int(height * (0.38 + index * 0.1))
+            draw.rectangle((card_left + int(width * 0.04), top, card_left + int(width * span), top + int(height * 0.05)), fill=((230, 90, 70, 230), (30, 50, 90, 230), (240, 180, 40, 230))[index])
+    elif effect == "paper_craft":
+        body = (int(width * 0.22), int(height * 0.28), int(width * 0.7), int(height * 0.72))
+        draw.ellipse((body[0] + 8, body[1] + 10, body[2] + 8, body[3] + 10), fill=(40, 30, 20, 70))
+        draw.ellipse(body, fill=(232, 214, 184, 235))
+        draw.polygon(
+            (
+                (int(width * 0.34), int(height * 0.48)),
+                (int(width * 0.46), int(height * 0.32)),
+                (int(width * 0.58), int(height * 0.48)),
+            ),
+            fill=(196, 92, 74, 235),
+        )
+        draw.rectangle((int(width * 0.4), int(height * 0.48), int(width * 0.52), int(height * 0.66)), fill=(70, 130, 140, 235))
     else:
         draw.rectangle((0, 0, width, height), fill=(6, 8, 28, 70))
         rng = random.Random(11)

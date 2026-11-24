@@ -57,6 +57,18 @@ def test_looks_stay_separate_and_follow_the_domain():
     assert "space" in education and "glitch" not in education
 
 
+def test_explainer_styles_are_separate_overlay_choices():
+    ids = {row["id"] for row in styles_for_domain("education")}
+    for key in ("flat_vector", "scrapbook", "flat_infographic", "paper_craft"):
+        assert key in ids
+    education = set(recommended_ids("education"))
+    sports = set(recommended_ids("sports"))
+    legal = set(recommended_ids("legal"))
+    assert {"flat_vector", "scrapbook", "flat_infographic", "paper_craft"} <= education
+    assert "flat_infographic" in sports and "scrapbook" not in sports
+    assert "flat_infographic" in legal and "paper_craft" not in legal
+
+
 def test_each_selected_look_is_its_own_overlay():
     state = SimpleNamespace(duration_seconds=24, captions=[])
     graphics = add_look_overlays(state, [], ["film", "camera"], True)
@@ -71,6 +83,9 @@ def test_a_look_paints_onto_the_frame():
     image = Image.new("RGB", (64, 96), (8, 8, 8))
     paint_look_effect(image, "light_leak", 1.0)
     assert image.getpixel((4, 4)) != (8, 8, 8)
+    craft = Image.new("RGB", (120, 180), (8, 8, 8))
+    paint_look_effect(craft, "paper_craft", 1.0)
+    assert craft.getpixel((40, 80)) != (8, 8, 8)
 
 
 def test_punch_in_adds_a_short_zoom_on_a_number():
