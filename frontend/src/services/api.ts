@@ -549,8 +549,20 @@ export const api = {
   saveLocalProject,
   saveLocalProjectsList,
 
-  getDownloadMp4Url(projectId: string, subtitlesOnly: boolean = false): string {
-    return `${API_BASE}/media/${projectId}/download-mp4?subtitles_only=${subtitlesOnly}`;
+  getDownloadMp4Url(projectId: string, subtitlesOnly: boolean = false, existing: boolean = false): string {
+    const saved = existing ? '&existing=true' : '';
+    return `${API_BASE}/media/${projectId}/download-mp4?subtitles_only=${subtitlesOnly}${saved}`;
+  },
+
+  async getExportStatus(projectId: string): Promise<{ ready: boolean; full: { file_name: string; file_size: number; download_url: string } | null; subtitles: { file_name: string; file_size: number; download_url: string } | null }> {
+    const empty = { ready: false, full: null, subtitles: null };
+    try {
+      const res = await fetch(`${API_BASE}/media/${projectId}/export-status`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('getExportStatus API unreachable:', e);
+    }
+    return empty;
   },
 
   getSourceVideoUrl(projectId: string): string {

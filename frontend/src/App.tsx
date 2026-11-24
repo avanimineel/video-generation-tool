@@ -463,9 +463,13 @@ export const App: React.FC = () => {
       if (res && res.success) {
         const extName = subtitlesOnly ? 'subtitled' : 'burned';
         const fileName = `${project.name}_${extName}.mp4`;
-        const downloadUrl = api.getDownloadMp4Url(project.id, subtitlesOnly);
-
-        await api.downloadMp4File(project.id, fileName, subtitlesOnly);
+        const downloadUrl = api.getDownloadMp4Url(project.id, subtitlesOnly, true);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
 
         setDownloadModal({
           isOpen: true,
@@ -1434,16 +1438,16 @@ export const App: React.FC = () => {
               </div>
             </div>
 
+            <p className="text-xs text-neutral-600 mb-4">Save to Downloads puts this MP4 in your browser’s Downloads folder.</p>
             <div className="flex items-center gap-2">
-              <button
-                onClick={async () => {
-                  await api.downloadMp4File(project.id, downloadModal.fileName, downloadModal.subtitlesOnly);
-                }}
+              <a
+                href={downloadModal.downloadUrl}
+                download={downloadModal.fileName}
                 className="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-neutral-900 hover:bg-black text-white font-semibold text-xs transition cursor-pointer"
               >
                 <Download className="h-4 w-4" />
                 <span>Save to Downloads</span>
-              </button>
+              </a>
 
               <a
                 href={downloadModal.downloadUrl}

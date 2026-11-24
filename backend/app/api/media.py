@@ -643,8 +643,31 @@ async def render_burnin(project_id: str, request: Request):
 async def get_render_progress(project_id: str):
     return burnin_renderer.get_progress(project_id)
 
+@router.get("/{project_id}/export-status")
+def export_status(project_id: str):
+    state = project_manager.get_project(project_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Project not found")
+    pdir = settings.projects_dir / project_id
+
+    def ready(subtitles_only: bool):
+        filename = f"{state.name}_{'subtitled' if subtitles_only else 'burned'}.mp4"
+        path = pdir / "exports" / filename
+        if not path.is_file() or path.stat().st_size <= 0:
+            return None
+        return {
+            "file_name": filename,
+            "file_size": path.stat().st_size,
+            "download_url": f"/api/media/{project_id}/download-mp4?subtitles_only={str(subtitles_only).lower()}&existing=true",
+        }
+
+    full = ready(False)
+    subtitles = ready(True)
+    return {"ready": bool(full or subtitles), "full": full, "subtitles": subtitles}
+
+
 @router.api_route("/{project_id}/download-mp4", methods=["GET", "HEAD"])
-async def download_burned_mp4(project_id: str, subtitles_only: bool = False):
+async def download_burned_mp4(project_id: str, subtitles_only: bool = False, existing: bool = False):
     state = project_manager.get_project(project_id)
     if not state:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -654,12 +677,18 @@ async def download_burned_mp4(project_id: str, subtitles_only: bool = False):
     output_mp4 = pdir / "exports" / target_filename
 
     from app.services.export_cache import fingerprint, cache_matches, remember
-    signature=fingerprint(state,subtitles_only)
-    if not cache_matches(output_mp4,signature):
+    if existing:
+        if not output_mp4.is_file() or output_mp4.stat().st_size <= 0:
+            raise HTTPException(status_code=404, detail="No exported video yet. Use Export first.")
+        signature = None
+    else:
+        signature=fingerprint(state,subtitles_only)
+    if signature is not None and not cache_matches(output_mp4,signature):
         res = await run_in_threadpool(burnin_renderer.render_burned_video, state, subtitles_only=subtitles_only)
         if not res.get('success'):raise HTTPException(500, detail=res.get('error','Video export failed'))
         output_mp4=Path(res['output_path'])
-        remember(output_mp4,signature)
+        if signature is not None:
+            remember(output_mp4,signature)
 
     clean_download_name = f"{state.name}_{'subtitled' if subtitles_only else 'burned'}.mp4"
     return FileResponse(
