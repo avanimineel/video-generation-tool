@@ -407,6 +407,26 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
 
           <div className="h-4 w-px bg-neutral-300 mx-1" />
 
+          <button
+            type="button"
+            aria-pressed={project?.settings?.caption_overlay !== false}
+            onClick={() => {
+              if (!project?.settings || !onUpdateSettings) return;
+              onUpdateSettings({
+                ...project.settings,
+                caption_overlay: project.settings.caption_overlay === false
+              });
+            }}
+            className={`px-2 py-1 rounded-md border text-[10px] font-semibold uppercase tracking-wide transition ${
+              project?.settings?.caption_overlay !== false
+                ? "bg-neutral-900 text-white border-neutral-900"
+                : "bg-white text-neutral-500 border-neutral-200 hover:bg-neutral-50"
+            }`}
+            title={project?.settings?.caption_overlay !== false ? "Captions are drawn on the picture. Click to hide them." : "Captions are hidden. Click to draw them on the picture."}
+          >
+            Captions
+          </button>
+
           <div className="text-[10px] font-mono font-bold text-neutral-500 uppercase">
             {project?.settings?.aspect_ratio ?? "9:16"}
           </div>

@@ -1970,7 +1970,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     })}
 
       {/* 4. Render Active Captions with Click-and-Drag (only suppress when a title explicitly requests it) */}
-      {visibleCaptions.filter(() => {
+      {settings.caption_overlay !== false && visibleCaptions.filter(() => {
         const isTitleActive = graphics.some(
           g => g.start <= currentTime && currentTime < g.end && (
             g.parameters?.suppress_subtitles === true ||

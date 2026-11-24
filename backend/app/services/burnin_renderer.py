@@ -1760,7 +1760,7 @@ class BurnInRenderer:
                         getattr(g, 'track', '') == "V5"
                         for g in active_graphics
                     )
-                    if active_cap and not is_title_active:
+                    if active_cap and not is_title_active and project.settings.caption_overlay:
                         render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset)
 
                     proc.stdin.write(canvas.tobytes())
@@ -1832,7 +1832,7 @@ class BurnInRenderer:
                         getattr(g, 'track', '') == "V5"
                         for g in active_graphics
                     )
-                    if active_cap and not is_title_active:
+                    if active_cap and not is_title_active and project.settings.caption_overlay:
                         render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset)
 
                     proc.stdin.write(canvas.tobytes())

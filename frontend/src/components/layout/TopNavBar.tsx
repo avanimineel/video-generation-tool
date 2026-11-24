@@ -70,6 +70,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(project?.name || "Untitled_Project");
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [savedExport, setSavedExport] = useState<{ file_name: string; file_size: number; download_url: string } | null>(null);
   const [showTwelveLabsModal, setShowTwelveLabsModal] = useState(false);
   const [twelveLabsCredits, setTwelveLabsCredits] = useState<TwelveLabsCredits | null>(null);
   const [isAnalyzingVideo, setIsAnalyzingVideo] = useState(false);
@@ -80,6 +81,18 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   useEffect(() => {
     api.getTwelveLabsCredits().then((c) => setTwelveLabsCredits(c));
   }, []);
+
+  useEffect(() => {
+    if (!project?.id || isRendering) {
+      if (!project?.id) setSavedExport(null);
+      return;
+    }
+    let stop = false;
+    api.getExportStatus(project.id).then((status) => {
+      if (!stop) setSavedExport(status.full || status.subtitles);
+    });
+    return () => { stop = true; };
+  }, [project?.id, isRendering]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -445,6 +458,28 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
         </div>
 
         <div className="hidden sm:block h-5 w-px bg-neutral-200 mx-0.5" aria-hidden />
+
+        {savedExport ? (
+          <a
+            href={savedExport.download_url}
+            download={savedExport.file_name}
+            className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 transition"
+            title={`Save ${savedExport.file_name} to your browser Downloads folder`}
+          >
+            <Download className="h-3.5 w-3.5 stroke-[2.2]" />
+            <span>Download</span>
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md bg-white text-neutral-400 border border-neutral-200 cursor-not-allowed"
+            title="Export a video first. Download then saves it to your browser Downloads folder."
+          >
+            <Download className="h-3.5 w-3.5 stroke-[2.2]" />
+            <span>Download</span>
+          </button>
+        )}
 
         {/* Primary export */}
         {isRendering ? (
