@@ -1,4 +1,5 @@
 import {EditorialPlanPanel} from './components/modals/EditorialPlanPanel';
+import { OverlayChooser } from './components/modals/OverlayChooser';
 import React, { useState, useEffect, useRef } from 'react';
 import { PanelRightClose, PanelRightOpen, Download, CheckCircle2, X, ExternalLink, FileVideo, RefreshCw, FolderOpen, Loader2 } from 'lucide-react';
 import { TopNavBar } from './components/layout/TopNavBar';
@@ -63,6 +64,7 @@ export const App: React.FC = () => {
   const [saveError, setSaveError] = useState('');
   const [backendReady, setBackendReady] = useState(false);
   const [isBrandVideoOpen, setIsBrandVideoOpen] = useState(false);
+  const [overlayChooserOpen, setOverlayChooserOpen] = useState(false);
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [saveRetry, setSaveRetry] = useState(0);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -165,6 +167,38 @@ export const App: React.FC = () => {
         setEditorialPlanOpen(true);
       }
       if (!result.success) setSaveError(result.error || 'Captions could not be redone.');
+    } finally {
+      setIsAutoProducing(false);
+    }
+  };
+
+  const startWithOverlays = async (styles: string[], note: string) => {
+    if (!project?.id || isAutoProducing) return;
+    const next = {
+      ...project,
+      settings: {
+        ...project.settings,
+        overlay_styles: styles,
+        overlay_choice_made: true,
+        overlay_product_note: note,
+      },
+    };
+    setProject(next);
+    pushHistory(next);
+    setOverlayChooserOpen(false);
+    setIsAutoProducing(true);
+    setAutoProduceStatusText('Planning the chosen overlays…');
+    try {
+      await api.saveProject(next.id, next);
+      const result = await api.runAutoProduction(next.id, true, 'small', setAutoProduceStatusText, 'full');
+      if (result?.project) {
+        const updated = { ...result.project, video_url: api.getSourceVideoUrl(next.id) };
+        setProject(updated);
+        pushHistory(updated);
+      }
+      if (result && result.success === false) setSaveError(result.error || 'Visual production did not finish.');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsAutoProducing(false);
     }
@@ -1156,16 +1190,7 @@ export const App: React.FC = () => {
             ? `Edit finished with gaps: ${(project.ai_ingestion?.summary?.scorecard?.reasons || []).join(' ')}`
             : 'Inspect inserted or skipped treatments when ready.';
         const produceVisuals = () => {
-          setIsAutoProducing(true);
-          setAutoProduceStatusText('Planning visuals and the timeline…');
-          void api.runAutoProduction(project.id, false, 'small', setAutoProduceStatusText, 'full').then((result) => {
-            if (result?.project) {
-              const next = { ...result.project, video_url: api.getSourceVideoUrl(project.id) };
-              setProject(next);
-              pushHistory(next);
-            }
-            if (result && result.success === false) setSaveError(result.error || 'Visual production did not finish.');
-          }).finally(() => setIsAutoProducing(false));
+          setOverlayChooserOpen(true);
         };
         return (
           <div
@@ -1195,13 +1220,13 @@ export const App: React.FC = () => {
                 {statusCopied ? 'Copied' : 'Copy'}
               </button>
             )}
-            {captionsOnly && (
+            {project.captions.length > 0 && (
               <button
                 type="button"
                 onClick={produceVisuals}
                 className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800 transition shadow-2xs"
               >
-                Produce Visuals & Timeline
+                Choose overlays
               </button>
             )}
             {project.captions.length > 0 && (
@@ -1526,6 +1551,16 @@ export const App: React.FC = () => {
       />
 
       {isBrandVideoOpen && <BrandVideoModal onClose={() => setIsBrandVideoOpen(false)} />}
+      <OverlayChooser
+        open={overlayChooserOpen}
+        domain={project.settings?.domain_profile}
+        initialStyles={project.settings?.overlay_styles || []}
+        initialNote={project.settings?.overlay_product_note || ''}
+        choiceMade={Boolean(project.settings?.overlay_choice_made)}
+        busy={isAutoProducing}
+        onClose={() => setOverlayChooserOpen(false)}
+        onStart={(styles, note) => { void startWithOverlays(styles, note); }}
+      />
       {isStudioOpen && <Studio onClose={() => setIsStudioOpen(false)} />}
 
       {/* 8. Human-in-the-Loop AI Feedback & Training Data Modal */}

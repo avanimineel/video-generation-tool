@@ -124,6 +124,9 @@ class ProjectSettings(BaseModel):
     sub_lines_mode: int = 1
     domain_profile: str = "general"
     caption_overlay: bool = True
+    overlay_styles: List[str] = Field(default_factory=list)
+    overlay_choice_made: bool = False
+    overlay_product_note: str = ""
 
 # --- Full Project State (Saved to project.json & SQLite) ---
 

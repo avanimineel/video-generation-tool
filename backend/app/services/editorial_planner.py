@@ -502,13 +502,13 @@ def planning_windows(segments, captions, target_seconds=4.0):
     return windows
 
 
-def editorial_decisions(segments, feedback=None, finish_brief=None):
+def editorial_decisions(segments, feedback=None, finish_brief=None, overlay_note=''):
     # Small batches keep short opportunities from disappearing in long responses.
     if len(segments) > 12:
         from concurrent.futures import ThreadPoolExecutor
         batches = [segments[i:i+12] for i in range(0,len(segments),12)]
         with ThreadPoolExecutor(max_workers=3) as pool:
-            results = list(pool.map(lambda batch: editorial_decisions(batch, feedback, finish_brief), batches))
+            results = list(pool.map(lambda batch: editorial_decisions(batch, feedback, finish_brief, overlay_note), batches))
         return [decision for result in results for decision in result]
     prompt='''You are an expert editorial director for high-impact social and documentary video.
 Edit for RETENTION: something meaningful changes on screen often, and every change has a reason. For each dialogue beat ask what the viewer cannot already see and would understand faster if shown. Concrete, visible subjects and actions (a named object, place, tool, process or result) are image/video opportunities. Abstract statements, opinions, greetings, credentials and transitions are NOT stock opportunities: emphasise them with an exact spoken title or number, or keep the speaker. Review each dialogue beat, not only the segment's dominant topic. In the first 15 seconds prefer fast 0.8–1.5 second beats (titles, numbers, relevant cutaways), then vary 1.5–3 second shots. Match the requested subject, action and setting exactly; a loosely related scene is worse than the speaker. Do not cover existing evidence or violate saved Keep/Cut feedback. Half-screen media must have no entrance, zoom or pan animation; original video motion continues.
@@ -540,6 +540,8 @@ Spoken Text & Query Precision:
     from app.services.finished_reel_understanding import profile_prompt
     prompt += '\n' + profile_prompt()
     prompt += '\nFor EACH decision fill viewer_need, visual_role, existing_treatment_action and source_requirement BEFORE choosing strategy. visual_role is only identity, evidence, illustration, demonstration, emphasis, checklist, cta, outro, or presenter. CONTEXTUALIZE belongs in intent, not visual_role. A checklist is CHECKLIST and a branded closing is BRANDED_OUTRO; report these even if rendering requires follow-up. Never label generic stock as identity or evidence. Use preserve/NO_INTERVENTION for adequate existing treatments.\n'
+    if overlay_note:
+        prompt += '\n' + overlay_note + '\n'
     if finish_brief:
         prompt += '\nFinished-reel understanding brief:\n' + json.dumps(finish_brief,ensure_ascii=False)
     if feedback:
@@ -1418,10 +1420,13 @@ def resume_saved_stage(state, protected, plan_only, start_at, run_dir, report, r
             return None
         from app.services.feedback_service import feedback_service
         feedback=feedback_service.planning_feedback(state.id)
-        decisions=editorial_decisions(segments, feedback, None)
+        from app.services.overlay_styles import constrain_decisions, instruction, selection_from_state
+        _made, _chosen, _note = selection_from_state(state)
+        decisions=editorial_decisions(segments, feedback, None, instruction(_chosen, _note) if _made else '')
         decisions=preserve_number_enumerations(segments, decisions)
         decisions=add_spoken_figures(segments, decisions, state.captions)
         decisions=repair_sparse_schedule(segments, decisions, state.captions, list(protected))
+        decisions=constrain_decisions(decisions, _chosen, _made)
         write_json(run_dir/'02_editorial_decisions.json', [d.model_dump() for d in decisions])
         rows=schedule(segments, decisions, state.captions, list(protected))
         report['resumed_from']='plan'
@@ -1538,10 +1543,22 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         segments=planning_windows(segments,state.captions)
         write_json(run_dir/'01_planning_windows.json',[s.model_dump() for s in segments])
         report['stage']='editorial_planning';report_save()
-        decisions=editorial_decisions(segments,feedback,finish_brief)
+        from app.services.overlay_styles import (
+            add_punch_ins,
+            apply_kinetic_captions,
+            constrain_decisions,
+            instruction,
+            mark_sound_hits,
+            selection_from_state,
+        )
+        choice_made, chosen, product_note = selection_from_state(state)
+        report['overlay_styles'] = chosen if choice_made else None
+        apply_kinetic_captions(state, chosen, choice_made)
+        decisions=editorial_decisions(segments,feedback,finish_brief, instruction(chosen, product_note) if choice_made else '')
         decisions=preserve_number_enumerations(segments,decisions)
         decisions=add_spoken_figures(segments,decisions,state.captions)
         decisions=repair_sparse_schedule(segments,decisions,state.captions,protected_list)
+        decisions=constrain_decisions(decisions, chosen, choice_made)
         write_json(run_dir/'02_editorial_decisions.json',[d.model_dump() for d in decisions])
         rows=schedule(segments,decisions,state.captions,protected_list)
         write_json(run_dir/'03_schedule.json',rows)
@@ -1555,6 +1572,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
             return [],[],report
         report['stage']='asset_review';report_save()
         graphics,logs=execute_plan(state,rows,run_dir)
+        graphics=add_punch_ins(state, graphics, chosen, choice_made)
+        mark_sound_hits(graphics, chosen, choice_made)
         # User explicitly rejected automatic camera movement as density filler.
         camera={'punch_ins':0,'cut_times':[]}
         report['camera']=camera
@@ -1567,7 +1586,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         graphics.extend(retained)
         report['retained_kept'] = len(retained)
         from app.services.automatic_sfx import prepare_sfx
-        prepare_sfx(state.id,graphics,state.duration_seconds)
+        if not choice_made or 'sfx' in chosen:
+            prepare_sfx(state.id,graphics,state.duration_seconds)
         write_json(run_dir/'06_timeline.json', [g.model_dump() for g in graphics])
         report_save()
         persist_evaluation_decisions(state, run_id, rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)

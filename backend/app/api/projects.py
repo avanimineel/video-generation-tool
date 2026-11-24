@@ -18,6 +18,12 @@ class RenameProjectRequest(BaseModel):
 class RelinkMediaRequest(BaseModel):
     new_source_path: str
 
+@router.get("/overlay-styles")
+def overlay_style_catalog(domain: str = "general"):
+    from app.services.overlay_styles import recommended_ids, styles_for_domain
+    return {"domain": domain, "styles": styles_for_domain(domain), "recommended": recommended_ids(domain)}
+
+
 @router.get("")
 async def list_projects():
     return {'projects': project_manager.list_projects()}
