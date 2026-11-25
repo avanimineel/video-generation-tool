@@ -42,6 +42,31 @@ def test_mood_gate_and_gap_run_when_overlays_were_chosen():
     assert state.ai_ingestion["shortform"]["hook"].startswith("The rate")
 
 
+def test_emphasis_and_entity_use_the_spoken_line():
+    captions = [_caption(0.4, 2.4, "Save 20 percent in Mumbai")]
+    state = SimpleNamespace(
+        captions=captions,
+        graphics=[],
+        duration_seconds=8,
+        settings=SimpleNamespace(domain_profile="finance", overlay_product_note=""),
+        ai_ingestion={},
+    )
+    chosen = ["punch_in", "data_callouts", "location_maps", "kinetic_captions", "sfx"]
+    kept, report = run_shortform_agents(state, [], chosen, True, None)
+    titles = [item.title for item in kept]
+    assert "20" in titles
+    assert "Mumbai" in titles
+    punch = next(item for item in kept if item.template_id == "source_reframe")
+    assert punch.parameters["end_scale"] == 1.15
+    assert punch.parameters["easing"] == "easing.bezier"
+    assert report["agents"] == [
+        "story", "brief", "caption", "emphasis", "entity", "relevance", "density",
+        "motion", "stock_vfx", "sound", "platform", "remotion", "measure",
+    ]
+    assert report["sound"]["status"] == "marked"
+    assert report["stock_vfx"]["fallback"] == "procedural"
+
+
 def test_remotion_composition_counts_frames_from_the_captions():
     captions = [_caption(0.0, 2.0, "Hello there")]
     state = SimpleNamespace(captions=captions, graphics=[], duration_seconds=2, settings=SimpleNamespace(domain_profile="education"), ai_ingestion={})

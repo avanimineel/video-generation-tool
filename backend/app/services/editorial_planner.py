@@ -1549,7 +1549,6 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
             apply_kinetic_captions,
             constrain_decisions,
             instruction,
-            mark_sound_hits,
             selection_from_state,
         )
         choice_made, chosen, product_note = selection_from_state(state)
@@ -1577,10 +1576,8 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         graphics=add_look_overlays(state, graphics, chosen, choice_made)
         from app.services.shortform_pipeline import run_shortform_agents
         graphics, shortform = run_shortform_agents(state, graphics, chosen, choice_made, run_dir)
-        report['shortform'] = {'style_pack': shortform['style_pack'], 'acceptance': shortform['acceptance'], 'hook': (shortform['story'].get('spine') or {}).get('hook', '')}
-        mark_sound_hits(graphics, chosen, choice_made)
-        # User explicitly rejected automatic camera movement as density filler.
-        camera={'punch_ins':0,'cut_times':[]}
+        report['shortform'] = {'style_pack': shortform['style_pack'], 'agents': shortform['agents'], 'acceptance': shortform['acceptance'], 'hook': (shortform['story'].get('spine') or {}).get('hook', '')}
+        camera={'punch_ins': shortform['acceptance']['punch_count'], 'cut_times': []}
         report['camera']=camera
         report['finished_reel_audit']=audit_plan(rows,getattr(state,'duration_seconds',0),camera['cut_times'])
         report['scorecard']=report['finished_reel_audit']['scorecard'];report['outcome']=report['scorecard']['outcome']
@@ -1590,9 +1587,6 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         retained = [g for g in kept_graphics if g.id not in original_protected_ids]
         graphics.extend(retained)
         report['retained_kept'] = len(retained)
-        from app.services.automatic_sfx import prepare_sfx
-        if not choice_made or 'sfx' in chosen:
-            prepare_sfx(state.id,graphics,state.duration_seconds)
         write_json(run_dir/'06_timeline.json', [g.model_dump() for g in graphics])
         report_save()
         persist_evaluation_decisions(state, run_id, rows, model_name=model_name, prompt_version=PROMPT_VERSION, run_dir=run_dir)

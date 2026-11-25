@@ -224,7 +224,203 @@ def density_agent(graphics):
     if remove:
         dropped.extend({"id": item_id, "reason": "punch cap"} for item_id in remove)
         kept = [graphic for graphic in kept if graphic.id not in remove]
+    glitches = [graphic for graphic in kept if (getattr(graphic, "parameters", None) or {}).get("effect") == "glitch"]
+    extra_glitch = set()
+    for graphic in glitches:
+        window = [item for item in glitches if graphic.start <= item.start < graphic.start + 15]
+        if len(window) > 2:
+            extra_glitch.update(item.id for item in sorted(window, key=lambda item: item.start)[2:])
+    if extra_glitch:
+        dropped.extend({"id": item_id, "reason": "glitch cap"} for item_id in extra_glitch)
+        kept = [graphic for graphic in kept if graphic.id not in extra_glitch]
     return kept, dropped
+
+
+def _allowed(chosen, choice_made, key: str) -> bool:
+    return bool(choice_made) and key in (chosen or [])
+
+
+def _graphic(item_id, start, end, template, title, parameters):
+    from app.core.models import MotionGraphicItem
+    return MotionGraphicItem(id=item_id, start=round(start, 2), end=round(end, 2), template_id=template, title=title, parameters=parameters)
+
+
+def caption_agent(state, chosen, choice_made):
+    """Highlight the spoken word inside the existing clause. Do not recut the line into short boxes."""
+    if not _allowed(chosen, choice_made, "kinetic_captions"):
+        return {"status": "waiting" if not choice_made else "off", "sync_ms": 80}
+    changed = 0
+    for caption in getattr(state, "captions", None) or []:
+        style = getattr(caption, "style", None)
+        if style is None:
+            continue
+        style.has_highlight = True
+        style.highlight_bounce = True
+        style.highlight_active_color = "#F5E642"
+        style.highlight_scale = 1.08
+        style.font_weight = "900"
+        style.animation_type = "pop"
+        changed += 1
+    return {"status": "highlight", "captions": changed, "sync_ms": 80, "chunking": "spoken_clause"}
+
+
+def emphasis_agent(state, graphics, story, chosen, choice_made):
+    """Punch in on an emphasized spoken line, at least 3 seconds apart, at most 8 per 30 seconds."""
+    graphics = [graphic for graphic in graphics if not ((getattr(graphic, "parameters", None) or {}).get("retention_camera"))]
+    if not _allowed(chosen, choice_made, "punch_in"):
+        return graphics, {"status": "waiting" if not choice_made else "off", "added": 0}
+    added = []
+    last = -10.0
+    last_jump = -10.0
+    for row in story.get("lines") or []:
+        emphasized = row["intent"] in ("hook", "claim") or "specific_number" in row["viral"] or "contrast" in row["viral"]
+        if not emphasized or row["start"] - last < 3:
+            continue
+        if sum(1 for item in added if row["start"] < item.start + 30) >= MAX_PUNCH_PER_30S:
+            break
+        jump = row["intent"] == "hook" and last > 0 and row["start"] - last_jump >= 8
+        if jump:
+            last_jump = row["start"]
+        end = min(row["end"], row["start"] + 1.6)
+        if end - row["start"] < 0.6:
+            end = row["start"] + 1.2
+        added.append(_graphic(
+            f"emphasis_{len(added)}_{int(row['start'] * 100)}",
+            row["start"],
+            end,
+            "source_reframe",
+            "Jump cut" if jump else "Punch-in",
+            {
+                "editorial_generated": True,
+                "retention_camera": True,
+                "emphasis": True,
+                "start_scale": 1.0,
+                "end_scale": 1.15,
+                "motion_curve": "hold" if jump else "smoothstep",
+                "easing": "easing.spring" if jump else "easing.bezier",
+                "focus_x": 0.5,
+                "focus_y": 0.35,
+            },
+        ))
+        last = row["start"]
+    return graphics + added, {"status": "placed", "added": len(added)}
+
+
+def entity_agent(graphics, story, chosen, choice_made, product_note=""):
+    """Call out a spoken number, place, or product. The on-screen text is copied from the line."""
+    if not choice_made:
+        return graphics, {"status": "waiting", "numbers": 0, "places": 0, "products": 0}
+    number_pattern = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
+    place_pattern = re.compile(r"\bin\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b")
+    counts = {"numbers": 0, "places": 0, "products": 0}
+
+    def covered(start, end, entity):
+        return any(
+            (getattr(graphic, "parameters", None) or {}).get("entity") == entity
+            and graphic.start < end and graphic.end > start
+            for graphic in graphics
+        )
+
+    for row in story.get("lines") or []:
+        cursor = row["start"]
+        if any(getattr(graphic, "template_id", "") == "source_reframe" and abs(float(graphic.start) - cursor) < GAP_SECONDS for graphic in graphics):
+            cursor += GAP_SECONDS
+        if _allowed(chosen, choice_made, "data_callouts"):
+            match = number_pattern.search(row["text"])
+            if match and cursor + 0.8 <= row["end"] + 0.4 and not covered(row["start"], row["end"], "number"):
+                token = match.group(0)
+                graphics.append(_graphic(
+                    f"entity_num_{counts['numbers']}_{int(cursor * 100)}",
+                    cursor,
+                    min(row["end"], cursor + 1.4),
+                    "kinetic_typography",
+                    token,
+                    {"editorial_generated": True, "headline": token, "entity": "number", "title_style": "bold_pop"},
+                ))
+                counts["numbers"] += 1
+                cursor += 0.7
+        if _allowed(chosen, choice_made, "location_maps"):
+            place = place_pattern.search(row["text"])
+            if place and not covered(row["start"], row["end"], "place"):
+                name = place.group(1)
+                graphics.append(_graphic(
+                    f"entity_place_{counts['places']}_{int(cursor * 100)}",
+                    cursor,
+                    min(row["end"], cursor + 1.4),
+                    "kinetic_typography",
+                    name,
+                    {"editorial_generated": True, "headline": name, "entity": "place", "retrieval_query": f"aerial map of {name}"},
+                ))
+                counts["places"] += 1
+                cursor += 0.7
+        if _allowed(chosen, choice_made, "product_swap") and product_note and product_note.casefold() in row["text"].casefold():
+            if not covered(row["start"], row["end"], ("youtube_insert", "split_screen_vertical", "kinetic_typography")):
+                graphics.append(_graphic(
+                    f"entity_product_{counts['products']}",
+                    row["start"],
+                    min(row["end"], row["start"] + 2.0),
+                    "kinetic_typography",
+                    product_note,
+                    {"editorial_generated": True, "headline": product_note, "entity": "product", "retrieval_query": f"hand holding {product_note}"},
+                ))
+                counts["products"] += 1
+    counts["status"] = "placed"
+    return graphics, counts
+
+
+def motion_agent(graphics):
+    """Stamp easing, blend, and frame step. Paper craft steps at 12 fps. Scale stays 1.0 to 1.15."""
+    blends = {"confetti": "screen", "fog": "screen", "light_leak": "screen", "storm": "screen", "glitch": "screen", "paper": "multiply", "film": "multiply", "paper_craft": "multiply", "scrapbook": "multiply"}
+    stepped = 0
+    for graphic in graphics:
+        params = getattr(graphic, "parameters", None)
+        if not isinstance(params, dict):
+            continue
+        effect = params.get("effect")
+        if graphic.template_id == "source_reframe":
+            params["start_scale"] = 1.0
+            params["end_scale"] = 1.15
+            params["easing"] = params.get("easing") or "easing.bezier"
+        if effect in blends:
+            params["blend"] = blends[effect]
+        if effect in ("paper_craft", "scrapbook"):
+            params["fps_step"] = 12
+            stepped += 1
+        if effect == "glitch":
+            graphic.end = min(graphic.end, graphic.start + 0.12)
+    return {"stepped": stepped}
+
+
+def stock_vfx_agent(graphics):
+    """Prefer an alpha clip for atmosphere. The procedural draw remains the fallback."""
+    prefer = {"fog", "storm", "confetti", "light_leak"}
+    marked = 0
+    for graphic in graphics:
+        params = getattr(graphic, "parameters", None)
+        if not isinstance(params, dict):
+            continue
+        if params.get("effect") in prefer:
+            params["vfx_prefer"] = "alpha"
+            params["vfx_source"] = "procedural"
+            marked += 1
+    return {"marked": marked, "fallback": "procedural"}
+
+
+def sound_agent(state, graphics, chosen, choice_made):
+    """Map a hit to a visible entrance. Skip the mix when sound design is off."""
+    from app.services.overlay_styles import mark_sound_hits
+    if choice_made and "sfx" not in (chosen or []):
+        return {"status": "off"}
+    mark_sound_hits(graphics, list(chosen or []) or ["sfx"], True)
+    project_id = getattr(state, "id", None)
+    if not project_id:
+        return {"status": "marked", "rendered": False}
+    from app.services.automatic_sfx import prepare_sfx
+    duration = float(getattr(state, "duration_seconds", 0) or 0)
+    if duration < 1 and graphics:
+        duration = max(float(graphic.end) for graphic in graphics)
+    prepare_sfx(project_id, graphics, max(duration, 1.0))
+    return {"status": "mixed", "lead_ms": 40, "voice_lufs": -14, "under_db": [6, 12]}
 
 
 def platform_agent(state):
@@ -259,6 +455,9 @@ def remotion_composition(state, graphics, story, pack: str) -> dict:
                 "durationInFrames": max(1, int(round((float(graphic.end) - float(graphic.start)) * 30))),
                 "effect": (getattr(graphic, "parameters", None) or {}).get("effect", ""),
                 "title": getattr(graphic, "title", ""),
+                "easing": (getattr(graphic, "parameters", None) or {}).get("easing", ""),
+                "blend": (getattr(graphic, "parameters", None) or {}).get("blend", ""),
+                "vfx": (getattr(graphic, "parameters", None) or {}).get("vfx_prefer", ""),
             }
             for graphic in graphics
         ],
@@ -282,16 +481,24 @@ def acceptance(graphics, story) -> dict:
 
 
 def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, run_dir=None):
-    """Run brief, story, relevance, density, platform, remotion, and measure. Returns graphics, report."""
+    """Run every short-form agent in order. A later agent may drop a beat. It may not invent words."""
     graphics = list(graphics if graphics is not None else getattr(state, "graphics", []) or [])
+    chosen = list(chosen or [])
     domain = getattr(getattr(state, "settings", None), "domain_profile", None)
     pack = style_pack(domain)
     story = build_story(getattr(state, "captions", None) or [])
+    captions = caption_agent(state, chosen, choice_made)
+    graphics, emphasis = emphasis_agent(state, graphics, story, chosen, choice_made)
+    product_note = str(getattr(getattr(state, "settings", None), "overlay_product_note", "") or "")
+    graphics, entities = entity_agent(graphics, story, chosen, choice_made, product_note)
     relevance_drops = []
     density_drops = []
     if choice_made:
         graphics, relevance_drops = relevance_agent(graphics, getattr(state, "captions", None) or [], story)
         graphics, density_drops = density_agent(graphics)
+    motion = motion_agent(graphics)
+    stock = stock_vfx_agent(graphics)
+    sound = sound_agent(state, graphics, chosen, choice_made)
     platform = platform_agent(state)
     for graphic in graphics:
         params = getattr(graphic, "parameters", None)
@@ -305,20 +512,32 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
         "agents": [
             "story",
             "brief",
+            "caption",
+            "emphasis",
+            "entity",
             "relevance",
             "density",
+            "motion",
+            "stock_vfx",
+            "sound",
             "platform",
             "remotion",
             "measure",
         ],
         "style_pack": pack,
         "story": story,
+        "caption": captions,
+        "emphasis": emphasis,
+        "entity": entities,
         "relevance_dropped": relevance_drops,
         "density_dropped": density_drops,
+        "motion": motion,
+        "stock_vfx": stock,
+        "sound": sound,
         "platform": platform,
         "remotion": {"fps": composition["fps"], "tracks": len(composition["tracks"])},
         "acceptance": checks,
-        "chosen": list(chosen or []),
+        "chosen": chosen,
     }
     destination = None
     if run_dir is not None:
