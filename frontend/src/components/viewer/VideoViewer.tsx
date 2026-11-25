@@ -52,6 +52,7 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   const playbackUrl=project.source_media_path ? `${api.getProxyUrl(project.id)}?preview=2&source=${encodeURIComponent(project.source_media_path)}` : project.video_url;
   useEffect(()=>setPlaybackError(''),[playbackUrl]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const clockTime = useRef<number | null>(null);
   const is916 = (project?.settings?.aspect_ratio ?? "9:16") === "9:16";
   const graphics = project?.graphics ?? [];
   const reframe = graphics.find(g=>g.template_id==='source_reframe' && currentTime>=g.start && currentTime<g.end);
@@ -61,40 +62,68 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   const reframeScale = reframe ? Number(reframe.parameters.start_scale ?? 1)+(targetScale-Number(reframe.parameters.start_scale ?? 1))*motionProgress : 1;
   const captions = project?.captions ?? [];
 
-  // Sync HTML5 video play/pause & currentTime
+  // Play and pause from the button click so the browser treats it as a user gesture and allows sound.
+  // A later effect only catches play that was requested some other way.
+  const handleTransport = () => {
+    const video = videoRef.current;
+    if (!video) {
+      onTogglePlay();
+      return;
+    }
+    if (!isPlaying) {
+      video.muted = false;
+      video.volume = 1;
+      void video.play().then(() => onTogglePlay()).catch((error: Error) => {
+        setPlaybackError('Playback could not start: ' + (error?.message || 'unknown'));
+      });
+      return;
+    }
+    video.pause();
+    onTogglePlay();
+  };
+
   useEffect(() => {
-    if (videoRef.current) {
-      if (isPlaying && videoRef.current.paused) {
-        videoRef.current.play().catch((error) => {setPlaybackError('Playback could not start: '+error.message);onTogglePlay();});
-      } else if (!isPlaying && !videoRef.current.paused) {
-        videoRef.current.pause();
-      }
+    const video = videoRef.current;
+    if (!video) return;
+    if (isPlaying && video.paused) {
+      video.muted = false;
+      video.volume = 1;
+      void video.play().catch((error: Error) => {
+        setPlaybackError('Playback could not start: ' + (error?.message || 'unknown'));
+        onTogglePlay();
+      });
+    } else if (!isPlaying && !video.paused) {
+      video.pause();
     }
   }, [isPlaying, playbackUrl]);
 
+  // While the picture is playing, its own clock updates the playhead. Writing that time back
+  // seeks the element and the browser drops the voice until the next manual scrub.
   useEffect(() => {
-    if (videoRef.current && Math.abs(videoRef.current.currentTime - currentTime) > 0.25) {
-      videoRef.current.currentTime = currentTime;
-    }
+    const video = videoRef.current;
+    if (!video) return;
+    const fromClock = clockTime.current;
+    clockTime.current = null;
+    if (fromClock !== null && Math.abs(fromClock - currentTime) < 0.05) return;
+    if (Math.abs(video.currentTime - currentTime) > 0.08) video.currentTime = currentTime;
   }, [currentTime]);
 
-  const handleLoadedMetadata = () => {
-    if (videoRef.current && Math.abs(videoRef.current.currentTime - currentTime) > 0.1) {
-      videoRef.current.currentTime = currentTime;
-    }
+  const alignWhenPaused = () => {
+    const video = videoRef.current;
+    if (!video || !video.paused) return;
+    if (Math.abs(video.currentTime - currentTime) > 0.1) video.currentTime = currentTime;
   };
 
   const handleCanPlay = () => {
     setPlaybackError('');
-    if (videoRef.current && Math.abs(videoRef.current.currentTime - currentTime) > 0.1) {
-      videoRef.current.currentTime = currentTime;
-    }
+    alignWhenPaused();
   };
 
   const handleVideoTimeUpdate = () => {
-    if (videoRef.current && isPlaying) {
-      onTimeUpdate(videoRef.current.currentTime);
-    }
+    if (!videoRef.current || !isPlaying) return;
+    const time = videoRef.current.currentTime;
+    clockTime.current = time;
+    onTimeUpdate(time);
   };
 
   const formatTime = (seconds: number) => {
@@ -269,8 +298,8 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
               className="w-full h-full object-cover"
               playsInline
               preload="auto"
-              onLoadedMetadata={handleLoadedMetadata}
-              onLoadedData={handleLoadedMetadata}
+              onLoadedMetadata={alignWhenPaused}
+              onLoadedData={alignWhenPaused}
               onCanPlay={handleCanPlay}
               crossOrigin="anonymous"
             />
@@ -395,7 +424,7 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
 
           <button
             aria-label={isPlaying ? "Pause" : "Play"}
-            onClick={onTogglePlay}
+            onClick={handleTransport}
             className="h-8 w-8 rounded-full bg-neutral-900 flex items-center justify-center text-white font-semibold hover:bg-neutral-800 shadow-md transition cursor-pointer"
           >
             {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
