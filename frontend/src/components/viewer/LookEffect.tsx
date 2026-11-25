@@ -91,7 +91,6 @@ export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, t
   if (effect === 'streaming') {
     return (
       <div style={{ ...box, border: '3px solid rgba(255,255,255,0.85)' }}>
-        <div style={{ position: 'absolute', left: width * 0.06, top: height * 0.05, padding: '2px 8px', background: '#d21c24', color: '#fff', fontSize: 11, fontWeight: 800, letterSpacing: 1 }}>LIVE</div>
         <div style={{ position: 'absolute', left: 0, top: height * 0.84, width: width * 0.55, height: height * 0.08, background: 'rgba(0,0,0,0.55)' }} />
       </div>
     );

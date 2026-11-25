@@ -1575,6 +1575,9 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         graphics,logs=execute_plan(state,rows,run_dir)
         graphics=add_punch_ins(state, graphics, chosen, choice_made)
         graphics=add_look_overlays(state, graphics, chosen, choice_made)
+        from app.services.shortform_pipeline import run_shortform_agents
+        graphics, shortform = run_shortform_agents(state, graphics, chosen, choice_made, run_dir)
+        report['shortform'] = {'style_pack': shortform['style_pack'], 'acceptance': shortform['acceptance'], 'hook': (shortform['story'].get('spine') or {}).get('hook', '')}
         mark_sound_hits(graphics, chosen, choice_made)
         # User explicitly rejected automatic camera movement as density filler.
         camera={'punch_ins':0,'cut_times':[]}

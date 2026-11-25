@@ -542,8 +542,13 @@ class AutoProductionService:
                 'auto_produce_mode': produce_mode,
                 'message': CAPTIONS_ONLY_MESSAGE,
             }
+            from app.services.shortform_pipeline import run_shortform_agents
+            _, shortform = run_shortform_agents(state, list(state.graphics), [], False, pdir / 'editorial' / run_id)
+            summary['shortform'] = {'style_pack': shortform['style_pack'], 'hook': (shortform['story'].get('spine') or {}).get('hook', ''), 'viral_score': shortform['story'].get('viral_score', 0)}
+            report['shortform'] = summary['shortform']
             write_json(pdir / 'editorial' / 'latest.json', report)
             write_json(pdir / 'thumbnails' / 'visual_reasoning_log.json', [])
+            shortform_block = (state.ai_ingestion or {}).get('shortform')
             state.ai_ingestion = {
                 'caption_layout_note': caption_note,
                 'status': 'completed',
@@ -553,6 +558,7 @@ class AutoProductionService:
                 'editorial_run': run_id,
                 'errors': report['errors'],
                 'auto_produce_mode': produce_mode,
+                'shortform': shortform_block,
             }
             project_manager.save_project(state)
             return {

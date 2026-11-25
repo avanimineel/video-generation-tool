@@ -403,9 +403,7 @@ def paint_look_effect(image, effect: str, t: float):
             draw.point((rng.randrange(width), rng.randrange(height)), fill=(255, 255, 255, rng.randint(50, 140)))
     elif effect == "streaming":
         draw.rectangle((6, 6, width - 6, height - 6), outline=(255, 255, 255, 180), width=max(3, width // 100))
-        draw.rectangle((int(width * 0.06), int(height * 0.05), int(width * 0.24), int(height * 0.1)), fill=(210, 28, 36, 230))
         draw.rectangle((0, int(height * 0.84), int(width * 0.58), int(height * 0.92)), fill=(0, 0, 0, 150))
-        draw.text((int(width * 0.08), int(height * 0.055)), "LIVE", fill=(255, 255, 255, 255))
     elif effect == "glitch":
         rng = random.Random(int(t * 8))
         for _ in range(6):
