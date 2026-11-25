@@ -12,6 +12,12 @@ The pipeline already decides the story and the overlays. Remotion only draws tha
 
 Read this skill before adding a Remotion project, a composition component, or a render script.
 
+Before writing any Remotion component, also read the official Remotion skills installed from `remotion-dev/skills`:
+
+- `.agents/skills/remotion-markup/timing.md` for motion. Drive every value with `interpolate()` over an explicit frame range. Ease with `Easing.spring` or `Easing.bezier`, and clamp both sides. Do not invent a CSS animation or a custom spring.
+- `.agents/skills/remotion-captions/SKILL.md` and `display-captions.md` for captions. Use the `@remotion/captions` `Caption` type (`text`, `startMs`, `endMs`, `timestampMs`). Word timing comes from that file, not from a guessed delay.
+- `.agents/skills/remotion-best-practices/SKILL.md` when the task is broader than timing or captions.
+
 ## Where the composition comes from
 
 `backend/app/services/shortform_pipeline.py` writes `remotion_composition.json` next to the editorial run, and a copy of the story on the project under `ai_ingestion.shortform`.
