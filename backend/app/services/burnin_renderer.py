@@ -1740,6 +1740,9 @@ class BurnInRenderer:
                             render_editorial_text(canvas, ov, canvas_w, canvas_h, fonts, t)
                         if ov.template_id == "dimension_callout":
                             render_dimension_callout(canvas, ov, canvas_w, canvas_h, fonts)
+                        if ov.template_id == "look_effect":
+                            from app.services.overlay_styles import paint_look_effect
+                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t)
 
 
                     # 3. Corner Bug Watermark
@@ -1815,6 +1818,9 @@ class BurnInRenderer:
                             render_editorial_text(canvas, ov, canvas_w, canvas_h, fonts, t)
                         if ov.template_id == "dimension_callout":
                             render_dimension_callout(canvas, ov, canvas_w, canvas_h, fonts)
+                        if ov.template_id == "look_effect":
+                            from app.services.overlay_styles import paint_look_effect
+                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t)
 
                     if not subtitles_only:
                         render_corner_bug(canvas, project.settings, canvas_w, fonts)

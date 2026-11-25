@@ -554,6 +554,12 @@ export const api = {
     return `${API_BASE}/media/${projectId}/download-mp4?subtitles_only=${subtitlesOnly}${saved}`;
   },
 
+  async getOverlayStyles(domain: string = 'general'): Promise<{ domain: string; styles: { id: string; label: string; detail: string; recommended: boolean }[]; recommended: string[] }> {
+    const res = await fetch(`${API_BASE}/projects/overlay-styles?domain=${encodeURIComponent(domain)}`);
+    if (!res.ok) return { domain, styles: [], recommended: [] };
+    return await res.json();
+  },
+
   async getExportStatus(projectId: string): Promise<{ ready: boolean; full: { file_name: string; file_size: number; download_url: string } | null; subtitles: { file_name: string; file_size: number; download_url: string } | null }> {
     const empty = { ready: false, full: null, subtitles: null };
     try {

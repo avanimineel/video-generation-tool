@@ -99,6 +99,9 @@ export interface ProjectSettings {
   sub_lines_mode?: 1 | 2;
   domain_profile?: ProjectDomain;
   caption_overlay?: boolean;
+  overlay_styles?: string[];
+  overlay_choice_made?: boolean;
+  overlay_product_note?: string;
 }
 
 export const PROJECT_DOMAINS = [
