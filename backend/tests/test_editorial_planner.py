@@ -380,6 +380,34 @@ def test_rejected_local_asset_resolves_original_download_url(monkeypatch,tmp_pat
     assert 'https://stock.test/video.mp4' in observed[0]
 
 
+def test_joined_captions_stay_in_one_planning_window():
+    cs = [
+        cap(0, 4, "When you grow old, your health deteriorates"),
+        cap(4, 8, "in old age medical bills increase"),
+        cap(8, 12, "A different topic starts here now"),
+    ]
+    windows = e.planning_windows([segment(end=12)], cs, beats=[[0, 1], [2]])
+    assert windows[0].start_sec == 0 and windows[0].end_sec == 8
+    assert len(windows[0].dialogue_beats) == 1
+    assert windows[0].dialogue_beats[0]["text"] == "When you grow old, your health deteriorates in old age medical bills increase"
+    assert windows[-1].dialogue_beats[0]["text"] == "A different topic starts here now"
+
+
+def test_stock_search_is_skipped_when_the_source_frame_shows_the_subject(monkeypatch, tmp_path):
+    monkeypatch.setattr(e, "retrieve_asset", lambda *a: (_ for _ in ()).throw(AssertionError("stock must not be searched")))
+    monkeypatch.setattr(e, "source_frame_blocks_stock", lambda state, row: "The source frame already shows this subject (a hospital bill). The speaker stays on screen.")
+    spoken = "The hospital bill arrived this month."
+    choice = decision(strategy="STOCK_IMAGE", anchor_phrase="hospital bill", display_text="hospital bill")
+    choice.asset.retrieval_query = "hospital bill"
+    choice.asset.required_entities = ["hospital bill"]
+    row = e.schedule([segment()], [choice], [cap(text=spoken)])[0]
+    assert row["status"] == "planned"
+    graphics, _logs = e.execute_plan(SimpleNamespace(id="frame", captions=[cap(text=spoken)]), [row], tmp_path)
+    assert graphics == []
+    assert row["status"] == "no_intervention"
+    assert "already shows" in row["decision_reason"]
+
+
 def test_long_topic_is_reviewed_at_each_dialogue_window():
     cs=[cap(i,i+2,f'Phrase {i}') for i in range(0,24,2)]
     windows=e.planning_windows([segment(end=24)],cs)
