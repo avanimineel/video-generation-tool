@@ -49,6 +49,9 @@ PACK_BY_DOMAIN = {
 
 GAP_SECONDS = 0.7
 MAX_PUNCH_PER_30S = 8
+OPENING_SECONDS = 7.0
+INTERRUPT_SECONDS = 6.0
+SPEECH_LOOKS = ("camera", "paper", "film", "streaming", "flat_vector", "scrapbook", "flat_infographic", "paper_craft")
 
 
 def _text(caption) -> str:
@@ -134,12 +137,13 @@ def build_story(captions) -> dict:
                 "patterns": row["viral"],
                 "why": "Spoken line already contains " + ", ".join(row["viral"]) + ".",
             })
-    if hook["score"] == 0:
+    first = min(rows, key=lambda row: row["start"])
+    if not first["viral"]:
         inferences.append({
-            "start": hook["start"],
-            "text": hook["text"],
+            "start": first["start"],
+            "text": first["text"],
             "patterns": [],
-            "why": "Opening line has no number, question, contrast, or direct address. The hook stays this spoken line.",
+            "why": "Opening line has no number, question, contrast, or direct address. The picture uses the strongest spoken line inside the first 7 seconds.",
         })
     return {
         "spine": spine,
@@ -256,7 +260,8 @@ def caption_agent(state, chosen, choice_made):
             continue
         style.has_highlight = True
         style.highlight_bounce = True
-        style.highlight_active_color = "#F5E642"
+        color = str(getattr(getattr(state, "settings", None), "caption_highlight_color", "") or "#F5E642")
+        style.highlight_active_color = color if color.startswith("#") and len(color) in (4, 7) else "#F5E642"
         style.highlight_scale = 1.08
         style.font_weight = "900"
         style.animation_type = "pop"
@@ -264,16 +269,64 @@ def caption_agent(state, chosen, choice_made):
     return {"status": "highlight", "captions": changed, "sync_ms": 80, "chunking": "spoken_clause"}
 
 
+def opening_target(story) -> dict:
+    """The spoken line inside the first 7 seconds that should carry the opening picture."""
+    lines = story.get("lines") or []
+    if not lines:
+        return {"weak": False, "text": "", "start": None}
+    first = min(lines, key=lambda row: row["start"])
+    window = [row for row in lines if row["start"] < OPENING_SECONDS] or [first]
+    best = max(window, key=lambda row: (len(row["viral"]), row["score"], -row["start"]))
+    return {
+        "weak": not first["viral"],
+        "text": best["text"],
+        "start": best["start"],
+        "index": best["index"],
+        "first": first["text"],
+        "first_index": first["index"],
+    }
+
+
+def _speaker_focus(state, moment: float) -> float:
+    """Vertical centre of the speaker's head, or the upper-third default when no face is measured."""
+    try:
+        from app.services.subject_layers import speaker_head_band
+        band = speaker_head_band(state, moment)
+    except Exception:
+        band = None
+    if not band:
+        return 0.35
+    centre = (band[0] + band[1]) / 2
+    if 0.15 <= centre <= 0.55:
+        return round(centre, 3)
+    return 0.35
+
+
+def _zoom(state) -> float:
+    try:
+        scale = float(getattr(getattr(state, "settings", None), "punch_scale", 1.15) or 1.15)
+    except (TypeError, ValueError):
+        scale = 1.15
+    return min(1.15, max(1.05, scale))
+
+
 def emphasis_agent(state, graphics, story, chosen, choice_made):
     """Punch in on an emphasized spoken line, at least 3 seconds apart, at most 8 per 30 seconds."""
     graphics = [graphic for graphic in graphics if not ((getattr(graphic, "parameters", None) or {}).get("retention_camera"))]
+    opening = opening_target(story)
     if not _allowed(chosen, choice_made, "punch_in"):
-        return graphics, {"status": "waiting" if not choice_made else "off", "added": 0}
+        return graphics, {"status": "waiting" if not choice_made else "off", "added": 0, "opening": opening}
     added = []
     last = -10.0
     last_jump = -10.0
+    focus_y = _speaker_focus(state, opening["start"] or 0)
+    zoom = _zoom(state)
     for row in story.get("lines") or []:
         emphasized = row["intent"] in ("hook", "claim") or "specific_number" in row["viral"] or "contrast" in row["viral"]
+        if opening["weak"] and row["index"] == opening["first_index"] and opening["index"] != row["index"]:
+            emphasized = False
+        if opening["weak"] and row["index"] == opening["index"] and row["score"] > 0:
+            emphasized = True
         if not emphasized or row["start"] - last < 3:
             continue
         if sum(1 for item in added if row["start"] < item.start + 30) >= MAX_PUNCH_PER_30S:
@@ -295,15 +348,16 @@ def emphasis_agent(state, graphics, story, chosen, choice_made):
                 "retention_camera": True,
                 "emphasis": True,
                 "start_scale": 1.0,
-                "end_scale": 1.15,
+                "end_scale": zoom,
                 "motion_curve": "hold" if jump else "smoothstep",
                 "easing": "easing.spring" if jump else "easing.bezier",
                 "focus_x": 0.5,
-                "focus_y": 0.35,
+                "focus_y": focus_y,
+                "opening": bool(opening["weak"] and row["index"] == opening["index"]),
             },
         ))
         last = row["start"]
-    return graphics + added, {"status": "placed", "added": len(added)}
+    return graphics + added, {"status": "placed", "added": len(added), "opening": opening, "focus_y": focus_y, "zoom": zoom}
 
 
 def entity_agent(graphics, story, chosen, choice_made, product_note=""):
@@ -379,7 +433,7 @@ def motion_agent(graphics):
         effect = params.get("effect")
         if graphic.template_id == "source_reframe":
             params["start_scale"] = 1.0
-            params["end_scale"] = 1.15
+            params["end_scale"] = min(1.15, max(1.0, float(params.get("end_scale") or 1.15)))
             params["easing"] = params.get("easing") or "easing.bezier"
         if effect in blends:
             params["blend"] = blends[effect]
@@ -389,6 +443,109 @@ def motion_agent(graphics):
         if effect == "glitch":
             graphic.end = min(graphic.end, graphic.start + 0.12)
     return {"stepped": stepped}
+
+
+def _overlaps(item, other) -> bool:
+    return float(item.start) < float(other.end) and float(item.end) > float(other.start)
+
+
+def interrupt_agent(graphics, story, chosen, choice_made):
+    """Keep a picture change on the speech. A look that sits only in a pause is removed."""
+    captions = story.get("lines") or []
+    dropped = []
+    kept = []
+    for graphic in graphics:
+        effect = (getattr(graphic, "parameters", None) or {}).get("effect")
+        spoken = any(_overlaps(graphic, SimpleLine(row["start"], row["end"])) for row in captions)
+        if getattr(graphic, "template_id", "") == "look_effect" and captions and not spoken:
+            dropped.append({"id": graphic.id, "effect": effect, "reason": "pause"})
+            continue
+        kept.append(graphic)
+    if not choice_made:
+        return kept, {"status": "waiting", "dropped": dropped, "added": 0}
+    allowed = [key for key in SPEECH_LOOKS if key in (chosen or [])]
+    added = 0
+    last_visual = -INTERRUPT_SECONDS
+    cursor = 0
+    for row in captions:
+        covering = [graphic for graphic in kept if graphic.start <= row["end"] and graphic.end >= row["start"]]
+        if covering:
+            last_visual = max(last_visual, max(float(graphic.start) for graphic in covering))
+            continue
+        if not allowed or row["start"] - last_visual < INTERRUPT_SECONDS:
+            continue
+        effect = allowed[cursor % len(allowed)]
+        cursor += 1
+        end = min(row["end"], row["start"] + 2.2)
+        if end - row["start"] < 0.8:
+            end = row["start"] + 1.2
+        kept.append(_graphic(
+            f"interrupt_{effect}_{int(row['start'] * 100)}",
+            row["start"],
+            end,
+            "look_effect",
+            effect,
+            {"editorial_generated": True, "effect": effect, "look_overlay": True, "interrupt": True},
+        ))
+        last_visual = row["start"]
+        added += 1
+    return kept, {"status": "placed", "dropped": dropped, "added": added}
+
+
+class SimpleLine:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+
+def silence_spans(captions, threshold: float = 0.6):
+    """Gaps between spoken lines. The words themselves are not part of the gap."""
+    ordered = sorted((caption for caption in captions or [] if float(getattr(caption, "end", 0)) > float(getattr(caption, "start", 0))), key=lambda caption: float(caption.start))
+    spans = []
+    for left, right in zip(ordered, ordered[1:]):
+        gap = float(right.start) - float(left.end)
+        if gap > threshold:
+            spans.append({"start": round(float(left.end), 3), "end": round(float(right.start), 3), "gap": round(gap, 3)})
+    return spans
+
+
+def _map_time(moment: float, spans, keep: float) -> float:
+    removed = 0.0
+    for span in spans:
+        cut = max(0.0, span["gap"] - keep)
+        if moment >= span["end"]:
+            removed += cut
+            continue
+        if moment > span["start"]:
+            return round(span["start"] + min(moment - span["start"], keep) - removed, 3)
+        break
+    return round(moment - removed, 3)
+
+
+def apply_pause_tighten(captions, graphics, threshold: float = 0.6, keep: float = 0.12):
+    """Close pauses longer than the threshold. Spoken words keep their order and their text."""
+    spans = silence_spans(captions, threshold)
+    if not spans:
+        return spans
+    for caption in captions or []:
+        caption.start = _map_time(float(caption.start), spans, keep)
+        caption.end = max(caption.start + 0.2, _map_time(float(caption.end), spans, keep))
+        for word in getattr(caption, "words", None) or []:
+            if hasattr(word, "start"):
+                word.start = _map_time(float(word.start), spans, keep)
+                word.end = max(word.start + 0.05, _map_time(float(word.end), spans, keep))
+    survivors = []
+    for graphic in graphics or []:
+        start = _map_time(float(graphic.start), spans, keep)
+        end = _map_time(float(graphic.end), spans, keep)
+        if end - start < 0.2:
+            continue
+        graphic.start = start
+        graphic.end = end
+        survivors.append(graphic)
+    if isinstance(graphics, list):
+        graphics[:] = survivors
+    return spans
 
 
 def stock_vfx_agent(graphics):
@@ -493,13 +650,28 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
     graphics, entities = entity_agent(graphics, story, chosen, choice_made, product_note)
     relevance_drops = []
     density_drops = []
+    interrupts = {"status": "waiting", "dropped": [], "added": 0}
     if choice_made:
         graphics, relevance_drops = relevance_agent(graphics, getattr(state, "captions", None) or [], story)
+        graphics, interrupts = interrupt_agent(graphics, story, chosen, choice_made)
         graphics, density_drops = density_agent(graphics)
+    else:
+        graphics, interrupts = interrupt_agent(graphics, story, chosen, False)
     motion = motion_agent(graphics)
     stock = stock_vfx_agent(graphics)
     sound = sound_agent(state, graphics, chosen, choice_made)
     platform = platform_agent(state)
+    settings = getattr(state, "settings", None)
+    try:
+        threshold = float(getattr(settings, "pause_threshold", 0.6) or 0.6)
+    except (TypeError, ValueError):
+        threshold = 0.6
+    pauses = silence_spans(getattr(state, "captions", None) or [], threshold)
+    if getattr(settings, "tighten_pauses", False) and pauses:
+        apply_pause_tighten(getattr(state, "captions", None) or [], graphics, threshold)
+        pauses = {"tightened": True, "spans": pauses}
+    else:
+        pauses = {"tightened": False, "spans": pauses}
     for graphic in graphics:
         params = getattr(graphic, "parameters", None)
         if isinstance(params, dict):
@@ -516,6 +688,7 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
             "emphasis",
             "entity",
             "relevance",
+            "interrupt",
             "density",
             "motion",
             "stock_vfx",
@@ -530,7 +703,9 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
         "emphasis": emphasis,
         "entity": entities,
         "relevance_dropped": relevance_drops,
+        "interrupt": interrupts,
         "density_dropped": density_drops,
+        "pauses": pauses,
         "motion": motion,
         "stock_vfx": stock,
         "sound": sound,

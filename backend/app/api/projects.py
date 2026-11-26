@@ -20,8 +20,9 @@ class RelinkMediaRequest(BaseModel):
 
 @router.get("/overlay-styles")
 def overlay_style_catalog(domain: str = "general"):
-    from app.services.overlay_styles import recommended_ids, styles_for_domain
-    return {"domain": domain, "styles": styles_for_domain(domain), "recommended": recommended_ids(domain)}
+    from app.services.overlay_styles import load_creator_preset, recommended_ids, styles_for_domain
+    preset = load_creator_preset(domain)
+    return {"domain": domain, "styles": styles_for_domain(domain), "recommended": recommended_ids(domain), "preset": preset}
 
 
 @router.get("")
@@ -85,6 +86,8 @@ async def save_project(project_id: str, state: ProjectState):
     if active(project_id):raise HTTPException(status_code=409,detail='Automatic editing is running. Saved results are protected from stale browser state.')
     if not project_manager.get_project(project_id):raise HTTPException(404, 'Project not found')
     project_manager.save_project(state)
+    from app.services.overlay_styles import save_creator_preset
+    save_creator_preset(state)
     return {'success': True, 'updated_at': state.updated_at}
 
 @router.post("/{project_id}/autosave")

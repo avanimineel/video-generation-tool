@@ -1615,8 +1615,10 @@ class BurnInRenderer:
         fps = float(project.fps or 30.0)
 
         from app.services.ffmpeg_encoder import resolve_video_encoder
+        from app.services.picture_finish import export_preset
+        delivery = export_preset(is_916)
         _codec, video_enc_args, _enc_reason = resolve_video_encoder(
-            self.ffmpeg_bin, bitrate="4000k", probe_size=(canvas_w, canvas_h)
+            self.ffmpeg_bin, bitrate=delivery["bitrate"], probe_size=(delivery["width"], delivery["height"])
         )
         if has_real_source:
             input_args = [
@@ -1648,6 +1650,10 @@ class BurnInRenderer:
             with av.open(source_path) as source_container: has_audio = bool(source_container.streams.audio)
         first_extra = 2 if has_real_source else 1
         voice = '[1:a]' if has_audio else None
+        if has_audio:
+            from app.services.picture_finish import VOICE_CLEANUP
+            filters.append(f"[1:a]{VOICE_CLEANUP}[voice]")
+            voice = "[voice]"
         if not subtitles_only and any(g.parameters.get('sfx_track_url') and not g.parameters.get('sfx_muted') for g in project.graphics):
             from app.services.automatic_sfx import prepare_sfx
             sfx_path = prepare_sfx(project.id, project.graphics, project.duration_seconds)
@@ -1675,6 +1681,11 @@ class BurnInRenderer:
                 input_args[-1:-1] = ['-filter_complex', ';'.join(filters), '-shortest']
             if '1:a?' in input_args: input_args[input_args.index('1:a?')] = mix_label
             else: input_args[-1:-1] = ['-map', '0:v', '-map', mix_label, '-c:a', 'aac']
+        elif has_audio and filters:
+            input_args[input_args.index('1:a?')] = '[voice]'
+            input_args[-1:-1] = ['-filter_complex', ';'.join(filters)]
+        if is_916:
+            input_args[-1:-1] = ['-vf', 'scale=1080:1920:flags=lanczos']
 
         # Encoder already probed via resolve_video_encoder (NVENC → VideoToolbox → libx264).
         cmd = [self.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", *input_args]
@@ -1684,6 +1695,9 @@ class BurnInRenderer:
             total_frames = max(1, int((project.duration_seconds or 10.0) * fps))
             sorted_captions = sorted(project.captions, key=lambda c: c.start)
 
+            from app.services.picture_finish import grade_frame
+            from app.services.shortform_pipeline import style_pack
+            picture_pack = style_pack(getattr(project.settings, "domain_profile", None))
             if has_real_source:
                 container = av.open(source_path)
                 video_stream = container.streams.video[0]
@@ -1703,7 +1717,7 @@ class BurnInRenderer:
                             "mode": "subtitles_only" if subtitles_only else "full"
                         }
 
-                    base_speaker_frame = frame.to_image()
+                    base_speaker_frame = grade_frame(frame.to_image(), picture_pack)
 
                     # Find all active graphics at timecode t
                     active_graphics = []

@@ -187,6 +187,56 @@ def recommended_ids(domain: str | None) -> List[str]:
     return [row["id"] for row in styles_for_domain(domain) if row["recommended"]]
 
 
+def creator_preset_path(domain: str, root=None):
+    from pathlib import Path
+    from app.core.config import settings
+    from app.services.project_manager import project_domain
+    base = Path(root) if root is not None else Path(settings.projects_dir) / "creator_presets"
+    return base / f"{project_domain(domain)}.json"
+
+
+def load_creator_preset(domain: str, root=None) -> dict:
+    path = creator_preset_path(domain, root)
+    if not path.is_file():
+        return {}
+    try:
+        import json
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    styles = normalize_styles(data.get("styles"))
+    color = str(data.get("caption_highlight_color") or "#F5E642")
+    try:
+        zoom = float(data.get("punch_scale") or 1.15)
+    except (TypeError, ValueError):
+        zoom = 1.15
+    return {
+        "styles": styles,
+        "caption_highlight_color": color if color.startswith("#") and len(color) in (4, 7) else "#F5E642",
+        "punch_scale": min(1.15, max(1.05, zoom)),
+    }
+
+
+def save_creator_preset(state, root=None) -> None:
+    """Remember this video's overlay set for the next video in the same domain."""
+    import json
+    settings = getattr(state, "settings", None)
+    if not settings or not getattr(settings, "overlay_choice_made", False):
+        return
+    styles = normalize_styles(getattr(settings, "overlay_styles", None))
+    if not styles:
+        return
+    payload = load_creator_preset(getattr(settings, "domain_profile", None), root)
+    payload.update({
+        "styles": styles,
+        "caption_highlight_color": getattr(settings, "caption_highlight_color", None) or payload.get("caption_highlight_color") or "#F5E642",
+        "punch_scale": getattr(settings, "punch_scale", None) or payload.get("punch_scale") or 1.15,
+    })
+    path = creator_preset_path(getattr(settings, "domain_profile", None), root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+
+
 def selection_from_state(state) -> tuple:
     settings = getattr(state, "settings", None)
     made = bool(getattr(settings, "overlay_choice_made", False))
