@@ -127,6 +127,11 @@ class ProjectSettings(BaseModel):
     overlay_styles: List[str] = Field(default_factory=list)
     overlay_choice_made: bool = False
     overlay_product_note: str = ""
+    punch_scale: float = 1.15
+    caption_highlight_color: str = "#F5E642"
+    tighten_pauses: bool = False
+    pause_threshold: float = 0.6
+    export_platform: str = "reels"
 
 # --- Full Project State (Saved to project.json & SQLite) ---
 

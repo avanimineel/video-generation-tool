@@ -61,6 +61,12 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   const targetScale = reframe?.parameters.motion_curve === 'pulse' ? 1.08 : Number(reframe?.parameters.end_scale ?? 1.13);
   const reframeScale = reframe ? Number(reframe.parameters.start_scale ?? 1)+(targetScale-Number(reframe.parameters.start_scale ?? 1))*motionProgress : 1;
   const captions = project?.captions ?? [];
+  const domain = project?.settings?.domain_profile || "general";
+  const pictureGrade = ["finance", "business", "fitness", "sports"].includes(domain)
+    ? "contrast(1.04) saturate(1.04) sepia(0.08)"
+    : ["medical", "legal", "education", "real_estate"].includes(domain)
+    ? "contrast(1.03) saturate(0.98)"
+    : "contrast(1.02)";
 
   // Play and pause from the button click so the browser treats it as a user gesture and allows sound.
   // A later effect only catches play that was requested some other way.
@@ -291,9 +297,10 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
               style={{
                 transform: `scale(${reframeScale})`,
                 transformOrigin: `${Number(reframe?.parameters.focus_x ?? 0.5) * 100}% ${Number(reframe?.parameters.focus_y ?? 0.5) * 100}%`,
-                objectPosition: activeVerticalSplit 
-                  ? `center ${(activeVerticalSplit.parameters?.speaker_focus_y ?? 0.28) * 100}%` 
-                  : "center center"
+                objectPosition: activeVerticalSplit
+                  ? `center ${(activeVerticalSplit.parameters?.speaker_focus_y ?? 0.28) * 100}%`
+                  : "center center",
+                filter: pictureGrade,
               }}
               className="w-full h-full object-cover"
               playsInline

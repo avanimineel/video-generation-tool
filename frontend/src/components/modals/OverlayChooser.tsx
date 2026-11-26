@@ -43,7 +43,8 @@ export const OverlayChooser: React.FC<OverlayChooserProps> = ({
       if (stop) return;
       const rows = payload.styles || [];
       setStyles(rows);
-      setSelected(choiceMade ? initialStyles : payload.recommended || []);
+      const remembered = payload.preset?.styles || [];
+      setSelected(choiceMade ? initialStyles : (remembered.length ? remembered : payload.recommended || []));
       setNote(initialNote);
     });
     return () => { stop = true; };
@@ -62,7 +63,7 @@ export const OverlayChooser: React.FC<OverlayChooserProps> = ({
           <div>
             <h2 className="text-base font-semibold">Choose overlays</h2>
             <p className="text-xs text-neutral-500 mt-1">
-              Captions are ready. Pick the overlays for this {domainName} video. Recommended ones are already selected.
+              Captions are ready. Pick the overlays for this {domainName} video. The boxes start from your last {domainName} video when you have saved one, and from the domain suggestions otherwise.
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1 rounded-md text-neutral-500 hover:bg-neutral-100" aria-label="Close">

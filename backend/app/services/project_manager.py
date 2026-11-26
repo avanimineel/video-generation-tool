@@ -81,6 +81,14 @@ class ProjectManager:
         project_id = f"{sanitize_folder_name(name)}_{int(datetime.now().timestamp())}_{uuid4().hex[:8]}"
         pdir = self._get_project_dir(project_id)
 
+        domain = project_domain(domain_profile)
+        from app.services.overlay_styles import load_creator_preset
+        preset = load_creator_preset(domain)
+        settings = ProjectSettings(aspect_ratio=aspect_ratio, domain_profile=domain)
+        if preset:
+            settings.punch_scale = preset["punch_scale"]
+            settings.caption_highlight_color = preset["caption_highlight_color"]
+            settings.overlay_styles = list(preset["styles"])
         state = ProjectState(
             id=project_id,
             name=name,
@@ -88,7 +96,7 @@ class ProjectManager:
             updated_at=now_str,
             source_media_path=source_media_path,
             duration_seconds=0.0,
-            settings=ProjectSettings(aspect_ratio=aspect_ratio, domain_profile=project_domain(domain_profile)),
+            settings=settings,
             captions=[],
             graphics=[],
             detected_language='en'
