@@ -475,13 +475,26 @@ def normalize_segments(raw,captions,duration):
     return segments
 
 
-def planning_windows(segments, captions, target_seconds=4.0):
-    """Review each dialogue beat while retaining its parent semantic context."""
+def planning_windows(segments, captions, target_seconds=4.0, beats=None):
+    """Review each dialogue beat while retaining its parent semantic context.
+
+    Neighboring captions that Qwen joins stay in one window and one dialogue beat.
+    The spoken words are copied as they are.
+    """
+    from app.services.local_story_models import caption_beat_groups, collapse_beats, normalize_groups
+    captions = list(captions or [])
+    groups = normalize_groups(len(captions), beats) if beats is not None else caption_beat_groups(captions)
+    beat_of = {index: group[0] for group in groups for index in group}
+    index_of = {id(caption): index for index, caption in enumerate(captions)}
     windows = []
     for seg in segments:
         boundaries = [seg.start_sec]
         for c in captions:
             if c.end <= seg.start_sec or c.end >= seg.end_sec:
+                continue
+            index = index_of.get(id(c))
+            nxt = None if index is None else index + 1
+            if nxt is not None and nxt < len(captions) and beat_of.get(index) == beat_of.get(nxt) and beat_of.get(nxt) != nxt:
                 continue
             if c.end - boundaries[-1] >= (1.2 if boundaries[-1]<15 else target_seconds) and seg.end_sec - c.end >= 1:
                 boundaries.append(c.end)
@@ -496,7 +509,9 @@ def planning_windows(segments, captions, target_seconds=4.0):
             part.source_caption_ids = [c.id for c in cs]
             part.audio_cues = [w for w in seg.audio_cues if start-2.5 <= w['start'] < end+2.5]
             part.word_cues = [{'word':w.word,'start':w.start,'end':w.end,'usable':w.end>w.start} for c in captions for w in c.words if start <= w.start < end]
-            part.dialogue_beats = [{'start_sec':max(start,c.start),'end_sec':min(end,c.end),'text':c.translated_text or c.text} for c in cs]
+            raw_beats = [{'start_sec':max(start,c.start),'end_sec':min(end,c.end),'text':c.translated_text or c.text} for c in cs]
+            keys = [beat_of.get(index_of.get(id(c))) for c in cs]
+            part.dialogue_beats = collapse_beats(raw_beats, keys)
             part.observations = [o.model_copy(update={'start_sec':max(start,o.start_sec),'end_sec':min(end,o.end_sec)}) for o in seg.observations if o.start_sec < end and o.end_sec > start]
             windows.append(part)
     return windows
@@ -669,6 +684,12 @@ def add_spoken_figures(segments, decisions, captions):
             comprehension_seconds=1.0,visual_role='emphasis',scores=Scores(semantic_relevance=.9,visual_value=.8,
             information_gain=.8,evidence_value=.5,attention_value=.9,redundancy=.1,visual_fatigue=.1,confidence=.9)))
     return result
+
+
+def source_frame_blocks_stock(state, row):
+    """Reason to keep the speaker when one source frame already shows the stock subject."""
+    from app.services.local_story_models import source_already_shows
+    return source_already_shows(state, row)
 
 
 def stock_grounding(row, captions):
@@ -1213,6 +1234,14 @@ def retrieve_asset(row,project_id,used):
 
 
 def execute_plan(state,rows,run_dir):
+    from app.services.local_story_models import release_vision
+    try:
+        return _place_planned_rows(state, rows, run_dir)
+    finally:
+        release_vision()
+
+
+def _place_planned_rows(state,rows,run_dir):
     from app.core.config import settings
     from app.core.models import MotionGraphicItem
     graphics=[];assets=[];logs=[]
@@ -1236,6 +1265,15 @@ def execute_plan(state,rows,run_dir):
                 used.update(source[k] for k in ('url', 'download_url') if source.get(k))
             except (ValueError, OSError):
                 pass
+    def kept_because_frame(row):
+        shown = source_frame_blocks_stock(state, row)
+        if not shown:
+            return False
+        assets.append({'segment_id': row['segment_id'], 'attempts': [{'review': shown, 'skipped': 'source_frame'}], 'selected': None})
+        write_json(run_dir/'04_asset_review.json', assets)
+        row.update(status='no_intervention', decision_reason=shown)
+        return True
+
     for i,row in enumerate(rows):
         write_json(run_dir/'progress.json',{'reviewed':i,'total':len(rows)})
         if row['status']!='planned':continue
@@ -1246,6 +1284,8 @@ def execute_plan(state,rows,run_dir):
             ungrounded=stock_grounding(row,state.captions)
             if ungrounded:
                 row.update(status='no_intervention',decision_reason=ungrounded);continue
+            if kept_because_frame(row):
+                continue
             selected,attempts=retrieve_asset(row,state.id,used)
             assets.append({'segment_id':row['segment_id'],'attempts':attempts,'selected':selected})
             write_json(run_dir/'04_asset_review.json',assets)
@@ -1307,6 +1347,8 @@ def execute_plan(state,rows,run_dir):
             row['realized_composition']={'layout':'text_overlay','position':[.5,.5],'transition':'cut'}
             g=MotionGraphicItem(id=f'editorial_{run_dir.name}_{i}',start=row['start_sec'],end=row['end_sec'],template_id='kinetic_typography',title=text,parameters=params,pos_x=.5,pos_y=.5)
         elif strategy in ('ICONOGRAPHY', 'MOTION_GRAPHIC'):
+            if kept_because_frame(row):
+                continue
             selected,attempts=retrieve_asset(row,state.id,used)
             if selected:
                 url=selected['local']['media_url']

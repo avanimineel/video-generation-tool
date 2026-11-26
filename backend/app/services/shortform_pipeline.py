@@ -90,8 +90,12 @@ def style_pack(domain: str | None) -> str:
     return PACK_BY_DOMAIN.get(key, "explainer")
 
 
-def build_story(captions) -> dict:
-    """Arrange the spoken lines into a hook, claim, proof, story, and CTA. Copy stays verbatim."""
+def build_story(captions, beats=None) -> dict:
+    """Arrange the spoken lines into a hook, claim, proof, story, and CTA. Copy stays verbatim.
+
+    `beats` groups neighboring row indexes into one claim. The joined text is the
+    spoken lines in order. Nothing is rewritten.
+    """
     rows = []
     total = len(captions or [])
     for index, caption in enumerate(captions or []):
@@ -145,9 +149,25 @@ def build_story(captions) -> dict:
             "patterns": [],
             "why": "Opening line has no number, question, contrast, or direct address. The picture uses the strongest spoken line inside the first 7 seconds.",
         })
+    from app.services.local_story_models import beat_source, caption_beat_groups, normalize_groups
+    groups = normalize_groups(len(rows), beats) if beats is not None else caption_beat_groups(rows)
+    story_beats = []
+    for group in groups:
+        members = [rows[index] for index in group]
+        story_beats.append({
+            "start": members[0]["start"],
+            "end": members[-1]["end"],
+            "text": " ".join(member["text"] for member in members),
+            "lines": [member["text"] for member in members],
+            "caption_indexes": [member["index"] for member in members],
+        })
+        for member in members:
+            member["beat"] = members[0]["index"]
     return {
         "spine": spine,
         "lines": rows,
+        "beats": story_beats,
+        "beat_source": "given" if beats is not None else beat_source(),
         "inferences": inferences,
         "viral_score": sum(row["score"] for row in rows),
     }

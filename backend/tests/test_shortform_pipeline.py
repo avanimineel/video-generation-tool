@@ -15,6 +15,25 @@ def _look(effect, start, title="Look"):
     return SimpleNamespace(id=f"{effect}-{start}", start=start, end=start + 1.5, template_id="look_effect", title=title, parameters={"effect": effect})
 
 
+def test_neighboring_captions_join_into_one_beat_without_rewriting():
+    captions = [
+        _caption(0.2, 2.0, "When you grow old, your health deteriorates"),
+        _caption(2.1, 4.0, "in old age medical bills increase"),
+        _caption(8.0, 9.5, "Start now"),
+    ]
+    story = build_story(captions, beats=[[0, 1], [2]])
+    assert story["beat_source"] == "given"
+    assert story["beats"][0]["lines"] == [
+        "When you grow old, your health deteriorates",
+        "in old age medical bills increase",
+    ]
+    assert story["beats"][0]["text"] == "When you grow old, your health deteriorates in old age medical bills increase"
+    assert story["beats"][0]["end"] == 4.0
+    assert story["beats"][1]["lines"] == ["Start now"]
+    assert story["lines"][0]["text"] == "When you grow old, your health deteriorates"
+    assert story["lines"][1]["beat"] == story["lines"][0]["index"]
+
+
 def test_story_uses_spoken_lines_and_names_viral_patterns():
     captions = [
         _caption(0.2, 2.0, "What if you saved 20 percent"),
