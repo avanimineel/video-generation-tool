@@ -548,10 +548,119 @@ def _paper_subject(draw, width, height, subject: str, shift: int):
             fill=lavender,
         )
         draw.ellipse((left + int(width * 0.1), top - int(height * 0.03), right - int(width * 0.1), top + int(height * 0.08)), fill=mint)
+    elif subject == "chair":
+        _paper_chair(draw, int(width * 0.5) + shift, int(height * 0.74), int(min(width, height) * 0.22))
+    elif subject == "door":
+        _paper_door(draw, int(width * 0.5) + shift, int(height * 0.74), int(width * 0.22))
     else:
         draw.ellipse((left + 10, top + 12, right + 10, bottom + 12), fill=shadow)
         draw.ellipse((left, top, right, bottom), fill=lavender)
         draw.rounded_rectangle((int(width * 0.42) + shift, int(height * 0.46), int(width * 0.62) + shift, int(height * 0.62)), radius=10, fill=mint)
+
+
+def _paper_chair(draw, cx, foot, size):
+    lavender = (144, 96, 222, 238)
+    cream = (255, 252, 248, 240)
+    shadow = (79, 73, 71, 42)
+    leg = max(4, size // 10)
+    seat = foot - size // 3
+    draw.rectangle((cx - size // 2 + 6, seat + 6, cx + size // 2 + 6, foot + 6), fill=shadow)
+    draw.rectangle((cx - size // 2, seat - size // 2, cx - size // 2 + leg, foot), fill=lavender)
+    draw.rectangle((cx + size // 2 - leg, seat, cx + size // 2, foot), fill=lavender)
+    draw.rectangle((cx - size // 2, seat - size // 2, cx + size // 2, seat - size // 2 + leg), fill=lavender)
+    draw.rectangle((cx - size // 2, seat, cx + size // 2, seat + leg), fill=cream)
+
+
+def _paper_door(draw, cx, foot, wide):
+    lavender = (144, 96, 222, 238)
+    cream = (255, 252, 248, 240)
+    mint = (191, 227, 220, 235)
+    top = foot - int(wide * 1.7)
+    draw.rounded_rectangle((cx - wide // 2 + 6, top + 8, cx + wide // 2 + 6, foot + 8), radius=8, fill=(79, 73, 71, 42))
+    draw.rounded_rectangle((cx - wide // 2, top, cx + wide // 2, foot), radius=8, fill=lavender)
+    draw.rounded_rectangle((cx - wide // 2 + 8, top + 8, cx + wide // 2 - 8, foot - 8), radius=6, fill=cream)
+    draw.ellipse((cx + wide // 5, foot - wide, cx + wide // 5 + 8, foot - wide + 8), fill=mint)
+
+
+def _paper_person(draw, cx, foot, scale, style, action):
+    """One borderless cut-paper figure. Style changes the height and the hair. Action moves an arm or a leg."""
+    lavender = (144, 96, 222, 238)
+    mint = (191, 227, 220, 235)
+    cream = (255, 252, 248, 240)
+    skin = (245, 220, 196, 240)
+    ink = (79, 73, 71, 230)
+    height = max(36, int(220 * scale))
+    if style in ("girl", "boy"):
+        height = int(height * 0.72)
+    elif style == "elder":
+        height = int(height * 0.86)
+    head_r = max(6, int(height * 0.16))
+    hip = foot - int(height * 0.34)
+    shoulder = foot - int(height * 0.62)
+    head_c = shoulder - head_r - 2
+    body = mint if style in ("woman", "girl") else lavender
+    hair = cream if style == "elder" else lavender
+    draw.ellipse((cx - head_r + 5, head_c - head_r + 6, cx + head_r + 5, head_c + head_r + 6), fill=(79, 73, 71, 40))
+    if action == "sit":
+        draw.rounded_rectangle((cx - head_r * 2, hip, cx + head_r * 2, hip + head_r), radius=8, fill=body)
+    elif action == "walk":
+        draw.polygon([(cx - 4, hip), (cx - head_r - 6, foot), (cx - 2, foot), (cx + 4, hip)], fill=body)
+        draw.polygon([(cx + 2, hip), (cx + head_r, foot - head_r), (cx + head_r + 8, foot - head_r), (cx + 8, hip)], fill=body)
+    else:
+        leg = max(3, head_r // 3)
+        draw.rectangle((cx - leg * 2, hip, cx - 1, foot), fill=body)
+        draw.rectangle((cx + 1, hip, cx + leg * 2, foot), fill=body)
+    draw.rounded_rectangle((cx - int(head_r * 1.25), shoulder, cx + int(head_r * 1.25), hip + 4), radius=8, fill=body)
+    arm = max(3, head_r // 3)
+    if action == "wave":
+        draw.line((cx + head_r, shoulder + 6, cx + head_r + head_r, shoulder - head_r), fill=body, width=arm)
+    elif action == "offer":
+        draw.line((cx - head_r, shoulder + 8, cx - head_r * 2, shoulder), fill=body, width=arm)
+    elif action == "pray":
+        draw.line((cx - 6, shoulder + head_r, cx, shoulder + head_r + 8), fill=body, width=arm)
+        draw.line((cx + 6, shoulder + head_r, cx, shoulder + head_r + 8), fill=body, width=arm)
+    else:
+        draw.line((cx - head_r, shoulder + 6, cx - head_r - 4, hip), fill=body, width=arm)
+        draw.line((cx + head_r, shoulder + 6, cx + head_r + 4, hip), fill=body, width=arm)
+    draw.ellipse((cx - head_r, head_c - head_r, cx + head_r, head_c + head_r), fill=skin)
+    draw.pieslice((cx - head_r, head_c - head_r - 2, cx + head_r, head_c + 2), 200, 340, fill=hair)
+    eye = max(2, head_r // 5)
+    draw.ellipse((cx - eye * 2, head_c - 1, cx - eye, head_c + eye), fill=ink)
+    draw.ellipse((cx + eye, head_c - 1, cx + eye * 2, head_c + eye), fill=ink)
+
+
+def _paper_scene(draw, width, height, parameters, shift):
+    place = str(parameters.get("place") or "")
+    props = [str(prop) for prop in (parameters.get("props") or [])]
+    cast = [member for member in (parameters.get("cast") or []) if isinstance(member, dict)]
+    foot = int(height * 0.76)
+    if place == "house":
+        _paper_subject(draw, width, height, "house", shift)
+    elif place == "table":
+        top = int(height * 0.62)
+        draw.rectangle((int(width * 0.18), top, int(width * 0.82), top + int(height * 0.04)), fill=(191, 227, 220, 235))
+    elif place == "doorway":
+        _paper_door(draw, int(width * 0.5) + shift, foot, int(width * 0.16))
+    if "chair" in props:
+        _paper_chair(draw, int(width * 0.78), foot, int(min(width, height) * 0.16))
+    if "door" in props and place != "doorway":
+        _paper_door(draw, int(width * 0.18), foot, int(width * 0.1))
+    for prop in props:
+        if prop in ("chair", "door"):
+            continue
+        _paper_subject(draw, int(width * 0.34), int(height * 0.42), prop, shift)
+        break
+    scale = max(0.35, height / 640)
+    spots = [int(width * 0.5)] if len(cast) < 2 else [int(width * 0.36), int(width * 0.62)]
+    for spot, member in zip(spots, cast[:2]):
+        _paper_person(
+            draw,
+            spot + shift,
+            foot,
+            scale,
+            str(member.get("style") or "woman"),
+            str(member.get("action") or "stand"),
+        )
 
 
 def paint_paper_purple(image, t: float, parameters=None):
@@ -582,7 +691,11 @@ def paint_paper_purple(image, t: float, parameters=None):
                 draw.point((rng.randrange(width), rng.randrange(height)), fill=(79, 73, 71, 22))
         draw.rectangle((0, int(height * 0.78), width, height), fill=(230, 229, 235, 255))
         shift = int(math.sin(float(t) * 0.8) * width * 0.012)
-        _paper_subject(draw, width, height, str(parameters.get("subject") or "object"), shift)
+        cast = parameters.get("cast") or []
+        if cast:
+            _paper_scene(draw, width, height, parameters, shift)
+        else:
+            _paper_subject(draw, width, height, str(parameters.get("subject") or "object"), shift)
     composed = Image.alpha_composite(image.convert("RGBA"), layer)
     image.paste(composed.convert(image.mode))
     return image

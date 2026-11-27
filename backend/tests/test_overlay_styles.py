@@ -119,6 +119,16 @@ def test_a_look_paints_onto_the_frame():
     assert corner[0] > 180 and corner[1] > 170
     samples = [paper.getpixel((x, y)) for x in range(0, 120, 6) for y in range(40, 140, 8)]
     assert any(pixel[2] > pixel[0] and pixel[2] > 140 for pixel in samples)
+    people = Image.new("RGB", (160, 240), (8, 8, 8))
+    paint_look_effect(people, "paper_purple", 0.4, {
+        "subject": "house",
+        "place": "house",
+        "cast": [{"style": "elder", "action": "walk"}, {"style": "woman", "action": "offer"}],
+        "props": ["chair"],
+        "badge": False,
+    })
+    figure = [people.getpixel((x, y)) for x in range(30, 140, 4) for y in range(60, 200, 6)]
+    assert any(pixel[2] > pixel[0] + 40 and pixel[2] > 160 for pixel in figure)
 
 
 def test_punch_in_adds_a_short_zoom_on_a_number():

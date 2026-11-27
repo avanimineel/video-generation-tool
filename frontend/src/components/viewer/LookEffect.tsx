@@ -1,5 +1,10 @@
 import React from 'react';
 
+interface PaperCast {
+  style?: string;
+  action?: string;
+}
+
 interface LookEffectProps {
   effect: string;
   width: number;
@@ -7,11 +12,40 @@ interface LookEffectProps {
   time: number;
   subject?: string;
   badge?: boolean;
+  place?: string;
+  cast?: PaperCast[];
+  props?: string[];
 }
 
 const BITS = [0.08, 0.17, 0.29, 0.41, 0.53, 0.66, 0.74, 0.88, 0.13, 0.37, 0.61, 0.82];
 
-export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, time, subject = '', badge = false }) => {
+function PaperPerson({ style, action, left, foot, tall }: { style: string; action: string; left: number; foot: number; tall: number }) {
+  const height = style === 'girl' || style === 'boy' ? tall * 0.72 : style === 'elder' ? tall * 0.86 : tall;
+  const body = style === 'woman' || style === 'girl' ? '#BFE3DC' : '#9060DE';
+  const hair = style === 'elder' ? '#FFFCF8' : '#9060DE';
+  const head = height * 0.22;
+  return (
+    <div style={{ position: 'absolute', left, bottom: foot, width: height * 0.46, height }}>
+      <div style={{ position: 'absolute', left: '28%', top: 0, width: head, height: head, borderRadius: '50%', background: '#F5DCB8', boxShadow: `0 ${-head * 0.35}px 0 ${head * 0.15}px ${hair}` }} />
+      <div style={{ position: 'absolute', left: '18%', top: head * 0.85, width: '64%', height: height * 0.38, borderRadius: 8, background: body }} />
+      {action === 'wave' && <div style={{ position: 'absolute', right: -height * 0.08, top: head * 0.2, width: height * 0.08, height: height * 0.28, borderRadius: 6, background: body, transform: 'rotate(-28deg)' }} />}
+      {action === 'offer' && <div style={{ position: 'absolute', left: -height * 0.12, top: head, width: height * 0.28, height: height * 0.08, borderRadius: 6, background: body }} />}
+      {action === 'pray' && <div style={{ position: 'absolute', left: '40%', top: head * 1.1, width: height * 0.1, height: height * 0.16, borderRadius: 6, background: body }} />}
+      {action === 'walk' ? (
+        <div style={{ position: 'absolute', left: '22%', top: height * 0.55, width: '56%', height: height * 0.4, background: body, clipPath: 'polygon(20% 0, 40% 0, 70% 100%, 10% 100%)' }} />
+      ) : action === 'sit' ? (
+        <div style={{ position: 'absolute', left: '8%', top: height * 0.62, width: '84%', height: height * 0.12, borderRadius: 6, background: body }} />
+      ) : (
+        <>
+          <div style={{ position: 'absolute', left: '28%', top: height * 0.58, width: '14%', height: height * 0.4, background: body }} />
+          <div style={{ position: 'absolute', left: '56%', top: height * 0.58, width: '14%', height: height * 0.4, background: body }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, time, subject = '', badge = false, place = '', cast = [], props = [] }) => {
   const box: React.CSSProperties = {
     position: 'absolute',
     inset: 0,
@@ -167,6 +201,25 @@ export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, t
       );
     }
     const shape = subject || 'object';
+    const people = (cast || []).filter(member => member && member.style).slice(0, 2);
+    if (people.length) {
+      const spots = people.length === 1 ? [width * 0.38] : [width * 0.22, width * 0.52];
+      return (
+        <div style={{ ...box, background: '#F5EFEC' }}>
+          <div style={{ position: 'absolute', left: 0, top: height * 0.78, width, height: height * 0.22, background: '#E6E5EB' }} />
+          {place === 'house' && (
+            <div style={{ position: 'absolute', left: width * 0.3 + drift, top: height * 0.28, width: width * 0.4, height: height * 0.42 }}>
+              <div style={{ position: 'absolute', left: '10%', right: '10%', top: '38%', bottom: 0, background: '#BFE3DC' }} />
+              <div style={{ position: 'absolute', left: '4%', top: '8%', width: 0, height: 0, borderLeft: `${width * 0.16}px solid transparent`, borderRight: `${width * 0.16}px solid transparent`, borderBottom: `${height * 0.14}px solid #9060DE` }} />
+            </div>
+          )}
+          {props.includes('chair') && <div style={{ position: 'absolute', right: width * 0.12, top: height * 0.58, width: width * 0.12, height: height * 0.16, border: '6px solid #9060DE', borderBottom: 'none', background: '#FFFCF8' }} />}
+          {people.map((member, index) => (
+            <PaperPerson key={`${member.style}-${index}`} style={String(member.style)} action={String(member.action || 'stand')} left={spots[index] + drift} foot={height * 0.22} tall={height * 0.42} />
+          ))}
+        </div>
+      );
+    }
     return (
       <div style={{ ...box, background: '#F5EFEC' }}>
         <div style={{ position: 'absolute', left: 0, top: height * 0.78, width, height: height * 0.22, background: '#E6E5EB' }} />

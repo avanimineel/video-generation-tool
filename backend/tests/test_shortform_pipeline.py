@@ -110,12 +110,39 @@ def test_paper_purple_draws_a_bill_and_keeps_the_camera_locked():
     assert any(item.parameters.get("badge") for item in kept)
     assert not any(item.template_id == "source_reframe" for item in kept)
     assert report["paper_purple"]["scenes"] == 1
+    assert report["paper_purple"]["cast_scenes"] == 0
     assert report["emphasis"]["status"] == "locked"
     assert captions[0].text == "The medical bill grows"
     from app.services.automatic_sfx import sound_cues
     kinds = [cue["kind"] for cue in sound_cues(scenes, 8)]
     assert kinds[0] == "swipe"
     assert "click" in kinds
+
+
+def test_paper_purple_casts_the_elder_and_joins_the_goodbye():
+    captions = [
+        _caption(0.2, 2.4, "Here are five values"),
+        _caption(9.7, 13.5, "When you walk into a room, greet everyone"),
+        _caption(13.8, 16.4, "say goodbye to everyone"),
+        _caption(20.8, 23.4, "If an elder comes into a room and you're seated"),
+        _caption(23.6, 26.8, "offer your seat"),
+    ]
+    state = SimpleNamespace(
+        captions=captions,
+        graphics=[],
+        duration_seconds=30,
+        settings=SimpleNamespace(domain_profile="general", overlay_product_note=""),
+        ai_ingestion={},
+    )
+    kept, report = run_shortform_agents(state, [], ["paper_purple"], True, None)
+    scenes = [item for item in kept if item.parameters.get("effect") == "paper_purple" and not item.parameters.get("badge")]
+    greet = next(item for item in scenes if item.start > 9)
+    assert greet.parameters["cast"][0]["action"] == "wave"
+    assert "goodbye" in " ".join(greet.parameters["scene_card"]["lines"])
+    elder = next(item for item in scenes if item.start > 20)
+    assert elder.parameters["cast"][0]["style"] == "elder"
+    assert "chair" in elder.parameters["props"]
+    assert report["paper_purple"]["cast_scenes"] >= 2
 
 
 def test_a_weak_opening_punches_the_strongest_line_inside_seven_seconds():

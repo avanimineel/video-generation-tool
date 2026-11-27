@@ -52,16 +52,6 @@ MAX_PUNCH_PER_30S = 8
 OPENING_SECONDS = 7.0
 INTERRUPT_SECONDS = 6.0
 SPEECH_LOOKS = ("camera", "paper", "film", "streaming", "flat_vector", "scrapbook", "flat_infographic", "paper_craft")
-PAPER_SUBJECTS = (
-    ("pill", re.compile(r"\b(pills?|medicines?|tablets?|doses?|capsules?)\b", re.I)),
-    ("bill", re.compile(r"\b(bills?|money|rupees?|dollars?|prices?|costs?|fees?)\b", re.I)),
-    ("book", re.compile(r"\b(books?|pages?|novels?)\b", re.I)),
-    ("phone", re.compile(r"\b(phones?|mobiles?|apps?|screens?)\b", re.I)),
-    ("house", re.compile(r"\b(houses?|homes?|rooms?|doors?)\b", re.I)),
-    ("heart", re.compile(r"\b(hearts?)\b", re.I)),
-    ("calendar", re.compile(r"\b(calendars?|dates?|appointments?|weeks?|months?)\b", re.I)),
-    ("cup", re.compile(r"\b(cups?|tea|coffee|water|glasses?)\b", re.I)),
-)
 
 
 def _text(caption) -> str:
@@ -459,17 +449,11 @@ def entity_agent(graphics, story, chosen, choice_made, product_note=""):
     return graphics, counts
 
 
-def paper_subject(text: str) -> str:
-    for name, pattern in PAPER_SUBJECTS:
-        if pattern.search(text or ""):
-            return name
-    return ""
-
-
 def paper_purple_agent(state, graphics, story, chosen, choice_made):
-    """Draw a cream paper scene for a concrete spoken thing. The speaker stays for the other lines."""
+    """Draw one cream paper scene per beat. People, places, and props come from the scene card."""
     if not _allowed(chosen, choice_made, "paper_purple"):
         return graphics, {"status": "off", "scenes": 0, "badges": 0}
+    from app.services.paper_purple_scenes import plan_paper_scenes
     base = [
         graphic for graphic in graphics
         if not (
@@ -488,43 +472,57 @@ def paper_purple_agent(state, graphics, story, chosen, choice_made):
     badge = False
     seen_scene = False
     last_end = -1.0
-    for index, row in enumerate(lines):
-        named = paper_subject(row["text"])
-        opening = (not seen_scene) and (float(row["start"]) < 3.0 or index == 0)
-        if opening or named:
-            start = float(row["start"])
-            if start < last_end:
-                start = last_end
-            end = min(float(row["end"]), start + 3.2)
-            if end - start < 0.8:
-                end = start + 1.2
-            length = end - start
-            if start >= float(row["end"]) - 0.3:
-                continue
-            if seen_scene and used + length > budget:
-                continue
-            placed.append(_graphic(
-                f"paper_purple_{len(placed)}_{int(start * 100)}",
-                start,
-                end,
-                "look_effect",
-                "Paper purple",
-                {
-                    "editorial_generated": True,
-                    "effect": "paper_purple",
-                    "look_overlay": True,
-                    "subject": named or "object",
-                    "badge": False,
-                    "scene_start": round(start, 2),
-                    "scene_end": round(end, 2),
-                    "transition": "cut",
-                },
-            ))
-            used += length
-            seen_scene = True
-            last_end = end
+    covered = set()
+    cast_scenes = 0
+    for card in plan_paper_scenes(lines, story.get("beats")):
+        start = float(card["start"])
+        if start < last_end:
+            start = last_end
+        end = min(float(card["end"]), start + 3.2)
+        if end - start < 0.8:
+            end = start + 1.2
+        length = end - start
+        if start >= float(card["end"]) - 0.3:
             continue
-        if seen_scene and not badge:
+        if seen_scene and used + length > budget:
+            continue
+        scene_card = {
+            "place": card["place"],
+            "cast": card["cast"],
+            "props": card["props"],
+            "lines": card["lines"],
+        }
+        placed.append(_graphic(
+            f"paper_purple_{len(placed)}_{int(start * 100)}",
+            start,
+            end,
+            "look_effect",
+            "Paper purple",
+            {
+                "editorial_generated": True,
+                "effect": "paper_purple",
+                "look_overlay": True,
+                "subject": card["subject"],
+                "place": card["place"],
+                "cast": card["cast"],
+                "props": card["props"],
+                "scene_card": scene_card,
+                "badge": False,
+                "scene_start": round(start, 2),
+                "scene_end": round(end, 2),
+                "transition": "cut",
+            },
+        ))
+        used += length
+        seen_scene = True
+        last_end = end
+        covered.update(card["indexes"])
+        if card["cast"]:
+            cast_scenes += 1
+    if seen_scene and not badge:
+        for row in lines:
+            if row.get("index") in covered:
+                continue
             start = float(row["start"])
             end = min(float(row["end"]), start + 1.2)
             if end - start < 0.6:
@@ -547,13 +545,19 @@ def paper_purple_agent(state, graphics, story, chosen, choice_made):
                 },
             ))
             badge = True
+            break
     full = [item for item in placed if not item.parameters.get("badge")]
 
     def _hits(graphic):
         return getattr(graphic, "template_id", "") == "look_effect" and any(_overlaps(graphic, item) for item in full)
 
     cleaned = [graphic for graphic in base if not _hits(graphic)]
-    return cleaned + placed, {"status": "placed", "scenes": len(full), "badges": 1 if badge else 0}
+    return cleaned + placed, {
+        "status": "placed",
+        "scenes": len(full),
+        "badges": 1 if badge else 0,
+        "cast_scenes": cast_scenes,
+    }
 
 
 def motion_agent(graphics):

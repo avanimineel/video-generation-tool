@@ -213,7 +213,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         }
         if (graphic.template_id === 'authored_title') return null;
         if (graphic.template_id === 'look_effect') {
-          return <LookEffect key={graphic.id} effect={String(graphic.parameters.effect || 'film')} subject={String(graphic.parameters.subject || '')} badge={Boolean(graphic.parameters.badge)} width={referenceWidth} height={referenceHeight} time={currentTime} />;
+          return <LookEffect key={graphic.id} effect={String(graphic.parameters.effect || 'film')} subject={String(graphic.parameters.subject || '')} badge={Boolean(graphic.parameters.badge)} place={String(graphic.parameters.place || '')} cast={Array.isArray(graphic.parameters.cast) ? graphic.parameters.cast : []} props={Array.isArray(graphic.parameters.props) ? graphic.parameters.props : []} width={referenceWidth} height={referenceHeight} time={currentTime} />;
         }
 
         // Same camera maths as the export (burnin_renderer.camera_pose): scale, shift (fraction of frame), rotation.

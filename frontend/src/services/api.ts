@@ -1813,6 +1813,24 @@ export const api = {
     return res.json();
   },
 
+  async acceptPaperScene(data: {
+    lines: string[];
+    card: { place?: string; cast?: { style: string; action: string }[]; props?: string[] };
+    aliases?: { word: string; prop?: string; style?: string; action?: string; place?: string; cast?: number }[];
+    project_id?: string;
+  }): Promise<{ kept: boolean; pending: string[]; aliases?: Record<string, { prop?: string; style?: string; action?: string; place?: string; cast?: number }> }> {
+    const res = await fetch(`${API_BASE}/training/scene-cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'This scene could not be saved.');
+    }
+    return res.json();
+  },
+
   async chooseTranslationLine(data: {
     source_text: string;
     english: string;

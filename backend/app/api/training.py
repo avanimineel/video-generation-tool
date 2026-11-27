@@ -91,6 +91,59 @@ def choose_line(req: ChooseRequest):
     }
 
 
+class SceneCast(BaseModel):
+    style: str = "woman"
+    action: str = "stand"
+
+
+class SceneCardBody(BaseModel):
+    place: str = ""
+    cast: list[SceneCast] = []
+    props: list[str] = []
+
+
+class SceneAlias(BaseModel):
+    word: str = ""
+    prop: str = ""
+    style: str = ""
+    action: str = ""
+    place: str = ""
+    cast: int = 0
+
+
+class AcceptSceneRequest(BaseModel):
+    lines: list[str]
+    card: SceneCardBody
+    aliases: list[SceneAlias] = []
+    project_id: str = ""
+
+
+@router.get("/scene-cards")
+def scene_card_status():
+    from app.services.paper_purple_scenes import load_accepted_cards, load_lexicon
+    lexicon = load_lexicon()
+    return {
+        "pending": lexicon["pending"],
+        "aliases": lexicon["aliases"],
+        "accepted": len(load_accepted_cards(1000)),
+    }
+
+
+@router.post("/scene-cards")
+def keep_scene_card(req: AcceptSceneRequest):
+    from app.services.paper_purple_scenes import accept_scene
+    try:
+        saved = accept_scene(
+            req.lines,
+            req.card.model_dump(),
+            [alias.model_dump() for alias in req.aliases],
+            project_id=req.project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return saved
+
+
 @router.post("/run")
 def run_training_job():
     report = run_training(load_accepted_pairs())
