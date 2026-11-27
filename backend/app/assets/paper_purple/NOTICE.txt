@@ -1,0 +1,4 @@
+Special Elite
+Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI).
+Licensed under the Apache License, Version 2.0. See Apache-2.0.txt.
+The face is used for paper-purple typewriter captions.

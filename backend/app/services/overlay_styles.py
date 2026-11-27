@@ -126,6 +126,12 @@ OVERLAYS: List[Dict[str, object]] = [
         "detail": "Layered paper shapes with a shadow, like a handmade paper cutout.",
         "recommended": ("general", "education", "real_estate", "business", "fitness"),
     },
+    {
+        "id": "paper_purple",
+        "label": "Paper purple",
+        "detail": "A cream paper scene with a lavender cut-paper object, typewriter words, and a torn caption strip. A concrete spoken thing is drawn here instead of searched as stock.",
+        "recommended": ("general", "education", "business", "medical", "finance", "fitness"),
+    },
 ]
 
 LOOK_ORDER = (
@@ -143,6 +149,7 @@ LOOK_ORDER = (
     "scrapbook",
     "flat_infographic",
     "paper_craft",
+    "paper_purple",
 )
 
 _BY_ID = {str(item["id"]): item for item in OVERLAYS}
@@ -264,7 +271,12 @@ def instruction(chosen: List[str], note: str = "") -> str:
     if "product_swap" in chosen:
         product = note or "the named product"
         lines.append(f"When a product is named, search stock for a hand holding {product}. Do not invent a brand screen.")
-    looks = [key for key in LOOK_ORDER if key in chosen]
+    if "paper_purple" in chosen:
+        lines.append(
+            "Paper purple draws a concrete spoken thing as a cream paper scene with one lavender object. "
+            "Keep an evidence search for a named fact. Leave the camera locked, with no punch-in."
+        )
+    looks = [key for key in LOOK_ORDER if key in chosen and key != "paper_purple"]
     if looks:
         names = ", ".join(str(_BY_ID[key]["label"]) for key in looks)
         lines.append(f"Picture looks already placed on the timeline: {names}. Do not search stock for those textures.")
@@ -282,6 +294,13 @@ def constrain_decisions(decisions, chosen: List[str], choice_made: bool):
     gated = set().union(*GATED_STRATEGIES.values())
     for decision in decisions:
         strategy = getattr(decision, "strategy", "")
+        if "paper_purple" in chosen and strategy in ("BROLL_VIDEO", "STOCK_IMAGE"):
+            role = str(getattr(decision, "visual_role", "") or "illustration")
+            if role not in ("identity", "evidence"):
+                decision.intervene = False
+                decision.strategy = "NO_INTERVENTION"
+                decision.rationale = "Paper purple draws this line on the cream paper."
+                continue
         if strategy == "MAP" and "location_maps" in chosen:
             place = (getattr(decision, "anchor_phrase", "") or getattr(decision, "display_text", "") or "the named place").strip()
             decision.strategy = "STOCK_IMAGE"
@@ -315,6 +334,42 @@ def apply_kinetic_captions(state, chosen: List[str], choice_made: bool) -> None:
         style.highlight_scale = 1.08
         style.font_weight = "900"
         style.animation_type = "pop"
+
+
+def apply_paper_purple_captions(state, chosen: List[str], choice_made: bool) -> int:
+    """Ink the spoken words on a torn cream strip. The words and their times stay as transcribed."""
+    if not choice_made or "paper_purple" not in chosen:
+        return 0
+    changed = 0
+    for caption in getattr(state, "captions", []) or []:
+        style = getattr(caption, "style", None)
+        if style is None:
+            continue
+        style.font_family = "Special Elite"
+        style.font_weight = "400"
+        style.text_color = "#4F4947"
+        style.highlight_active_color = "#4F4947"
+        style.highlight_past_color = "#4F4947"
+        style.highlight_future_color = "#C3BCB8"
+        style.has_highlight = True
+        style.highlight_bounce = False
+        style.highlight_scale = 1.0
+        style.animation_type = "none"
+        style.has_background = True
+        style.background_color = "#F5EFEC"
+        style.background_opacity = 1.0
+        style.corner_radius = 2
+        style.padding_x = 22
+        style.padding_y = 14
+        style.outline_width = 0
+        style.has_shadow = False
+        style.shadow_blur = 0
+        style.is_uppercase = False
+        style.max_lines = 2
+        style.contrast_block_mode = "paper_purple"
+        style.letter_spacing = 0.2
+        changed += 1
+    return changed
 
 
 def add_punch_ins(state, graphics, chosen: List[str], choice_made: bool):
@@ -367,7 +422,7 @@ def mark_sound_hits(graphics, chosen: List[str], choice_made: bool) -> None:
 def add_look_overlays(state, graphics, chosen: List[str], choice_made: bool):
     """Place each selected picture look on its own short span. Unselected looks stay off."""
     graphics = [g for g in graphics if getattr(g, "template_id", "") != "look_effect"]
-    selected = [key for key in LOOK_ORDER if key in chosen]
+    selected = [key for key in LOOK_ORDER if key in chosen and key != "paper_purple"]
     if not choice_made or not selected:
         return graphics
     from app.core.models import MotionGraphicItem
@@ -401,10 +456,144 @@ def add_look_overlays(state, graphics, chosen: List[str], choice_made: bool):
     return graphics
 
 
-def paint_look_effect(image, effect: str, t: float):
+def _paper_grain(size):
+    """The pack's cream paper scan, resized once per frame size."""
+    from pathlib import Path
+    from PIL import Image
+    path = Path(__file__).resolve().parent.parent / "assets" / "paper_purple" / "paper.jpg"
+    if not path.is_file():
+        return None
+    cached = getattr(_paper_grain, "cache", {})
+    if cached.get("size") == size:
+        return cached.get("image")
+    try:
+        image = Image.open(path).convert("RGBA").resize(size, Image.Resampling.BILINEAR)
+    except OSError:
+        return None
+    _paper_grain.cache = {"size": size, "image": image}
+    return image
+
+
+def _paper_subject(draw, width, height, subject: str, shift: int):
+    """One borderless cut-paper object. No black outline and no scale bounce."""
+    lavender = (144, 96, 222, 238)
+    mint = (191, 227, 220, 235)
+    cream = (255, 252, 248, 240)
+    shadow = (79, 73, 71, 42)
+    left = int(width * 0.28) + shift
+    top = int(height * 0.34)
+    right = int(width * 0.72) + shift
+    bottom = int(height * 0.72)
+    if subject == "book":
+        draw.rounded_rectangle((left + 10, top + 12, right + 10, bottom + 12), radius=18, fill=shadow)
+        draw.rounded_rectangle((left, top, right, bottom), radius=18, fill=lavender)
+        draw.rounded_rectangle((left + int(width * 0.06), top + int(height * 0.04), right - int(width * 0.05), bottom - int(height * 0.04)), radius=8, fill=cream)
+        draw.rectangle((right - int(width * 0.08), top, right - int(width * 0.03), top + int(height * 0.16)), fill=mint)
+    elif subject == "bill":
+        draw.rounded_rectangle((left + 8, top + 14, right + 8, bottom - int(height * 0.06) + 14), radius=16, fill=shadow)
+        draw.rounded_rectangle((left, top + 8, right, bottom - int(height * 0.08)), radius=16, fill=cream)
+        draw.rectangle((left, top + 8, left + int(width * 0.08), bottom - int(height * 0.08)), fill=lavender)
+        draw.rectangle((left + int(width * 0.16), top + int(height * 0.1), right - int(width * 0.08), top + int(height * 0.14)), fill=mint)
+    elif subject == "phone":
+        body = (int(width * 0.36) + shift, int(height * 0.26), int(width * 0.64) + shift, int(height * 0.76))
+        draw.rounded_rectangle((body[0] + 8, body[1] + 10, body[2] + 8, body[3] + 10), radius=28, fill=shadow)
+        draw.rounded_rectangle(body, radius=28, fill=lavender)
+        draw.rounded_rectangle((body[0] + int(width * 0.03), body[1] + int(height * 0.05), body[2] - int(width * 0.03), body[3] - int(height * 0.05)), radius=16, fill=cream)
+        draw.ellipse((int(width * 0.47) + shift, int(height * 0.68), int(width * 0.53) + shift, int(height * 0.72)), fill=mint)
+    elif subject == "house":
+        wall = (left + int(width * 0.06), int(height * 0.46), right - int(width * 0.06), bottom)
+        draw.rectangle((wall[0] + 8, wall[1] + 10, wall[2] + 8, wall[3] + 10), fill=shadow)
+        draw.rectangle(wall, fill=mint)
+        draw.polygon(((left, int(height * 0.48)), (int(width * 0.5) + shift, int(height * 0.28)), (right, int(height * 0.48))), fill=lavender)
+    elif subject == "heart":
+        cx, cy = int(width * 0.5) + shift, int(height * 0.48)
+        radius = int(min(width, height) * 0.12)
+        draw.ellipse((cx - radius * 2 + 8, cy - radius + 10, cx + 8, cy + radius + 10), fill=shadow)
+        draw.ellipse((cx - radius * 2, cy - radius, cx, cy + radius), fill=lavender)
+        draw.ellipse((cx, cy - radius, cx + radius * 2, cy + radius), fill=lavender)
+        draw.polygon(((cx - radius * 2, cy), (cx + radius * 2, cy), (cx, cy + radius * 3)), fill=lavender)
+    elif subject == "calendar":
+        draw.rounded_rectangle((left + 8, top + 12, right + 8, bottom + 12), radius=16, fill=shadow)
+        draw.rounded_rectangle((left, top, right, bottom), radius=16, fill=cream)
+        draw.rectangle((left, top, right, top + int(height * 0.08)), fill=lavender)
+        cell = int(width * 0.07)
+        for row in range(3):
+            for col in range(4):
+                x = left + int(width * 0.06) + col * (cell + 6)
+                y = top + int(height * 0.14) + row * (cell + 6)
+                draw.rounded_rectangle((x, y, x + cell, y + cell), radius=4, fill=mint if (row + col) % 2 == 0 else lavender)
+    elif subject == "pill":
+        mid_top = int(height * 0.42)
+        mid_bottom = int(height * 0.58)
+        draw.rounded_rectangle((left + 8, mid_top + 10, right + 8, mid_bottom + 10), radius=40, fill=shadow)
+        draw.rounded_rectangle((left, mid_top, right, mid_bottom), radius=40, fill=lavender)
+        draw.rectangle((int(width * 0.46) + shift, mid_top, int(width * 0.54) + shift, mid_bottom), fill=mint)
+    elif subject == "cup":
+        draw.polygon(
+            (
+                (left + int(width * 0.08) + 8, top + 12),
+                (right - int(width * 0.08) + 8, top + 12),
+                (right - int(width * 0.14) + 8, bottom + 12),
+                (left + int(width * 0.14) + 8, bottom + 12),
+            ),
+            fill=shadow,
+        )
+        draw.polygon(
+            (
+                (left + int(width * 0.08), top),
+                (right - int(width * 0.08), top),
+                (right - int(width * 0.14), bottom),
+                (left + int(width * 0.14), bottom),
+            ),
+            fill=lavender,
+        )
+        draw.ellipse((left + int(width * 0.1), top - int(height * 0.03), right - int(width * 0.1), top + int(height * 0.08)), fill=mint)
+    else:
+        draw.ellipse((left + 10, top + 12, right + 10, bottom + 12), fill=shadow)
+        draw.ellipse((left, top, right, bottom), fill=lavender)
+        draw.rounded_rectangle((int(width * 0.42) + shift, int(height * 0.46), int(width * 0.62) + shift, int(height * 0.62)), radius=10, fill=mint)
+
+
+def paint_paper_purple(image, t: float, parameters=None):
+    """Full-screen cream paper, or one small badge parked low and clear of the caption."""
+    import math
+    from PIL import Image, ImageDraw
+    parameters = parameters or {}
+    width, height = image.size
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    badge = bool(parameters.get("badge"))
+    if badge:
+        mark = (int(width * 0.08), int(height * 0.86), int(width * 0.26), int(height * 0.94))
+        draw.rounded_rectangle((mark[0] + 4, mark[1] + 4, mark[2] + 4, mark[3] + 4), radius=10, fill=(79, 73, 71, 40))
+        draw.rounded_rectangle(mark, radius=10, fill=(144, 96, 222, 235))
+        draw.ellipse((mark[0] + 8, mark[1] + 6, mark[0] + 22, mark[1] + 20), fill=(191, 227, 220, 235))
+    else:
+        draw.rectangle((0, 0, width, height), fill=(245, 239, 236, 242))
+        grain = _paper_grain((width, height))
+        if grain is not None:
+            tint = Image.new("RGBA", (width, height), (245, 239, 236, 255))
+            layer.alpha_composite(Image.blend(tint, grain, 0.22))
+            draw = ImageDraw.Draw(layer)
+        else:
+            import random
+            rng = random.Random(3)
+            for _ in range(90):
+                draw.point((rng.randrange(width), rng.randrange(height)), fill=(79, 73, 71, 22))
+        draw.rectangle((0, int(height * 0.78), width, height), fill=(230, 229, 235, 255))
+        shift = int(math.sin(float(t) * 0.8) * width * 0.012)
+        _paper_subject(draw, width, height, str(parameters.get("subject") or "object"), shift)
+    composed = Image.alpha_composite(image.convert("RGBA"), layer)
+    image.paste(composed.convert(image.mode))
+    return image
+
+
+def paint_look_effect(image, effect: str, t: float, parameters=None):
     """Draw one picture look onto an RGB frame. The speaker stays visible underneath."""
     import random
     from PIL import Image, ImageDraw
+    if effect == "paper_purple":
+        return paint_paper_purple(image, t, parameters)
     effect = effect if effect in LOOK_ORDER else "film"
     width, height = image.size
     layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))

@@ -213,7 +213,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         }
         if (graphic.template_id === 'authored_title') return null;
         if (graphic.template_id === 'look_effect') {
-          return <LookEffect key={graphic.id} effect={String(graphic.parameters.effect || 'film')} width={referenceWidth} height={referenceHeight} time={currentTime} />;
+          return <LookEffect key={graphic.id} effect={String(graphic.parameters.effect || 'film')} subject={String(graphic.parameters.subject || '')} badge={Boolean(graphic.parameters.badge)} width={referenceWidth} height={referenceHeight} time={currentTime} />;
         }
 
         // Same camera maths as the export (burnin_renderer.camera_pose): scale, shift (fraction of frame), rotation.
@@ -1997,6 +1997,10 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
 
         // Check if a graphic / split-screen is active at this moment
         const activeGraphic = graphics.find(g => currentTime >= g.start && currentTime <= g.end);
+        const paperScene = graphics.some(
+          g => currentTime >= g.start && currentTime < g.end && g.template_id === 'look_effect' && g.parameters?.effect === 'paper_purple' && !g.parameters?.badge
+        );
+        const paperStrip = style.contrast_block_mode === 'paper_purple';
         const isSplitActive = Boolean(
           activeGraphic?.template_id === 'split_screen_vertical' ||
           activeGraphic?.template_id === 'split_silhouette_walking' ||
@@ -2005,7 +2009,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
         );
 
         // Effective position: if during graphic/split, use dedicated override, or default to 0.90 for split-screen to keep off the speaker's face!
-        const effectivePosY = activeGraphic
+        const effectivePosY = paperScene
+          ? 0.20
+          : activeGraphic
           ? (caption.pos_y_during_graphic ?? (isSplitActive ? 0.90 : caption.pos_y))
           : caption.pos_y;
         const effectivePosX = activeGraphic
@@ -2062,15 +2068,24 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
             {/* Rounded Background Box & Styled Words */}
             <div
               style={{
-                backgroundColor: containerBg,
-                borderRadius: containerRadius,
+                position: "relative",
+                backgroundColor: paperStrip ? "#F5EFEC" : containerBg,
+                borderRadius: paperStrip ? "2px" : containerRadius,
                 padding: isDocMinimalist || isPerWord ? "2px 4px" : `${style.padding_y ?? 10}px ${style.padding_x ?? 18}px`,
-                boxShadow: !isDocMinimalist && !isPerWord && style.has_background && style.shadow_blur
+                boxShadow: paperStrip
+                  ? "0 10px 22px rgba(79,73,71,0.16)"
+                  : !isDocMinimalist && !isPerWord && style.has_background && style.shadow_blur
                   ? `${style.shadow_offset_x}px ${style.shadow_offset_y}px ${style.shadow_blur}px ${style.shadow_color}`
                   : "0 2px 8px rgba(0,0,0,0.45)"
               }}
-              className={`inline-block transition-all ${isDocMinimalist || isPerWord ? "" : "backdrop-blur-sm"}`}
+              className={`inline-block transition-all ${paperStrip || isDocMinimalist || isPerWord ? "" : "backdrop-blur-sm"}`}
             >
+              {paperStrip && (
+                <>
+                  <div style={{ position: "absolute", left: 16, top: -7, width: 36, height: 12, background: "#EDE5FA", transform: "rotate(-8deg)" }} />
+                  <div style={{ position: "absolute", right: 18, top: -6, width: 32, height: 11, background: "#BFE3DC", transform: "rotate(6deg)" }} />
+                </>
+              )}
               {/* Word-Level Dynamic Text Engine: Pacing, Cadence & Keyword Emphasis */}
               {caption.words && caption.words.length > 0 ? (() => {
                 const pacingMode = style.pacing_mode || "full_line";
@@ -2110,11 +2125,15 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                     }
 
                     // Clean static subtitles: zero word bouncing or distracting karaoke shifts
-                    const wordColor = style.text_color || "#FFFFFF";
+                    const wordColor = paperStrip
+                      ? (currentTime + 0.02 >= w.start ? (style.text_color || "#4F4947") : (style.highlight_future_color || "#C3BCB8"))
+                      : (style.text_color || "#FFFFFF");
                     const transform = "none";
 
                     let textShadow = "none";
-                    if (isDocMinimalist) {
+                    if (paperStrip) {
+                      textShadow = "none";
+                    } else if (isDocMinimalist) {
                       textShadow = "0px 2px 4px rgba(0,0,0,0.9), 0px 1px 2px rgba(0,0,0,0.95)";
                     } else if (isShadowEnabled) {
                       const shadowParts: string[] = [];
@@ -2143,12 +2162,14 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                           fontSize: `${displayFontSize}px`,
                           color: wordColor || "#FFFFFF",
                           transform,
-                          textShadow: textShadow === "none"
+                          textShadow: paperStrip
+                            ? "none"
+                            : textShadow === "none"
                             ? "0 2px 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95)"
                             : textShadow,
-                          fontFamily: style.font_family || "Montserrat, sans-serif",
+                          fontFamily: paperStrip ? '"Special Elite", ui-monospace, monospace' : (style.font_family || "Montserrat, sans-serif"),
                           fontStyle: "normal",
-                          fontWeight: style.font_weight || "700",
+                          fontWeight: paperStrip ? 400 : (style.font_weight || "700"),
                           backgroundColor: isPerWord ? style.background_color : undefined,
                           borderRadius: isPerWord ? `${Math.min(style.corner_radius ?? 6, 16)}px` : undefined,
                           padding: isPerWord ? `${Math.max(2, style.padding_y)}px ${Math.max(4, style.padding_x)}px` : undefined,
@@ -2229,15 +2250,15 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 /* Fallback if words array is not yet split */
                 <span
                   style={{
-                    fontFamily: style.font_family || "Montserrat, sans-serif",
-                    fontWeight: style.font_weight || "700",
+                    fontFamily: paperStrip ? '"Special Elite", ui-monospace, monospace' : (style.font_family || "Montserrat, sans-serif"),
+                    fontWeight: paperStrip ? 400 : (style.font_weight || "700"),
                     fontSize: `${displayFontSize}px`,
-                    color: style.text_color || "#FFFFFF",
+                    color: paperStrip ? (style.text_color || "#4F4947") : (style.text_color || "#FFFFFF"),
                     lineHeight: style.line_height || 1.2,
                     letterSpacing: `${style.letter_spacing ?? 0}px`,
                     textTransform: style.is_uppercase ? "uppercase" : "none",
                     whiteSpace: style.max_lines === 1 ? "nowrap" : "pre-line",
-                    textShadow: "0 2px 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95)"
+                    textShadow: paperStrip ? "none" : "0 2px 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.95)"
                   }}
                   className="font-extrabold"
                 >

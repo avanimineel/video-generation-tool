@@ -52,6 +52,16 @@ MAX_PUNCH_PER_30S = 8
 OPENING_SECONDS = 7.0
 INTERRUPT_SECONDS = 6.0
 SPEECH_LOOKS = ("camera", "paper", "film", "streaming", "flat_vector", "scrapbook", "flat_infographic", "paper_craft")
+PAPER_SUBJECTS = (
+    ("pill", re.compile(r"\b(pills?|medicines?|tablets?|doses?|capsules?)\b", re.I)),
+    ("bill", re.compile(r"\b(bills?|money|rupees?|dollars?|prices?|costs?|fees?)\b", re.I)),
+    ("book", re.compile(r"\b(books?|pages?|novels?)\b", re.I)),
+    ("phone", re.compile(r"\b(phones?|mobiles?|apps?|screens?)\b", re.I)),
+    ("house", re.compile(r"\b(houses?|homes?|rooms?|doors?)\b", re.I)),
+    ("heart", re.compile(r"\b(hearts?)\b", re.I)),
+    ("calendar", re.compile(r"\b(calendars?|dates?|appointments?|weeks?|months?)\b", re.I)),
+    ("cup", re.compile(r"\b(cups?|tea|coffee|water|glasses?)\b", re.I)),
+)
 
 
 def _text(caption) -> str:
@@ -271,21 +281,26 @@ def _graphic(item_id, start, end, template, title, parameters):
 
 def caption_agent(state, chosen, choice_made):
     """Highlight the spoken word inside the existing clause. Do not recut the line into short boxes."""
-    if not _allowed(chosen, choice_made, "kinetic_captions"):
+    if not _allowed(chosen, choice_made, "kinetic_captions") and not _allowed(chosen, choice_made, "paper_purple"):
         return {"status": "waiting" if not choice_made else "off", "sync_ms": 80}
     changed = 0
-    for caption in getattr(state, "captions", None) or []:
-        style = getattr(caption, "style", None)
-        if style is None:
-            continue
-        style.has_highlight = True
-        style.highlight_bounce = True
-        color = str(getattr(getattr(state, "settings", None), "caption_highlight_color", "") or "#F5E642")
-        style.highlight_active_color = color if color.startswith("#") and len(color) in (4, 7) else "#F5E642"
-        style.highlight_scale = 1.08
-        style.font_weight = "900"
-        style.animation_type = "pop"
-        changed += 1
+    if _allowed(chosen, choice_made, "kinetic_captions"):
+        for caption in getattr(state, "captions", None) or []:
+            style = getattr(caption, "style", None)
+            if style is None:
+                continue
+            style.has_highlight = True
+            style.highlight_bounce = True
+            color = str(getattr(getattr(state, "settings", None), "caption_highlight_color", "") or "#F5E642")
+            style.highlight_active_color = color if color.startswith("#") and len(color) in (4, 7) else "#F5E642"
+            style.highlight_scale = 1.08
+            style.font_weight = "900"
+            style.animation_type = "pop"
+            changed += 1
+    if _allowed(chosen, choice_made, "paper_purple"):
+        from app.services.overlay_styles import apply_paper_purple_captions
+        changed = apply_paper_purple_captions(state, chosen, choice_made)
+        return {"status": "paper_purple", "captions": changed, "sync_ms": 80, "chunking": "spoken_clause"}
     return {"status": "highlight", "captions": changed, "sync_ms": 80, "chunking": "spoken_clause"}
 
 
@@ -334,6 +349,8 @@ def emphasis_agent(state, graphics, story, chosen, choice_made):
     """Punch in on an emphasized spoken line, at least 3 seconds apart, at most 8 per 30 seconds."""
     graphics = [graphic for graphic in graphics if not ((getattr(graphic, "parameters", None) or {}).get("retention_camera"))]
     opening = opening_target(story)
+    if _allowed(chosen, choice_made, "paper_purple"):
+        return graphics, {"status": "locked", "added": 0, "opening": opening}
     if not _allowed(chosen, choice_made, "punch_in"):
         return graphics, {"status": "waiting" if not choice_made else "off", "added": 0, "opening": opening}
     added = []
@@ -440,6 +457,103 @@ def entity_agent(graphics, story, chosen, choice_made, product_note=""):
                 counts["products"] += 1
     counts["status"] = "placed"
     return graphics, counts
+
+
+def paper_subject(text: str) -> str:
+    for name, pattern in PAPER_SUBJECTS:
+        if pattern.search(text or ""):
+            return name
+    return ""
+
+
+def paper_purple_agent(state, graphics, story, chosen, choice_made):
+    """Draw a cream paper scene for a concrete spoken thing. The speaker stays for the other lines."""
+    if not _allowed(chosen, choice_made, "paper_purple"):
+        return graphics, {"status": "off", "scenes": 0, "badges": 0}
+    base = [
+        graphic for graphic in graphics
+        if not (
+            getattr(graphic, "template_id", "") == "look_effect"
+            and (getattr(graphic, "parameters", None) or {}).get("effect") == "paper_purple"
+        )
+    ]
+    lines = story.get("lines") or []
+    duration = float(getattr(state, "duration_seconds", 0) or 0)
+    if duration < 1 and lines:
+        duration = max(float(row["end"]) for row in lines)
+    duration = max(duration, 4.0)
+    budget = duration * 0.75
+    used = 0.0
+    placed = []
+    badge = False
+    seen_scene = False
+    last_end = -1.0
+    for index, row in enumerate(lines):
+        named = paper_subject(row["text"])
+        opening = (not seen_scene) and (float(row["start"]) < 3.0 or index == 0)
+        if opening or named:
+            start = float(row["start"])
+            if start < last_end:
+                start = last_end
+            end = min(float(row["end"]), start + 3.2)
+            if end - start < 0.8:
+                end = start + 1.2
+            length = end - start
+            if start >= float(row["end"]) - 0.3:
+                continue
+            if seen_scene and used + length > budget:
+                continue
+            placed.append(_graphic(
+                f"paper_purple_{len(placed)}_{int(start * 100)}",
+                start,
+                end,
+                "look_effect",
+                "Paper purple",
+                {
+                    "editorial_generated": True,
+                    "effect": "paper_purple",
+                    "look_overlay": True,
+                    "subject": named or "object",
+                    "badge": False,
+                    "scene_start": round(start, 2),
+                    "scene_end": round(end, 2),
+                    "transition": "cut",
+                },
+            ))
+            used += length
+            seen_scene = True
+            last_end = end
+            continue
+        if seen_scene and not badge:
+            start = float(row["start"])
+            end = min(float(row["end"]), start + 1.2)
+            if end - start < 0.6:
+                end = start + 0.9
+            placed.append(_graphic(
+                f"paper_purple_badge_{int(start * 100)}",
+                start,
+                end,
+                "look_effect",
+                "Paper purple",
+                {
+                    "editorial_generated": True,
+                    "effect": "paper_purple",
+                    "look_overlay": True,
+                    "subject": "badge",
+                    "badge": True,
+                    "scene_start": round(start, 2),
+                    "scene_end": round(end, 2),
+                    "transition": "cut",
+                },
+            ))
+            badge = True
+    full = [item for item in placed if not item.parameters.get("badge")]
+
+    def _hits(graphic):
+        return getattr(graphic, "template_id", "") == "look_effect" and any(_overlaps(graphic, item) for item in full)
+
+    cleaned = [graphic for graphic in base if not _hits(graphic)]
+    return cleaned + placed, {"status": "placed", "scenes": len(full), "badges": 1 if badge else 0}
 
 
 def motion_agent(graphics):
@@ -677,6 +791,7 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
         graphics, density_drops = density_agent(graphics)
     else:
         graphics, interrupts = interrupt_agent(graphics, story, chosen, False)
+    graphics, paper = paper_purple_agent(state, graphics, story, chosen, choice_made)
     motion = motion_agent(graphics)
     stock = stock_vfx_agent(graphics)
     sound = sound_agent(state, graphics, chosen, choice_made)
@@ -710,6 +825,7 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
             "relevance",
             "interrupt",
             "density",
+            "paper_purple",
             "motion",
             "stock_vfx",
             "sound",
@@ -725,6 +841,7 @@ def run_shortform_agents(state, graphics=None, chosen=None, choice_made=False, r
         "relevance_dropped": relevance_drops,
         "interrupt": interrupts,
         "density_dropped": density_drops,
+        "paper_purple": paper,
         "pauses": pauses,
         "motion": motion,
         "stock_vfx": stock,

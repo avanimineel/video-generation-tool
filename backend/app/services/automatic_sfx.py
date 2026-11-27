@@ -65,6 +65,10 @@ def sound_cues(graphics, duration):
             elif style in ('bold_pop', 'editorial'): events = [(g.start, 'pop')]
         elif g.template_id == 'source_reframe' and p.get('motion_curve') == 'hold':
             events = [(g.start, 'whoosh')]  # A hard punch-in is a cut the viewer can hear.
+        elif g.template_id == 'look_effect' and p.get('effect') == 'paper_purple':
+            events = [(g.start, 'pop' if p.get('badge') else 'swipe')]
+            if not p.get('badge') and (g.end - g.start) >= 1.6:
+                events.append((g.start + (g.end - g.start) * 0.45, 'click'))
         for at, kind in events:
             if 0 <= at < min(g.end, duration):
                 cues.append({'start': round(at, 3), 'kind': kind, 'graphic_id': g.id})
