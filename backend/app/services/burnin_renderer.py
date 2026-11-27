@@ -113,6 +113,9 @@ class FontManager:
             path='/System/Library/Fonts/Supplemental/SnellRoundhand.ttc'
         elif font_type == 'mono':
             path = self.mono_path
+        elif font_type == 'typewriter':
+            bundled = os.path.join(os.path.dirname(__file__), '..', 'assets', 'paper_purple', 'SpecialElite-Regular.ttf')
+            path = bundled if os.path.exists(bundled) else self.mono_path
         elif font_type == 'regular':
             path = self.regular_path
         # Editorial pair: a medium grotesque with a high-contrast italic serif accent.
@@ -1421,6 +1424,25 @@ def render_corner_bug(canvas: Image.Image, settings_obj: Any, canvas_w: int, fon
     d.text((20, ph // 2), text, font=font, fill=(255, 255, 255, 255), anchor='lm')
     canvas.paste(pill, (canvas_w - pw - 16, 16), pill)
 
+def _torn_cream_strip(canvas: Image.Image, left: int, top: int, box_w: int, box_h: int) -> None:
+    """Warm cream caption paper with shallow notches and two tape tabs. No black bar."""
+    strip = Image.new("RGBA", (max(1, box_w), max(1, box_h)), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(strip)
+    notch = max(3, box_h // 16)
+    steps = 8
+    points = []
+    for index in range(steps + 1):
+        x = int(box_w * index / steps)
+        points.append((x, 0 if index % 2 == 0 else notch))
+    for index in range(steps, -1, -1):
+        x = int(box_w * index / steps)
+        points.append((x, box_h - (0 if index % 2 == 0 else notch)))
+    pen.polygon(points, fill=(245, 239, 236, 255))
+    pen.rectangle((16, 1, min(box_w - 8, 58), 11), fill=(237, 229, 250, 230))
+    pen.rectangle((max(8, box_w - 64), 1, max(20, box_w - 22), 11), fill=(191, 227, 220, 230))
+    canvas.paste(strip, (left, top), strip)
+
+
 def render_caption_overlay(
     canvas: Image.Image,
     caption: CaptionItem,
@@ -1429,7 +1451,8 @@ def render_caption_overlay(
     canvas_h: int,
     is_split_active: bool,
     fonts: FontManager,
-    brand_preset: str = "documentary_minimalist"
+    brand_preset: str = "documentary_minimalist",
+    paper_scene: bool = False,
 ) -> None:
     style = caption.style
     text = caption.translated_text if caption.translated_text else caption.text
@@ -1438,10 +1461,13 @@ def render_caption_overlay(
 
     # Respect style.has_background unconditionally!
     is_doc_minimalist = not style.has_background
+    paper_strip = getattr(style, "contrast_block_mode", "") == "paper_purple"
 
     s = canvas_w / 380.0
 
-    if is_split_active:
+    if paper_strip and paper_scene:
+        pos_y = 0.20
+    elif is_split_active:
         pos_y = caption.pos_y_during_graphic if caption.pos_y_during_graphic is not None else 0.90
     else:
         pos_y = caption.pos_y if caption.pos_y is not None else 0.82
@@ -1451,7 +1477,7 @@ def render_caption_overlay(
     center_y = int(pos_y * canvas_h)
 
     base_size = max(14, int(style.font_size * s))
-    font_sans = fonts.get_font('bold', base_size)
+    font_sans = fonts.get_font('typewriter' if paper_strip else 'bold', base_size)
     font_serif = fonts.get_font('serif', base_size)
 
     has_active_word_highlight = getattr(style, 'has_highlight', True) is not False
@@ -1460,21 +1486,27 @@ def render_caption_overlay(
     act_col = hex_to_rgb(style.highlight_active_color, (56, 189, 248))
     past_col = hex_to_rgb(style.highlight_past_color, (176, 176, 176))
     future_col = default_text_col
+    ink = (79, 73, 71)
+    ghost = (195, 188, 184)
 
     word_items: List[Tuple[str, ImageFont.ImageFont, Tuple[int, int, int]]] = []
 
     if caption.words and len(caption.words) > 0:
         for w in caption.words:
             w_str = w.word.upper() if style.is_uppercase else w.word
-            word_items.append((w_str, font_sans, default_text_col))
+            if paper_strip:
+                spoken = t + 0.02 >= float(getattr(w, "start", 0) or 0)
+                word_items.append((w_str, font_sans, ink if spoken else ghost))
+            else:
+                word_items.append((w_str, font_sans, default_text_col))
     else:
         raw_words = text.split()
         for rw in raw_words:
             is_kw, kw_cat, kw_color = check_is_keyword(rw)
             w_is_kw = has_keyword_emp and is_kw
-            fnt = font_serif if (w_is_kw and kw_cat in ['condition', 'organ']) else font_sans
-            col = default_text_col
-            if w_is_kw:
+            fnt = font_sans if paper_strip else (font_serif if (w_is_kw and kw_cat in ['condition', 'organ']) else font_sans)
+            col = ink if paper_strip else default_text_col
+            if w_is_kw and not paper_strip:
                 col = hex_to_rgb(kw_color, kw_color)
             word_items.append((rw, fnt, col))
 
@@ -1503,8 +1535,10 @@ def render_caption_overlay(
     left = center_x - box_w // 2
     top = center_y - box_h // 2
 
-    # Draw rounded background box / pill
-    if style.has_background:
+    # Draw rounded background box / pill, or the torn cream strip for paper purple.
+    if paper_strip:
+        _torn_cream_strip(canvas, left, top, box_w, box_h)
+    elif style.has_background:
         pill = Image.new('RGBA', (box_w, box_h), (0, 0, 0, 0))
         d_pill = ImageDraw.Draw(pill)
         bg_rgb = hex_to_rgb(style.background_color, (0, 0, 0))
@@ -1517,9 +1551,9 @@ def render_caption_overlay(
     d = ImageDraw.Draw(canvas)
     cur_x = left + pad_x
 
-    outline_w = int(getattr(style, 'outline_width', 0) * s)
+    outline_w = 0 if paper_strip else int(getattr(style, 'outline_width', 0) * s)
     outline_col = hex_to_rgb(getattr(style, 'outline_color', '#000000'), (0, 0, 0))
-    has_shadow = getattr(style, 'has_shadow', True) is not False
+    has_shadow = False if paper_strip else getattr(style, 'has_shadow', True) is not False
 
     for idx, (w_str, fnt, col) in enumerate(word_items):
         if has_shadow:
@@ -1756,7 +1790,7 @@ class BurnInRenderer:
                             render_dimension_callout(canvas, ov, canvas_w, canvas_h, fonts)
                         if ov.template_id == "look_effect":
                             from app.services.overlay_styles import paint_look_effect
-                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t)
+                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t, ov.parameters)
 
 
                     # 3. Corner Bug Watermark
@@ -1778,7 +1812,13 @@ class BurnInRenderer:
                         for g in active_graphics
                     )
                     if active_cap and not is_title_active and project.settings.caption_overlay:
-                        render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset)
+                        paper_scene = any(
+                            g.template_id == "look_effect"
+                            and (g.parameters or {}).get("effect") == "paper_purple"
+                            and not (g.parameters or {}).get("badge")
+                            for g in active_graphics
+                        )
+                        render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset, paper_scene)
 
                     proc.stdin.write(canvas.tobytes())
 
@@ -1834,7 +1874,7 @@ class BurnInRenderer:
                             render_dimension_callout(canvas, ov, canvas_w, canvas_h, fonts)
                         if ov.template_id == "look_effect":
                             from app.services.overlay_styles import paint_look_effect
-                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t)
+                            paint_look_effect(canvas, str(ov.parameters.get("effect") or ""), t, ov.parameters)
 
                     if not subtitles_only:
                         render_corner_bug(canvas, project.settings, canvas_w, fonts)
@@ -1853,7 +1893,13 @@ class BurnInRenderer:
                         for g in active_graphics
                     )
                     if active_cap and not is_title_active and project.settings.caption_overlay:
-                        render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset)
+                        paper_scene = any(
+                            g.template_id == "look_effect"
+                            and (g.parameters or {}).get("effect") == "paper_purple"
+                            and not (g.parameters or {}).get("badge")
+                            for g in active_graphics
+                        )
+                        render_caption_overlay(canvas, active_cap, t, canvas_w, canvas_h, bool(active_split), fonts, project.settings.brand_preset, paper_scene)
 
                     proc.stdin.write(canvas.tobytes())
 

@@ -84,10 +84,38 @@ def test_emphasis_and_entity_use_the_spoken_line():
     assert punch.parameters["easing"] == "easing.bezier"
     assert report["agents"] == [
         "story", "brief", "caption", "emphasis", "entity", "relevance", "interrupt", "density",
-        "motion", "stock_vfx", "sound", "platform", "remotion", "measure",
+        "paper_purple", "motion", "stock_vfx", "sound", "platform", "remotion", "measure",
     ]
     assert report["sound"]["status"] == "marked"
     assert report["stock_vfx"]["fallback"] == "procedural"
+
+
+def test_paper_purple_draws_a_bill_and_keeps_the_camera_locked():
+    captions = [
+        _caption(0.3, 2.4, "The medical bill grows"),
+        _caption(4.0, 6.0, "Hello again"),
+    ]
+    state = SimpleNamespace(
+        captions=captions,
+        graphics=[],
+        duration_seconds=8,
+        settings=SimpleNamespace(domain_profile="medical", overlay_product_note=""),
+        ai_ingestion={},
+    )
+    kept, report = run_shortform_agents(state, [], ["paper_purple", "punch_in"], True, None)
+    scenes = [item for item in kept if item.parameters.get("effect") == "paper_purple" and not item.parameters.get("badge")]
+    assert scenes[0].parameters["subject"] == "bill"
+    assert scenes[0].start < 3
+    assert scenes[0].parameters["transition"] == "cut"
+    assert any(item.parameters.get("badge") for item in kept)
+    assert not any(item.template_id == "source_reframe" for item in kept)
+    assert report["paper_purple"]["scenes"] == 1
+    assert report["emphasis"]["status"] == "locked"
+    assert captions[0].text == "The medical bill grows"
+    from app.services.automatic_sfx import sound_cues
+    kinds = [cue["kind"] for cue in sound_cues(scenes, 8)]
+    assert kinds[0] == "swipe"
+    assert "click" in kinds
 
 
 def test_a_weak_opening_punches_the_strongest_line_inside_seven_seconds():

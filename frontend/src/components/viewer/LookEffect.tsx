@@ -5,11 +5,13 @@ interface LookEffectProps {
   width: number;
   height: number;
   time: number;
+  subject?: string;
+  badge?: boolean;
 }
 
 const BITS = [0.08, 0.17, 0.29, 0.41, 0.53, 0.66, 0.74, 0.88, 0.13, 0.37, 0.61, 0.82];
 
-export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, time }) => {
+export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, time, subject = '', badge = false }) => {
   const box: React.CSSProperties = {
     position: 'absolute',
     inset: 0,
@@ -150,6 +152,64 @@ export const LookEffect: React.FC<LookEffectProps> = ({ effect, width, height, t
           {[0.34, 0.22, 0.28].map((span, index) => (
             <div key={span} style={{ position: 'absolute', left: width * 0.04, top: height * (0.2 + index * 0.1), width: width * span, height: height * 0.045, background: ['#e65a46', '#1e325a', '#f0b428'][index] }} />
           ))}
+        </div>
+      </div>
+    );
+  }
+  if (effect === 'paper_purple') {
+    const drift = Math.sin(time * 0.8) * width * 0.012;
+    if (badge) {
+      return (
+        <div style={box}>
+          <div style={{ position: 'absolute', left: width * 0.08, top: height * 0.86, width: width * 0.18, height: height * 0.08, borderRadius: 10, background: '#9060DE', boxShadow: '4px 4px 0 rgba(79,73,71,0.18)' }} />
+          <div style={{ position: 'absolute', left: width * 0.1, top: height * 0.875, width: 12, height: 12, borderRadius: '50%', background: '#BFE3DC' }} />
+        </div>
+      );
+    }
+    const shape = subject || 'object';
+    return (
+      <div style={{ ...box, background: '#F5EFEC' }}>
+        <div style={{ position: 'absolute', left: 0, top: height * 0.78, width, height: height * 0.22, background: '#E6E5EB' }} />
+        <div style={{ position: 'absolute', left: width * 0.28 + drift, top: height * 0.34, width: width * 0.44, height: height * 0.38, transformOrigin: 'center' }}>
+          {shape === 'book' && (
+            <div style={{ position: 'absolute', inset: 0, borderRadius: 16, background: '#9060DE', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)' }}>
+              <div style={{ position: 'absolute', left: '12%', top: '10%', right: '10%', bottom: '10%', borderRadius: 8, background: '#FFFCF8' }} />
+              <div style={{ position: 'absolute', right: '6%', top: 0, width: '14%', height: '28%', background: '#BFE3DC' }} />
+            </div>
+          )}
+          {shape === 'bill' && (
+            <div style={{ position: 'absolute', left: 0, right: 0, top: '12%', bottom: '12%', borderRadius: 14, background: '#FFFCF8', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '16%', background: '#9060DE' }} />
+              <div style={{ position: 'absolute', left: '28%', top: '28%', right: '12%', height: 10, background: '#BFE3DC' }} />
+            </div>
+          )}
+          {shape === 'phone' && (
+            <div style={{ position: 'absolute', left: '18%', right: '18%', top: '-8%', bottom: '-6%', borderRadius: 28, background: '#9060DE', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)' }}>
+              <div style={{ position: 'absolute', left: '8%', right: '8%', top: '8%', bottom: '10%', borderRadius: 16, background: '#FFFCF8' }} />
+              <div style={{ position: 'absolute', left: '42%', bottom: '4%', width: '16%', height: 8, borderRadius: 8, background: '#BFE3DC' }} />
+            </div>
+          )}
+          {shape === 'house' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <div style={{ position: 'absolute', left: '10%', right: '10%', top: '38%', bottom: 0, background: '#BFE3DC', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)' }} />
+              <div style={{ position: 'absolute', left: '4%', top: '8%', width: 0, height: 0, borderLeft: `${width * 0.18}px solid transparent`, borderRight: `${width * 0.18}px solid transparent`, borderBottom: `${height * 0.16}px solid #9060DE` }} />
+            </div>
+          )}
+          {shape === 'calendar' && (
+            <div style={{ position: 'absolute', inset: 0, borderRadius: 16, background: '#FFFCF8', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)', overflow: 'hidden' }}>
+              <div style={{ height: '18%', background: '#9060DE' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, padding: 10 }}>
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <div key={index} style={{ height: height * 0.045, borderRadius: 4, background: index % 2 ? '#9060DE' : '#BFE3DC' }} />
+                ))}
+              </div>
+            </div>
+          )}
+          {(shape === 'object' || shape === 'heart' || shape === 'pill' || shape === 'cup') && (
+            <div style={{ position: 'absolute', inset: 0, borderRadius: shape === 'pill' ? 999 : '46% 54% 48% 52%', background: '#9060DE', boxShadow: '8px 10px 0 rgba(79,73,71,0.16)' }}>
+              <div style={{ position: 'absolute', left: '30%', top: '32%', width: '40%', height: '36%', borderRadius: 10, background: '#BFE3DC' }} />
+            </div>
+          )}
         </div>
       </div>
     );

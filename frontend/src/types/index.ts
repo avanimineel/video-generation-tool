@@ -44,7 +44,7 @@ export interface CaptionStyle {
   keyword_accent_color?: string;
   keyword_font_family?: string;
   keyword_contrast_badge?: boolean;
-  contrast_block_mode?: 'pill' | 'per_word' | 'solid_box';
+  contrast_block_mode?: 'pill' | 'per_word' | 'solid_box' | 'paper_purple';
 }
 
 export interface CaptionItem {

@@ -1589,6 +1589,7 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
             add_look_overlays,
             add_punch_ins,
             apply_kinetic_captions,
+            apply_paper_purple_captions,
             constrain_decisions,
             instruction,
             selection_from_state,
@@ -1596,6 +1597,7 @@ def run_editorial(state,media_file,protected=(),plan_only=False,start_at='unders
         choice_made, chosen, product_note = selection_from_state(state)
         report['overlay_styles'] = chosen if choice_made else None
         apply_kinetic_captions(state, chosen, choice_made)
+        apply_paper_purple_captions(state, chosen, choice_made)
         decisions=editorial_decisions(segments,feedback,finish_brief, instruction(chosen, product_note) if choice_made else '')
         decisions=preserve_number_enumerations(segments,decisions)
         decisions=add_spoken_figures(segments,decisions,state.captions)
