@@ -49,6 +49,9 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
   onUpdateGraphic
 }) => {
   const [playbackError,setPlaybackError]=useState('');
+  const [sceneWord, setSceneWord] = useState('');
+  const [sceneTarget, setSceneTarget] = useState('style:elder');
+  const [sceneNote, setSceneNote] = useState('');
   const playbackUrl=project.source_media_path ? `${api.getProxyUrl(project.id)}?preview=2&source=${encodeURIComponent(project.source_media_path)}` : project.video_url;
   useEffect(()=>setPlaybackError(''),[playbackUrl]);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -417,6 +420,68 @@ export const VideoViewer: React.FC<VideoViewerProps> = ({
         />
       </div>
       </div>
+
+      {(() => {
+        const paperScene = graphics.find(graphic => currentTime >= graphic.start && currentTime < graphic.end && graphic.template_id === 'look_effect' && graphic.parameters?.effect === 'paper_purple' && !graphic.parameters?.badge);
+        if (!paperScene) return null;
+        const card = paperScene.parameters.scene_card || {};
+        const cast = Array.isArray(paperScene.parameters.cast) ? paperScene.parameters.cast : [];
+        const targets: [string, string][] = [
+          ['style:woman', 'Woman'], ['style:man', 'Man'], ['style:girl', 'Girl'], ['style:boy', 'Boy'], ['style:elder', 'Elder'],
+          ['action:wave', 'Wave'], ['action:offer', 'Offer'], ['action:pray', 'Pray'], ['action:sit', 'Sit'], ['action:walk', 'Walk'],
+          ['prop:chair', 'Chair'], ['prop:door', 'Door'], ['place:house', 'Room'], ['cast:2', 'Two people'],
+        ];
+        const setCastStyle = (index: number, style: string) => {
+          const next = cast.map((member: { style?: string; action?: string }, memberIndex: number) => memberIndex === index ? { ...member, style } : member);
+          const sceneCard = { ...card, cast: next, place: paperScene.parameters.place || card.place || '', props: paperScene.parameters.props || card.props || [], lines: card.lines || [] };
+          onUpdateGraphic?.({ ...paperScene, parameters: { ...paperScene.parameters, cast: next, scene_card: sceneCard } });
+        };
+        return (
+          <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-1.5 border-t border-neutral-200 bg-white text-neutral-900">
+            <span className="text-[11px] font-semibold text-neutral-500">This scene</span>
+            {cast.map((member: { style?: string }, index: number) => (
+              <select key={index} aria-label={`Person ${index + 1}`} value={member.style || 'woman'} onChange={event => setCastStyle(index, event.target.value)} className="border border-neutral-200 rounded px-1.5 py-1 text-xs bg-white">
+                {['woman', 'man', 'girl', 'boy', 'elder'].map(style => <option key={style} value={style}>{style}</option>)}
+              </select>
+            ))}
+            <input value={sceneWord} onChange={event => setSceneWord(event.target.value)} placeholder="New word" aria-label="New word" className="border border-neutral-200 rounded px-2 py-1 text-xs w-24 bg-white" />
+            <select aria-label="Word means" value={sceneTarget} onChange={event => setSceneTarget(event.target.value)} className="border border-neutral-200 rounded px-1.5 py-1 text-xs bg-white">
+              {targets.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <button
+              type="button"
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-neutral-900 text-white hover:bg-black"
+              onClick={() => {
+                const lines = Array.isArray(card.lines) ? card.lines : [];
+                if (!lines.length) {
+                  setSceneNote('This scene has no spoken lines to save.');
+                  return;
+                }
+                const [kind, value] = sceneTarget.split(':');
+                const alias = sceneWord.trim() ? { word: sceneWord.trim().toLowerCase(), ...(kind === 'cast' ? { cast: Number(value) } : { [kind]: value }) } : null;
+                void api.acceptPaperScene({
+                  lines,
+                  card: {
+                    place: String(paperScene.parameters.place || card.place || ''),
+                    cast,
+                    props: Array.isArray(paperScene.parameters.props) ? paperScene.parameters.props : [],
+                  },
+                  aliases: alias ? [alias] : [],
+                  project_id: project.id,
+                }).then(saved => {
+                  const typed = sceneWord.trim().toLowerCase();
+                  const pending = (saved.pending || []).includes(typed);
+                  setSceneNote(pending ? 'Saved. That word shows once it has a drawing.' : saved.kept ? 'Saved for the next video.' : 'This scene was already saved.');
+                  setSceneWord('');
+                }).catch(error => setSceneNote(error instanceof Error ? error.message : 'This scene could not be saved.'));
+              }}
+            >
+              Keep this scene
+            </button>
+            {sceneNote && <span className="text-[11px] text-neutral-600">{sceneNote}</span>}
+          </div>
+        );
+      })()}
 
       {/* Compact transport strip — keeps preview height free (no large pb-* reservation) */}
       <div className="shrink-0 h-11 flex items-center justify-center border-t border-neutral-200 bg-white z-25">
