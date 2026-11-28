@@ -11,6 +11,22 @@ from app.services.overlay_styles import (
 )
 
 
+def test_a_look_is_one_package_and_a_finish_is_one_extra():
+    from app.services.overlay_styles import default_look, finish_from_styles, look_from_styles, package_styles
+    assert default_look("medical") == "paper_cut"
+    assert default_look("sports") == "kinetic"
+    styles = package_styles("paper_cut", "confetti", "general")
+    assert styles[0] == "paper_purple"
+    assert "confetti" in styles
+    assert "flat_vector" not in styles
+    assert "film" not in styles
+    documentary = package_styles("documentary", "glitch", "legal")
+    assert documentary == ["film", "glitch"]
+    assert look_from_styles(["paper_purple", "film", "sfx"]) == "paper_cut"
+    assert finish_from_styles(["paper_purple", "film", "sfx"], "paper_cut") == "film"
+    assert "location_maps" in package_styles("infographic", "", "real_estate")
+
+
 def test_finance_recommends_numbers_and_not_a_product_shot():
     recommended = set(recommended_ids("finance"))
     assert "data_callouts" in recommended

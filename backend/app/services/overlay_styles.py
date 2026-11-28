@@ -194,6 +194,159 @@ def recommended_ids(domain: str | None) -> List[str]:
     return [row["id"] for row in styles_for_domain(domain) if row["recommended"]]
 
 
+LOOKS: List[Dict[str, object]] = [
+    {
+        "id": "paper_cut",
+        "label": "Paper cut",
+        "detail": "Cream paper, cut-paper people, and a torn caption strip. A spoken thing is drawn here.",
+        "primary": "paper_purple",
+        "styles": ["paper_purple", "sfx"],
+    },
+    {
+        "id": "kinetic",
+        "label": "Kinetic captions",
+        "detail": "The spoken word is the picture. The active word highlights, and the frame eases in on a pitch.",
+        "primary": "kinetic_captions",
+        "styles": ["kinetic_captions", "punch_in", "sfx"],
+    },
+    {
+        "id": "flat_vector",
+        "label": "Flat vector",
+        "detail": "Solid shapes and simple people on a paper ground, one idea at a time.",
+        "primary": "flat_vector",
+        "styles": ["flat_vector"],
+    },
+    {
+        "id": "collage",
+        "label": "Collage",
+        "detail": "Tape, a photo card, and one scrap. The label is the spoken line.",
+        "primary": "scrapbook",
+        "styles": ["scrapbook"],
+    },
+    {
+        "id": "infographic",
+        "label": "Editorial infographic",
+        "detail": "A spoken number becomes a bar or a counter on a flat card.",
+        "primary": "flat_infographic",
+        "styles": ["flat_infographic", "data_callouts"],
+    },
+    {
+        "id": "paper_craft",
+        "label": "Paper craft",
+        "detail": "Layered cut paper with a soft shadow.",
+        "primary": "paper_craft",
+        "styles": ["paper_craft"],
+    },
+    {
+        "id": "documentary",
+        "label": "Documentary",
+        "detail": "The speaker stays in frame. A letterbox holds the film.",
+        "primary": "film",
+        "styles": ["film"],
+    },
+    {
+        "id": "interface",
+        "label": "Interface",
+        "detail": "A live frame and a lower bar, like a stream, while the line is about a screen.",
+        "primary": "streaming",
+        "styles": ["streaming"],
+    },
+]
+
+FINISHES: List[Dict[str, object]] = [
+    {"id": "film", "label": "Film letterbox", "detail": "Bars and light grain across the whole video.", "style": "film", "kind": "frame"},
+    {"id": "camera", "label": "Camera viewfinder", "detail": "Focus marks around the speaker.", "style": "camera", "kind": "frame"},
+    {"id": "confetti", "label": "Confetti", "detail": "A short burst on a win.", "style": "confetti", "kind": "hit"},
+    {"id": "storm", "label": "Rain and lightning", "detail": "A short burst on a weather line.", "style": "storm", "kind": "hit"},
+    {"id": "fog", "label": "Fog", "detail": "A short bank on a hard-effort line.", "style": "fog", "kind": "hit"},
+    {"id": "glitch", "label": "Glitch", "detail": "A short tear on a digital line.", "style": "glitch", "kind": "hit"},
+    {"id": "light_leak", "label": "Light leak", "detail": "A warm flare on a story line.", "style": "light_leak", "kind": "hit"},
+    {"id": "paper", "label": "Paper texture", "detail": "A crease on a document line.", "style": "paper", "kind": "hit"},
+]
+
+_LOOK_BY_ID = {str(item["id"]): item for item in LOOKS}
+_FINISH_BY_ID = {str(item["id"]): item for item in FINISHES}
+
+
+def looks_for_domain(domain: str | None) -> List[dict]:
+    recommended = set(recommended_ids(domain))
+    rows = []
+    for item in LOOKS:
+        primary = str(item["primary"])
+        rows.append({
+            "id": item["id"],
+            "label": item["label"],
+            "detail": item["detail"],
+            "primary": primary,
+            "styles": package_styles(str(item["id"]), "", domain),
+            "fits": primary in recommended,
+        })
+    return rows
+
+
+def finishes_for_domain(domain: str | None) -> List[dict]:
+    recommended = set(recommended_ids(domain))
+    return [
+        {
+            "id": item["id"],
+            "label": item["label"],
+            "detail": item["detail"],
+            "style": item["style"],
+            "kind": item["kind"],
+            "fits": str(item["style"]) in recommended,
+        }
+        for item in FINISHES
+    ]
+
+
+def default_look(domain: str | None) -> str:
+    for row in looks_for_domain(domain):
+        if row["fits"]:
+            return str(row["id"])
+    return "kinetic"
+
+
+def look_from_styles(styles: Iterable[str] | None) -> str:
+    chosen = set(normalize_styles(styles))
+    for item in LOOKS:
+        if str(item["primary"]) in chosen and item["id"] != "documentary":
+            return str(item["id"])
+    if "kinetic_captions" in chosen:
+        return "kinetic"
+    if "film" in chosen:
+        return "documentary"
+    if "streaming" in chosen:
+        return "interface"
+    return ""
+
+
+def finish_from_styles(styles: Iterable[str] | None, look_id: str = "") -> str:
+    chosen = set(normalize_styles(styles))
+    package = set()
+    look = _LOOK_BY_ID.get(look_id or look_from_styles(styles))
+    if look:
+        package = set(look["styles"])
+    for item in FINISHES:
+        style = str(item["style"])
+        if style in chosen and style not in package:
+            return str(item["id"])
+    return ""
+
+
+def package_styles(look_id: str, finish_id: str = "", domain: str | None = None) -> List[str]:
+    """One look, and at most one finish. The result is the overlay list the pipeline already understands."""
+    look = _LOOK_BY_ID.get(str(look_id or "").strip())
+    if look is None:
+        look = _LOOK_BY_ID[default_look(domain)]
+    styles = [str(item) for item in look["styles"]]
+    if look["id"] == "infographic" and domain and "location_maps" in recommended_ids(domain):
+        styles.append("location_maps")
+    finish = _FINISH_BY_ID.get(str(finish_id or "").strip())
+    if finish and str(finish["style"]) not in styles:
+        styles.append(str(finish["style"]))
+    return normalize_styles(styles)
+
+
 def creator_preset_path(domain: str, root=None):
     from pathlib import Path
     from app.core.config import settings

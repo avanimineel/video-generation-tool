@@ -126,7 +126,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   };
 
   return (
-    <header className="h-13 bg-white border-b border-neutral-200 flex items-center justify-between px-3 sm:px-4 z-20 select-none text-neutral-900 shrink-0">
+    <header className="h-13 bg-white border-b border-neutral-200 flex items-center gap-2 px-3 sm:px-4 z-20 select-none text-neutral-900 shrink-0 min-w-0 overflow-hidden">
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}
@@ -137,7 +137,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
       />
 
       {/* Left: App Logo, Projects & Video Upload */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
         <div className="flex items-center gap-2 font-bold text-sm tracking-tight text-neutral-900 mr-1">
           <div className="h-6 w-6 rounded bg-neutral-900 flex items-center justify-center text-white">
             <Film className="h-3.5 w-3.5 stroke-[2.2]" />
@@ -166,7 +166,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
         </div>
 
         {/* Project Name Editable Field */}
-        <div className="flex items-center gap-2 ml-1">
+        <div className="flex items-center gap-2 ml-1 min-w-0">
           {isEditingName ? (
             <input
               type="text"
@@ -183,7 +183,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                 setNameInput(project?.name || "");
                 setIsEditingName(true);
               }}
-              className="text-xs font-semibold text-neutral-800 hover:text-black cursor-pointer px-2 py-1 rounded hover:bg-neutral-100 transition"
+              className="text-xs font-semibold text-neutral-800 hover:text-black cursor-pointer px-2 py-1 rounded hover:bg-neutral-100 transition truncate max-w-[9rem] sm:max-w-[14rem]"
               title="Click to rename project"
             >
               {project?.name || "Loading..."}
@@ -215,9 +215,9 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
         </div>
       </div>
 
-      {/* Center: Aspect Ratio & Undo/Redo */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center bg-neutral-100 rounded-md p-0.5 border border-neutral-200 text-xs">
+      {/* Aspect ratio hides on a narrow window so Export stays inside it. Undo stays. */}
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="hidden lg:flex items-center bg-neutral-100 rounded-md p-0.5 border border-neutral-200 text-xs">
           <button
             onClick={() => onAspectRatioChange("9:16")}
             className={`px-2 py-0.5 rounded text-xs ${
@@ -262,7 +262,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
       </div>
 
       {/* Right: Create · tools · Resolve · Export (secondary chrome quieter than Export) */}
-      <div className="flex items-center gap-1.5 sm:gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         <div className="flex items-center gap-1">
           {onOpenStudio && (
             <button
@@ -459,29 +459,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
         <div className="hidden sm:block h-5 w-px bg-neutral-200 mx-0.5" aria-hidden />
 
-        {savedExport ? (
-          <a
-            href={savedExport.download_url}
-            download={savedExport.file_name}
-            className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 transition"
-            title={`Save ${savedExport.file_name} to your browser Downloads folder`}
-          >
-            <Download className="h-3.5 w-3.5 stroke-[2.2]" />
-            <span>Download</span>
-          </a>
-        ) : (
-          <button
-            type="button"
-            disabled
-            className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md bg-white text-neutral-400 border border-neutral-200 cursor-not-allowed"
-            title="Export a video first. Download then saves it to your browser Downloads folder."
-          >
-            <Download className="h-3.5 w-3.5 stroke-[2.2]" />
-            <span>Download</span>
-          </button>
-        )}
-
-        {/* Primary export */}
+        {/* Primary export. Download lives in the menu so this control stays inside the window. */}
         {isRendering ? (
           <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-neutral-100 border border-neutral-300 text-neutral-900 text-xs font-semibold">
             <RefreshCw className="h-3.5 w-3.5 animate-spin text-neutral-700" />
@@ -513,6 +491,22 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
             {showExportMenu && (
               <div className="absolute right-0 top-full mt-1.5 w-64 bg-white rounded-lg shadow-xl border border-neutral-200 p-1.5 z-50 text-neutral-900 animate-in fade-in zoom-in-95 duration-100">
+                {savedExport ? (
+                  <a
+                    href={savedExport.download_url}
+                    download={savedExport.file_name}
+                    className="w-full flex items-start gap-2 p-2 rounded hover:bg-neutral-50 text-left transition"
+                    title={`Save ${savedExport.file_name} to your browser Downloads folder`}
+                  >
+                    <Download className="h-4 w-4 text-neutral-600 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-semibold text-neutral-900">Download last export</div>
+                      <div className="text-[10px] text-neutral-500 truncate">{savedExport.file_name}</div>
+                    </div>
+                  </a>
+                ) : (
+                  <div className="px-2 py-1.5 text-[10px] text-neutral-500">Export a video, then download it from here.</div>
+                )}
                 <button
                   onClick={() => {
                     setShowExportMenu(false);

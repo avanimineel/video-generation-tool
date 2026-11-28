@@ -554,7 +554,7 @@ export const api = {
     return `${API_BASE}/media/${projectId}/download-mp4?subtitles_only=${subtitlesOnly}${saved}`;
   },
 
-  async getOverlayStyles(domain: string = 'general'): Promise<{ domain: string; styles: { id: string; label: string; detail: string; recommended: boolean }[]; recommended: string[]; preset?: { styles?: string[] } }> {
+  async getOverlayStyles(domain: string = 'general'): Promise<{ domain: string; styles: { id: string; label: string; detail: string; recommended: boolean }[]; recommended: string[]; preset?: { styles?: string[] }; looks?: { id: string; label: string; detail: string; primary: string; styles: string[]; fits: boolean }[]; finishes?: { id: string; label: string; detail: string; style: string; kind: 'frame' | 'hit'; fits: boolean }[]; default_look?: string; default_finish?: string }> {
     const res = await fetch(`${API_BASE}/projects/overlay-styles?domain=${encodeURIComponent(domain)}`);
     if (!res.ok) return { domain, styles: [], recommended: [] };
     return await res.json();
