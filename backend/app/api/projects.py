@@ -20,9 +20,28 @@ class RelinkMediaRequest(BaseModel):
 
 @router.get("/overlay-styles")
 def overlay_style_catalog(domain: str = "general"):
-    from app.services.overlay_styles import load_creator_preset, recommended_ids, styles_for_domain
+    from app.services.overlay_styles import (
+        default_look,
+        finishes_for_domain,
+        finish_from_styles,
+        load_creator_preset,
+        look_from_styles,
+        looks_for_domain,
+        recommended_ids,
+        styles_for_domain,
+    )
     preset = load_creator_preset(domain)
-    return {"domain": domain, "styles": styles_for_domain(domain), "recommended": recommended_ids(domain), "preset": preset}
+    saved = preset.get("styles") or []
+    return {
+        "domain": domain,
+        "styles": styles_for_domain(domain),
+        "recommended": recommended_ids(domain),
+        "preset": preset,
+        "looks": looks_for_domain(domain),
+        "finishes": finishes_for_domain(domain),
+        "default_look": look_from_styles(saved) or default_look(domain),
+        "default_finish": finish_from_styles(saved, look_from_styles(saved) or default_look(domain)),
+    }
 
 
 @router.get("")

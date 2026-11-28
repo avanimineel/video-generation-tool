@@ -1226,7 +1226,7 @@ export const App: React.FC = () => {
                 onClick={produceVisuals}
                 className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800 transition shadow-2xs"
               >
-                Choose overlays
+                Choose look
               </button>
             )}
             {project.captions.length > 0 && (
